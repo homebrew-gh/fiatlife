@@ -25,10 +25,29 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val storeFilePath = System.getenv("SIGNING_STORE_FILE")
+            if (storeFilePath != null && file(storeFilePath).exists()) {
+                storeFile = file(storeFilePath)
+                storePassword = System.getenv("SIGNING_STORE_PASSWORD")
+                keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+            } else {
+                // Fall back to debug keystore so APKs are always installable
+                storeFile = File(System.getProperty("user.home"), ".android/debug.keystore")
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
