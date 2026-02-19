@@ -2,8 +2,6 @@ package com.fiatlife.app.data.nostr
 
 import com.goterl.lazysodium.LazySodiumAndroid
 import com.goterl.lazysodium.SodiumAndroid
-import com.goterl.lazysodium.utils.Key
-import com.sun.jna.ptr.LongByReference
 import fr.acinq.secp256k1.Secp256k1
 import java.nio.ByteBuffer
 import java.security.SecureRandom
@@ -36,9 +34,9 @@ object Nip44Encryption {
         val padded = padPlaintext(plaintext.toByteArray(Charsets.UTF_8))
 
         val ciphertext = ByteArray(padded.size + POLY1305_TAG_SIZE)
-        val ciphertextLen = LongByReference(0)
+        val ciphertextLen = longArrayOf(0L)
 
-        val success = sodium.sodiumJNI.crypto_aead_xchacha20poly1305_ietf_encrypt(
+        val success = sodium.cryptoAeadXChaCha20Poly1305IetfEncrypt(
             ciphertext, ciphertextLen,
             padded, padded.size.toLong(),
             null, 0L,
@@ -46,9 +44,9 @@ object Nip44Encryption {
             chachaNonce,
             chachaKey
         )
-        check(success == 0) { "Encryption failed" }
+        check(success) { "Encryption failed" }
 
-        val encrypted = ciphertext.copyOf(ciphertextLen.value.toInt())
+        val encrypted = ciphertext.copyOf(ciphertextLen[0].toInt())
 
         val payload = ByteBuffer.allocate(1 + NONCE_SIZE + encrypted.size)
             .put(VERSION)
@@ -87,9 +85,9 @@ object Nip44Encryption {
         require(computedMac.contentEquals(receivedMac)) { "MAC verification failed" }
 
         val decrypted = ByteArray(encrypted.size)
-        val decryptedLen = LongByReference(0)
+        val decryptedLen = longArrayOf(0L)
 
-        val result = sodium.sodiumJNI.crypto_aead_xchacha20poly1305_ietf_decrypt(
+        val result = sodium.cryptoAeadXChaCha20Poly1305IetfDecrypt(
             decrypted, decryptedLen,
             null,
             encrypted, encrypted.size.toLong(),
@@ -98,9 +96,9 @@ object Nip44Encryption {
             chachaKey
         )
 
-        check(result == 0) { "Decryption failed" }
+        check(result) { "Decryption failed" }
 
-        return unpadPlaintext(decrypted.copyOf(decryptedLen.value.toInt()))
+        return unpadPlaintext(decrypted.copyOf(decryptedLen[0].toInt()))
     }
 
     fun encryptToSelf(plaintext: String, privateKey: ByteArray): String {
