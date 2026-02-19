@@ -23,7 +23,11 @@
 
 # Lazysodium
 -keep class com.goterl.lazysodium.** { *; }
+
+# JNA
 -keep class com.sun.jna.** { *; }
+-dontwarn com.sun.jna.**
+-dontwarn java.awt.**
 
 # Room
 -keep class * extends androidx.room.RoomDatabase
