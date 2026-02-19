@@ -9,12 +9,12 @@ plugins {
 
 android {
     namespace = "com.fiatlife.app"
-    compileSdk = 35
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "com.fiatlife.app"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 34
         versionCode = 1
         versionName = "1.0.0"
 
@@ -108,7 +108,9 @@ dependencies {
     // Nostr Crypto
     implementation(libs.secp256k1.kmp)
     implementation(libs.secp256k1.kmp.jni.android)
-    implementation(libs.lazysodium.android)
+    implementation(libs.lazysodium.android) {
+        exclude(group = "net.java.dev.jna", module = "jna")
+    }
     implementation(libs.jna) { artifact { type = "aar" } }
 
     // Image Loading
