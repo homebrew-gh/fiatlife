@@ -1,5 +1,6 @@
 package com.fiatlife.app.ui.viewmodel;
 
+import com.fiatlife.app.data.nostr.NostrClient;
 import com.fiatlife.app.data.repository.SalaryRepository;
 import dagger.internal.DaggerGenerated;
 import dagger.internal.Factory;
@@ -25,20 +26,25 @@ import javax.inject.Provider;
 public final class SalaryViewModel_Factory implements Factory<SalaryViewModel> {
   private final Provider<SalaryRepository> repositoryProvider;
 
-  public SalaryViewModel_Factory(Provider<SalaryRepository> repositoryProvider) {
+  private final Provider<NostrClient> nostrClientProvider;
+
+  public SalaryViewModel_Factory(Provider<SalaryRepository> repositoryProvider,
+      Provider<NostrClient> nostrClientProvider) {
     this.repositoryProvider = repositoryProvider;
+    this.nostrClientProvider = nostrClientProvider;
   }
 
   @Override
   public SalaryViewModel get() {
-    return newInstance(repositoryProvider.get());
+    return newInstance(repositoryProvider.get(), nostrClientProvider.get());
   }
 
-  public static SalaryViewModel_Factory create(Provider<SalaryRepository> repositoryProvider) {
-    return new SalaryViewModel_Factory(repositoryProvider);
+  public static SalaryViewModel_Factory create(Provider<SalaryRepository> repositoryProvider,
+      Provider<NostrClient> nostrClientProvider) {
+    return new SalaryViewModel_Factory(repositoryProvider, nostrClientProvider);
   }
 
-  public static SalaryViewModel newInstance(SalaryRepository repository) {
-    return new SalaryViewModel(repository);
+  public static SalaryViewModel newInstance(SalaryRepository repository, NostrClient nostrClient) {
+    return new SalaryViewModel(repository, nostrClient);
   }
 }

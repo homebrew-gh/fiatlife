@@ -441,30 +441,30 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
 
     @IdentifierNameString
     private static final class LazyClassKeyProvider {
-      static String com_fiatlife_app_ui_viewmodel_SalaryViewModel = "com.fiatlife.app.ui.viewmodel.SalaryViewModel";
-
-      static String com_fiatlife_app_ui_viewmodel_DashboardViewModel = "com.fiatlife.app.ui.viewmodel.DashboardViewModel";
-
-      static String com_fiatlife_app_ui_viewmodel_SettingsViewModel = "com.fiatlife.app.ui.viewmodel.SettingsViewModel";
+      static String com_fiatlife_app_ui_viewmodel_BillsViewModel = "com.fiatlife.app.ui.viewmodel.BillsViewModel";
 
       static String com_fiatlife_app_ui_viewmodel_GoalsViewModel = "com.fiatlife.app.ui.viewmodel.GoalsViewModel";
 
-      static String com_fiatlife_app_ui_viewmodel_BillsViewModel = "com.fiatlife.app.ui.viewmodel.BillsViewModel";
+      static String com_fiatlife_app_ui_viewmodel_DashboardViewModel = "com.fiatlife.app.ui.viewmodel.DashboardViewModel";
+
+      static String com_fiatlife_app_ui_viewmodel_SalaryViewModel = "com.fiatlife.app.ui.viewmodel.SalaryViewModel";
+
+      static String com_fiatlife_app_ui_viewmodel_SettingsViewModel = "com.fiatlife.app.ui.viewmodel.SettingsViewModel";
 
       @KeepFieldType
-      SalaryViewModel com_fiatlife_app_ui_viewmodel_SalaryViewModel2;
-
-      @KeepFieldType
-      DashboardViewModel com_fiatlife_app_ui_viewmodel_DashboardViewModel2;
-
-      @KeepFieldType
-      SettingsViewModel com_fiatlife_app_ui_viewmodel_SettingsViewModel2;
+      BillsViewModel com_fiatlife_app_ui_viewmodel_BillsViewModel2;
 
       @KeepFieldType
       GoalsViewModel com_fiatlife_app_ui_viewmodel_GoalsViewModel2;
 
       @KeepFieldType
-      BillsViewModel com_fiatlife_app_ui_viewmodel_BillsViewModel2;
+      DashboardViewModel com_fiatlife_app_ui_viewmodel_DashboardViewModel2;
+
+      @KeepFieldType
+      SalaryViewModel com_fiatlife_app_ui_viewmodel_SalaryViewModel2;
+
+      @KeepFieldType
+      SettingsViewModel com_fiatlife_app_ui_viewmodel_SettingsViewModel2;
     }
   }
 
@@ -517,21 +517,15 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
 
     @IdentifierNameString
     private static final class LazyClassKeyProvider {
-      static String com_fiatlife_app_ui_viewmodel_SettingsViewModel = "com.fiatlife.app.ui.viewmodel.SettingsViewModel";
-
-      static String com_fiatlife_app_ui_viewmodel_SalaryViewModel = "com.fiatlife.app.ui.viewmodel.SalaryViewModel";
-
       static String com_fiatlife_app_ui_viewmodel_GoalsViewModel = "com.fiatlife.app.ui.viewmodel.GoalsViewModel";
 
       static String com_fiatlife_app_ui_viewmodel_BillsViewModel = "com.fiatlife.app.ui.viewmodel.BillsViewModel";
 
       static String com_fiatlife_app_ui_viewmodel_DashboardViewModel = "com.fiatlife.app.ui.viewmodel.DashboardViewModel";
 
-      @KeepFieldType
-      SettingsViewModel com_fiatlife_app_ui_viewmodel_SettingsViewModel2;
+      static String com_fiatlife_app_ui_viewmodel_SalaryViewModel = "com.fiatlife.app.ui.viewmodel.SalaryViewModel";
 
-      @KeepFieldType
-      SalaryViewModel com_fiatlife_app_ui_viewmodel_SalaryViewModel2;
+      static String com_fiatlife_app_ui_viewmodel_SettingsViewModel = "com.fiatlife.app.ui.viewmodel.SettingsViewModel";
 
       @KeepFieldType
       GoalsViewModel com_fiatlife_app_ui_viewmodel_GoalsViewModel2;
@@ -541,6 +535,12 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
 
       @KeepFieldType
       DashboardViewModel com_fiatlife_app_ui_viewmodel_DashboardViewModel2;
+
+      @KeepFieldType
+      SalaryViewModel com_fiatlife_app_ui_viewmodel_SalaryViewModel2;
+
+      @KeepFieldType
+      SettingsViewModel com_fiatlife_app_ui_viewmodel_SettingsViewModel2;
     }
 
     private static final class SwitchingProvider<T> implements Provider<T> {
@@ -574,7 +574,7 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
           return (T) new GoalsViewModel(singletonCImpl.goalRepositoryProvider.get());
 
           case 3: // com.fiatlife.app.ui.viewmodel.SalaryViewModel 
-          return (T) new SalaryViewModel(singletonCImpl.salaryRepositoryProvider.get());
+          return (T) new SalaryViewModel(singletonCImpl.salaryRepositoryProvider.get(), singletonCImpl.nostrClientProvider.get());
 
           case 4: // com.fiatlife.app.ui.viewmodel.SettingsViewModel 
           return (T) new SettingsViewModel(ApplicationContextModule_ProvideContextFactory.provideContext(singletonCImpl.applicationContextModule), singletonCImpl.provideDataStoreProvider.get(), singletonCImpl.nostrClientProvider.get(), singletonCImpl.blossomClientProvider.get(), singletonCImpl.salaryRepositoryProvider.get(), singletonCImpl.billRepositoryProvider.get(), singletonCImpl.goalRepositoryProvider.get(), singletonCImpl.providePinPrefsProvider.get());
