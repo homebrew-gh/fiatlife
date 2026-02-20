@@ -32,3 +32,13 @@
 # Room
 -keep class * extends androidx.room.RoomDatabase
 -dontwarn androidx.room.paging.**
+
+# Google Tink (transitive via security-crypto) — annotation-only deps not present at runtime
+-dontwarn com.google.errorprone.annotations.**
+-dontwarn javax.annotation.**
+-dontwarn com.google.crypto.tink.**
+-keep class com.google.crypto.tink.** { *; }
+
+# WorkManager + Hilt workers
+-keep class * extends androidx.work.ListenableWorker { *; }
+-keep class androidx.hilt.work.** { *; }
