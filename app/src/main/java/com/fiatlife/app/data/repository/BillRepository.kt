@@ -1,5 +1,6 @@
 package com.fiatlife.app.data.repository
 
+import android.util.Log
 import com.fiatlife.app.data.blossom.BlossomClient
 import com.fiatlife.app.data.local.dao.BillDao
 import com.fiatlife.app.data.local.entity.BillEntity
@@ -12,6 +13,8 @@ import kotlinx.serialization.json.Json
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
+
+private const val TAG = "BillRepo"
 
 @Singleton
 class BillRepository @Inject constructor(
@@ -60,11 +63,14 @@ class BillRepository @Inject constructor(
 
         if (nostrClient.hasSigner) {
             try {
-                nostrClient.publishEncryptedAppData(
+                val published = nostrClient.publishEncryptedAppData(
                     "$NOSTR_D_TAG_PREFIX${billWithId.id}",
                     jsonStr
                 )
-            } catch (_: Exception) { }
+                Log.d(TAG, "Published bill ${billWithId.id.take(8)}… to relay: $published")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to publish bill: ${e.message}")
+            }
         }
     }
 
@@ -93,6 +99,7 @@ class BillRepository @Inject constructor(
     suspend fun syncFromNostr() {
         if (!nostrClient.hasSigner) return
         try {
+            var count = 0
             nostrClient.subscribeToAppData(dTagPrefix = NOSTR_D_TAG_PREFIX).collect { (_, decrypted) ->
                 try {
                     val bill = json.decodeFromString<Bill>(decrypted)
@@ -105,9 +112,15 @@ class BillRepository @Inject constructor(
                                 updatedAt = bill.updatedAt
                             )
                         )
+                        count++
                     }
-                } catch (_: Exception) { }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to parse bill event: ${e.message}")
+                }
             }
-        } catch (_: Exception) { }
+            Log.d(TAG, "Synced $count bill(s) from relay")
+        } catch (e: Exception) {
+            Log.e(TAG, "Sync failed: ${e.message}")
+        }
     }
 }

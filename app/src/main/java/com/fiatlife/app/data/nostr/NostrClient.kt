@@ -4,6 +4,7 @@ import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.*
 import okhttp3.*
 import javax.inject.Inject
@@ -30,6 +31,7 @@ class NostrClient @Inject constructor(
     private var relayUrl: String = ""
     private var signer: NostrSigner? = null
     private var isAuthenticated = false
+    private var authInFlight = false
 
     private val _messages = MutableSharedFlow<NostrMessage>(extraBufferCapacity = 64)
     val messages: SharedFlow<NostrMessage> = _messages.asSharedFlow()
@@ -58,6 +60,7 @@ class NostrClient @Inject constructor(
         this.relayUrl = relayUrl
         this.signer = signer
         this.isAuthenticated = false
+        this.authInFlight = false
 
         disconnect()
 
@@ -70,7 +73,17 @@ class NostrClient @Inject constructor(
                 Log.d(TAG, "WebSocket open to $relayUrl")
                 _connectionState.value = true
                 _messages.tryEmit(NostrMessage.Connected)
-                scope.launch { drainPendingQueue() }
+                // Don't drain the pending queue yet — wait for NIP-42 auth.
+                // If the relay doesn't send AUTH within 1.5s, assume no auth
+                // is required and drain then.
+                scope.launch {
+                    delay(1500)
+                    if (_connectionState.value && !isAuthenticated && !authInFlight) {
+                        Log.d(TAG, "No AUTH challenge received, assuming open relay")
+                        isAuthenticated = true
+                        drainPendingQueue()
+                    }
+                }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -92,14 +105,17 @@ class NostrClient @Inject constructor(
     }
 
     /**
-     * Reconnect to the relay if we have a saved URL and signer but aren't currently connected.
-     * Used by repositories before publishing so saves don't silently drop.
+     * Reconnect if needed and wait until ready (connected + authenticated).
+     * Returns true if the relay is ready to accept messages.
      */
-    fun ensureConnected() {
-        if (_connectionState.value) return
-        val s = signer ?: return
-        if (relayUrl.isEmpty()) return
-        connect(relayUrl, s)
+    suspend fun ensureConnected(): Boolean {
+        if (_connectionState.value && isAuthenticated) return true
+        val s = signer ?: return false
+        if (relayUrl.isEmpty()) return false
+        if (!_connectionState.value) {
+            connect(relayUrl, s)
+        }
+        return awaitReady()
     }
 
     /**
@@ -121,6 +137,7 @@ class NostrClient @Inject constructor(
         webSocket = null
         _connectionState.value = false
         isAuthenticated = false
+        authInFlight = false
     }
 
     fun clearSigner() {
@@ -170,8 +187,17 @@ class NostrClient @Inject constructor(
         jsonContent: String
     ): Boolean {
         val s = signer ?: return false
-        ensureConnected()
-        val encrypted = s.nip44Encrypt(jsonContent, s.pubkeyHex) ?: return false
+
+        val ready = ensureConnected()
+        if (!ready) {
+            Log.w(TAG, "publishEncryptedAppData: relay not ready, event will be queued")
+        }
+
+        val encrypted = s.nip44Encrypt(jsonContent, s.pubkeyHex)
+        if (encrypted == null) {
+            Log.e(TAG, "publishEncryptedAppData: NIP-44 encryption failed for dTag=$dTag")
+            return false
+        }
 
         val unsignedJson = NostrEvent.buildUnsignedJson(
             pubkeyHex = s.pubkeyHex,
@@ -179,18 +205,21 @@ class NostrClient @Inject constructor(
             content = encrypted,
             tags = listOf(listOf("d", dTag))
         )
-        val signedJson = s.signEvent(unsignedJson) ?: return false
-        return publishSignedEventJson(signedJson)
+        val signedJson = s.signEvent(unsignedJson)
+        if (signedJson == null) {
+            Log.e(TAG, "publishEncryptedAppData: event signing failed for dTag=$dTag")
+            return false
+        }
+
+        val sent = publishSignedEventJson(signedJson)
+        Log.d(TAG, "publishEncryptedAppData: dTag=$dTag, sent=$sent")
+        return sent
     }
 
     /**
      * Subscribe to app data events and decrypt them. Collects events until
      * the relay sends EOSE (End of Stored Events), then closes the subscription
      * and terminates the flow. Safe for one-shot sync operations.
-     *
-     * When [dTag] is provided, only events with that exact d-tag are returned.
-     * When [dTagPrefix] is provided (and [dTag] is null), events whose d-tag
-     * starts with the prefix are returned.
      */
     fun subscribeToAppData(
         dTag: String? = null,
@@ -267,6 +296,7 @@ class NostrClient @Inject constructor(
                     val eventId = array[1].jsonPrimitive.content
                     val success = array[2].jsonPrimitive.boolean
                     val message = if (array.size > 3) array[3].jsonPrimitive.content else ""
+                    Log.d(TAG, "OK: eventId=${eventId.take(8)}… success=$success msg=$message")
                     _messages.tryEmit(NostrMessage.Ok(eventId, success, message))
                 }
                 "EOSE" -> {
@@ -282,6 +312,7 @@ class NostrClient @Inject constructor(
                 "AUTH" -> {
                     val challenge = array[1].jsonPrimitive.content
                     Log.d(TAG, "AUTH challenge received")
+                    authInFlight = true
                     _messages.tryEmit(NostrMessage.AuthChallenge(challenge))
                     handleAuthChallenge(challenge)
                 }
@@ -309,21 +340,27 @@ class NostrClient @Inject constructor(
                 if (signedJson != null) {
                     webSocket?.send("""["AUTH",$signedJson]""")
                     isAuthenticated = true
-                    Log.d(TAG, "Auth response sent, draining pending queue")
+                    authInFlight = false
+                    Log.d(TAG, "Auth complete, draining pending queue")
                     drainPendingQueue()
                 } else {
                     Log.w(TAG, "Auth signing failed/rejected")
+                    authInFlight = false
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Auth challenge handling failed: ${e.message}")
+                authInFlight = false
             }
         }
     }
 
     private suspend fun sendOrQueue(message: String): Boolean {
         return if (_connectionState.value && isAuthenticated) {
-            webSocket?.send(message) ?: false
+            val sent = webSocket?.send(message) ?: false
+            if (!sent) Log.w(TAG, "WebSocket send returned false")
+            sent
         } else {
+            Log.d(TAG, "Queueing message (connected=${_connectionState.value}, authed=$isAuthenticated)")
             pendingQueue.send(message)
             true
         }
@@ -331,11 +368,14 @@ class NostrClient @Inject constructor(
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun drainPendingQueue() {
+        var count = 0
         while (!pendingQueue.isEmpty) {
             val msg = pendingQueue.receive()
             if (_connectionState.value) {
                 webSocket?.send(msg)
+                count++
             }
         }
+        if (count > 0) Log.d(TAG, "Drained $count messages from pending queue")
     }
 }

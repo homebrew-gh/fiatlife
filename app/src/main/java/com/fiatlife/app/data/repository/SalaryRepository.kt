@@ -1,5 +1,6 @@
 package com.fiatlife.app.data.repository
 
+import android.util.Log
 import com.fiatlife.app.data.local.dao.SalaryDao
 import com.fiatlife.app.data.local.entity.SalaryEntity
 import com.fiatlife.app.data.nostr.NostrClient
@@ -10,6 +11,8 @@ import kotlinx.serialization.json.Json
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
+
+private const val TAG = "SalaryRepo"
 
 @Singleton
 class SalaryRepository @Inject constructor(
@@ -46,14 +49,20 @@ class SalaryRepository @Inject constructor(
 
         if (nostrClient.hasSigner) {
             try {
-                nostrClient.publishEncryptedAppData(NOSTR_D_TAG, jsonStr)
-            } catch (_: Exception) { }
+                val published = nostrClient.publishEncryptedAppData(NOSTR_D_TAG, jsonStr)
+                Log.d(TAG, "Published salary to relay: $published")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to publish salary: ${e.message}")
+            }
+        } else {
+            Log.d(TAG, "No signer, salary saved locally only")
         }
     }
 
     suspend fun syncFromNostr() {
         if (!nostrClient.hasSigner) return
         try {
+            var count = 0
             nostrClient.subscribeToAppData(dTag = NOSTR_D_TAG).collect { (_, decrypted) ->
                 val config = json.decodeFromString<SalaryConfig>(decrypted)
                 salaryDao.upsert(
@@ -63,7 +72,11 @@ class SalaryRepository @Inject constructor(
                         updatedAt = config.updatedAt
                     )
                 )
+                count++
             }
-        } catch (_: Exception) { }
+            Log.d(TAG, "Synced $count salary config(s) from relay")
+        } catch (e: Exception) {
+            Log.e(TAG, "Sync failed: ${e.message}")
+        }
     }
 }

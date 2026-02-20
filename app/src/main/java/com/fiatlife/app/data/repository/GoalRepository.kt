@@ -1,5 +1,6 @@
 package com.fiatlife.app.data.repository
 
+import android.util.Log
 import com.fiatlife.app.data.local.dao.GoalDao
 import com.fiatlife.app.data.local.entity.GoalEntity
 import com.fiatlife.app.data.nostr.NostrClient
@@ -10,6 +11,8 @@ import kotlinx.serialization.json.Json
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
+
+private const val TAG = "GoalRepo"
 
 @Singleton
 class GoalRepository @Inject constructor(
@@ -51,11 +54,14 @@ class GoalRepository @Inject constructor(
 
         if (nostrClient.hasSigner) {
             try {
-                nostrClient.publishEncryptedAppData(
+                val published = nostrClient.publishEncryptedAppData(
                     "$NOSTR_D_TAG_PREFIX${goalWithId.id}",
                     jsonStr
                 )
-            } catch (_: Exception) { }
+                Log.d(TAG, "Published goal ${goalWithId.id.take(8)}… to relay: $published")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to publish goal: ${e.message}")
+            }
         }
     }
 
@@ -82,6 +88,7 @@ class GoalRepository @Inject constructor(
     suspend fun syncFromNostr() {
         if (!nostrClient.hasSigner) return
         try {
+            var count = 0
             nostrClient.subscribeToAppData(dTagPrefix = NOSTR_D_TAG_PREFIX).collect { (_, decrypted) ->
                 try {
                     val goal = json.decodeFromString<FinancialGoal>(decrypted)
@@ -94,9 +101,15 @@ class GoalRepository @Inject constructor(
                                 updatedAt = goal.updatedAt
                             )
                         )
+                        count++
                     }
-                } catch (_: Exception) { }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to parse goal event: ${e.message}")
+                }
             }
-        } catch (_: Exception) { }
+            Log.d(TAG, "Synced $count goal(s) from relay")
+        } catch (e: Exception) {
+            Log.e(TAG, "Sync failed: ${e.message}")
+        }
     }
 }

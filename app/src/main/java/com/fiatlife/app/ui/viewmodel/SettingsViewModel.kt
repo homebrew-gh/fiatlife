@@ -141,12 +141,16 @@ class SettingsViewModel @Inject constructor(
 
     fun saveAndConnect() {
         viewModelScope.launch {
-            val current = _state.value
+            val relayUrl = normalizeRelayUrl(_state.value.relayUrl)
+            val blossomUrl = normalizeBlossomUrl(_state.value.blossomUrl)
+            _state.update { it.copy(relayUrl = relayUrl, blossomUrl = blossomUrl) }
 
             dataStore.edit { prefs ->
-                prefs[MainActivity.KEY_RELAY_URL] = current.relayUrl
-                prefs[MainActivity.KEY_BLOSSOM_URL] = current.blossomUrl
+                prefs[MainActivity.KEY_RELAY_URL] = relayUrl
+                prefs[MainActivity.KEY_BLOSSOM_URL] = blossomUrl
             }
+
+            val current = _state.value
 
             if (!nostrClient.hasSigner) {
                 _state.update { it.copy(statusMessage = "No signer configured. Sign out and sign back in.") }
@@ -244,6 +248,20 @@ class SettingsViewModel @Inject constructor(
             nostrClient.clearSigner()
             dataStore.edit { it.clear() }
         }
+    }
+
+    private fun normalizeRelayUrl(url: String): String {
+        val trimmed = url.trim()
+        if (trimmed.isEmpty()) return trimmed
+        if (trimmed.startsWith("wss://") || trimmed.startsWith("ws://")) return trimmed
+        return "wss://$trimmed"
+    }
+
+    private fun normalizeBlossomUrl(url: String): String {
+        val trimmed = url.trim()
+        if (trimmed.isEmpty()) return trimmed
+        if (trimmed.startsWith("https://") || trimmed.startsWith("http://")) return trimmed
+        return "https://$trimmed"
     }
 
     private fun derivePublicKey(privateKeyHex: String): String {

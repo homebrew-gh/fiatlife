@@ -2,6 +2,7 @@ package com.fiatlife.app.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.repository.SalaryRepository
 import com.fiatlife.app.domain.model.*
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -31,7 +32,8 @@ data class SalaryState(
 
 @HiltViewModel
 class SalaryViewModel @Inject constructor(
-    private val repository: SalaryRepository
+    private val repository: SalaryRepository,
+    private val nostrClient: NostrClient
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SalaryState())
