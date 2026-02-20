@@ -53,6 +53,8 @@ class NostrClient @Inject constructor(
     }
 
     fun connect(relayUrl: String, signer: NostrSigner) {
+        if (_connectionState.value && this.relayUrl == relayUrl) return
+
         this.relayUrl = relayUrl
         this.signer = signer
         this.isAuthenticated = false
@@ -65,6 +67,7 @@ class NostrClient @Inject constructor(
 
         webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                Log.d(TAG, "WebSocket open to $relayUrl")
                 _connectionState.value = true
                 _messages.tryEmit(NostrMessage.Connected)
                 scope.launch { drainPendingQueue() }
@@ -81,11 +84,22 @@ class NostrClient @Inject constructor(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                Log.w(TAG, "WebSocket failure: ${t.message}")
                 _connectionState.value = false
                 _messages.tryEmit(NostrMessage.Error(t))
-                scheduleReconnect()
             }
         })
+    }
+
+    /**
+     * Reconnect to the relay if we have a saved URL and signer but aren't currently connected.
+     * Used by repositories before publishing so saves don't silently drop.
+     */
+    fun ensureConnected() {
+        if (_connectionState.value) return
+        val s = signer ?: return
+        if (relayUrl.isEmpty()) return
+        connect(relayUrl, s)
     }
 
     fun disconnect() {
@@ -137,15 +151,12 @@ class NostrClient @Inject constructor(
         sendOrQueue(message)
     }
 
-    /**
-     * Encrypt and publish app data using the configured signer.
-     * Returns false if no signer is configured or encryption/signing fails.
-     */
     suspend fun publishEncryptedAppData(
         dTag: String,
         jsonContent: String
     ): Boolean {
         val s = signer ?: return false
+        ensureConnected()
         val encrypted = s.nip44Encrypt(jsonContent, s.pubkeyHex) ?: return false
 
         val unsignedJson = NostrEvent.buildUnsignedJson(
@@ -159,11 +170,13 @@ class NostrClient @Inject constructor(
     }
 
     /**
-     * Subscribe to app data events and decrypt them using the configured signer.
+     * Subscribe to app data events and decrypt them. Collects events until
+     * the relay sends EOSE (End of Stored Events), then closes the subscription
+     * and terminates the flow. Safe for one-shot sync operations.
+     *
      * When [dTag] is provided, only events with that exact d-tag are returned.
      * When [dTagPrefix] is provided (and [dTag] is null), events whose d-tag
-     * starts with the prefix are returned. This prevents cross-app contamination
-     * when multiple apps store kind 30078 events on the same relay.
+     * starts with the prefix are returned.
      */
     fun subscribeToAppData(
         dTag: String? = null,
@@ -181,10 +194,17 @@ class NostrClient @Inject constructor(
         )
 
         val subId = subscribe(filter)
+        Log.d(TAG, "Subscribed for app data: subId=$subId, dTag=$dTag, dTagPrefix=$dTagPrefix")
 
         try {
             messages.collect { msg ->
                 when (msg) {
+                    is NostrMessage.Eose -> {
+                        if (msg.subscriptionId == subId) {
+                            Log.d(TAG, "EOSE received for $subId, closing subscription")
+                            throw EoseSignal()
+                        }
+                    }
                     is NostrMessage.EventReceived -> {
                         if (msg.subscriptionId == subId) {
                             val eventDTag = msg.event.tags
@@ -197,19 +217,26 @@ class NostrClient @Inject constructor(
 
                             try {
                                 val decrypted = s.nip44Decrypt(msg.event.content, s.pubkeyHex)
-                                if (decrypted != null) emit(eventDTag to decrypted)
+                                if (decrypted != null) {
+                                    Log.d(TAG, "Decrypted event: dTag=$eventDTag")
+                                    emit(eventDTag to decrypted)
+                                }
                             } catch (e: Exception) {
-                                _messages.tryEmit(NostrMessage.Error(e))
+                                Log.w(TAG, "Decryption failed for event ${msg.event.id}: ${e.message}")
                             }
                         }
                     }
                     else -> {}
                 }
             }
+        } catch (_: EoseSignal) {
+            // Normal termination after EOSE
         } finally {
             closeSubscription(subId)
         }
     }
+
+    private class EoseSignal : Exception()
 
     private fun handleMessage(text: String) {
         try {
@@ -230,19 +257,23 @@ class NostrClient @Inject constructor(
                 }
                 "EOSE" -> {
                     val subId = array[1].jsonPrimitive.content
+                    Log.d(TAG, "EOSE from relay for sub: $subId")
                     _messages.tryEmit(NostrMessage.Eose(subId))
                 }
                 "NOTICE" -> {
                     val message = array[1].jsonPrimitive.content
+                    Log.d(TAG, "NOTICE: $message")
                     _messages.tryEmit(NostrMessage.Notice(message))
                 }
                 "AUTH" -> {
                     val challenge = array[1].jsonPrimitive.content
+                    Log.d(TAG, "AUTH challenge received")
                     _messages.tryEmit(NostrMessage.AuthChallenge(challenge))
                     handleAuthChallenge(challenge)
                 }
             }
         } catch (e: Exception) {
+            Log.e(TAG, "Error parsing message: ${e.message}")
             _messages.tryEmit(NostrMessage.Error(e))
         }
     }
@@ -264,6 +295,7 @@ class NostrClient @Inject constructor(
                 if (signedJson != null) {
                     webSocket?.send("""["AUTH",$signedJson]""")
                     isAuthenticated = true
+                    Log.d(TAG, "Auth response sent, draining pending queue")
                     drainPendingQueue()
                 } else {
                     Log.w(TAG, "Auth signing failed/rejected")
@@ -283,21 +315,12 @@ class NostrClient @Inject constructor(
         }
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun drainPendingQueue() {
         while (!pendingQueue.isEmpty) {
             val msg = pendingQueue.receive()
             if (_connectionState.value) {
                 webSocket?.send(msg)
-            }
-        }
-    }
-
-    private fun scheduleReconnect() {
-        scope.launch {
-            delay(5000)
-            val s = signer
-            if (s != null && relayUrl.isNotEmpty()) {
-                connect(relayUrl, s)
             }
         }
     }
