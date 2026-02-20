@@ -5,6 +5,9 @@ import androidx.datastore.core.DataStore;
 import androidx.datastore.preferences.core.Preferences;
 import com.fiatlife.app.data.blossom.BlossomClient;
 import com.fiatlife.app.data.nostr.NostrClient;
+import com.fiatlife.app.data.repository.BillRepository;
+import com.fiatlife.app.data.repository.GoalRepository;
+import com.fiatlife.app.data.repository.SalaryRepository;
 import com.fiatlife.app.data.security.PinPrefs;
 import dagger.internal.DaggerGenerated;
 import dagger.internal.Factory;
@@ -36,31 +39,47 @@ public final class SettingsViewModel_Factory implements Factory<SettingsViewMode
 
   private final Provider<BlossomClient> blossomClientProvider;
 
+  private final Provider<SalaryRepository> salaryRepositoryProvider;
+
+  private final Provider<BillRepository> billRepositoryProvider;
+
+  private final Provider<GoalRepository> goalRepositoryProvider;
+
   private final Provider<PinPrefs> pinPrefsProvider;
 
   public SettingsViewModel_Factory(Provider<Context> appContextProvider,
       Provider<DataStore<Preferences>> dataStoreProvider, Provider<NostrClient> nostrClientProvider,
-      Provider<BlossomClient> blossomClientProvider, Provider<PinPrefs> pinPrefsProvider) {
+      Provider<BlossomClient> blossomClientProvider,
+      Provider<SalaryRepository> salaryRepositoryProvider,
+      Provider<BillRepository> billRepositoryProvider,
+      Provider<GoalRepository> goalRepositoryProvider, Provider<PinPrefs> pinPrefsProvider) {
     this.appContextProvider = appContextProvider;
     this.dataStoreProvider = dataStoreProvider;
     this.nostrClientProvider = nostrClientProvider;
     this.blossomClientProvider = blossomClientProvider;
+    this.salaryRepositoryProvider = salaryRepositoryProvider;
+    this.billRepositoryProvider = billRepositoryProvider;
+    this.goalRepositoryProvider = goalRepositoryProvider;
     this.pinPrefsProvider = pinPrefsProvider;
   }
 
   @Override
   public SettingsViewModel get() {
-    return newInstance(appContextProvider.get(), dataStoreProvider.get(), nostrClientProvider.get(), blossomClientProvider.get(), pinPrefsProvider.get());
+    return newInstance(appContextProvider.get(), dataStoreProvider.get(), nostrClientProvider.get(), blossomClientProvider.get(), salaryRepositoryProvider.get(), billRepositoryProvider.get(), goalRepositoryProvider.get(), pinPrefsProvider.get());
   }
 
   public static SettingsViewModel_Factory create(Provider<Context> appContextProvider,
       Provider<DataStore<Preferences>> dataStoreProvider, Provider<NostrClient> nostrClientProvider,
-      Provider<BlossomClient> blossomClientProvider, Provider<PinPrefs> pinPrefsProvider) {
-    return new SettingsViewModel_Factory(appContextProvider, dataStoreProvider, nostrClientProvider, blossomClientProvider, pinPrefsProvider);
+      Provider<BlossomClient> blossomClientProvider,
+      Provider<SalaryRepository> salaryRepositoryProvider,
+      Provider<BillRepository> billRepositoryProvider,
+      Provider<GoalRepository> goalRepositoryProvider, Provider<PinPrefs> pinPrefsProvider) {
+    return new SettingsViewModel_Factory(appContextProvider, dataStoreProvider, nostrClientProvider, blossomClientProvider, salaryRepositoryProvider, billRepositoryProvider, goalRepositoryProvider, pinPrefsProvider);
   }
 
   public static SettingsViewModel newInstance(Context appContext, DataStore<Preferences> dataStore,
-      NostrClient nostrClient, BlossomClient blossomClient, PinPrefs pinPrefs) {
-    return new SettingsViewModel(appContext, dataStore, nostrClient, blossomClient, pinPrefs);
+      NostrClient nostrClient, BlossomClient blossomClient, SalaryRepository salaryRepository,
+      BillRepository billRepository, GoalRepository goalRepository, PinPrefs pinPrefs) {
+    return new SettingsViewModel(appContext, dataStore, nostrClient, blossomClient, salaryRepository, billRepository, goalRepository, pinPrefs);
   }
 }
