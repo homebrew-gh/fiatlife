@@ -4,6 +4,9 @@ import androidx.datastore.core.DataStore;
 import androidx.datastore.preferences.core.Preferences;
 import com.fiatlife.app.data.blossom.BlossomClient;
 import com.fiatlife.app.data.nostr.NostrClient;
+import com.fiatlife.app.data.repository.BillRepository;
+import com.fiatlife.app.data.repository.GoalRepository;
+import com.fiatlife.app.data.repository.SalaryRepository;
 import com.fiatlife.app.data.security.PinPrefs;
 import dagger.MembersInjector;
 import dagger.internal.DaggerGenerated;
@@ -34,19 +37,33 @@ public final class MainActivity_MembersInjector implements MembersInjector<MainA
 
   private final Provider<PinPrefs> pinPrefsProvider;
 
+  private final Provider<SalaryRepository> salaryRepositoryProvider;
+
+  private final Provider<BillRepository> billRepositoryProvider;
+
+  private final Provider<GoalRepository> goalRepositoryProvider;
+
   public MainActivity_MembersInjector(Provider<DataStore<Preferences>> dataStoreProvider,
       Provider<NostrClient> nostrClientProvider, Provider<BlossomClient> blossomClientProvider,
-      Provider<PinPrefs> pinPrefsProvider) {
+      Provider<PinPrefs> pinPrefsProvider, Provider<SalaryRepository> salaryRepositoryProvider,
+      Provider<BillRepository> billRepositoryProvider,
+      Provider<GoalRepository> goalRepositoryProvider) {
     this.dataStoreProvider = dataStoreProvider;
     this.nostrClientProvider = nostrClientProvider;
     this.blossomClientProvider = blossomClientProvider;
     this.pinPrefsProvider = pinPrefsProvider;
+    this.salaryRepositoryProvider = salaryRepositoryProvider;
+    this.billRepositoryProvider = billRepositoryProvider;
+    this.goalRepositoryProvider = goalRepositoryProvider;
   }
 
   public static MembersInjector<MainActivity> create(
       Provider<DataStore<Preferences>> dataStoreProvider, Provider<NostrClient> nostrClientProvider,
-      Provider<BlossomClient> blossomClientProvider, Provider<PinPrefs> pinPrefsProvider) {
-    return new MainActivity_MembersInjector(dataStoreProvider, nostrClientProvider, blossomClientProvider, pinPrefsProvider);
+      Provider<BlossomClient> blossomClientProvider, Provider<PinPrefs> pinPrefsProvider,
+      Provider<SalaryRepository> salaryRepositoryProvider,
+      Provider<BillRepository> billRepositoryProvider,
+      Provider<GoalRepository> goalRepositoryProvider) {
+    return new MainActivity_MembersInjector(dataStoreProvider, nostrClientProvider, blossomClientProvider, pinPrefsProvider, salaryRepositoryProvider, billRepositoryProvider, goalRepositoryProvider);
   }
 
   @Override
@@ -55,6 +72,9 @@ public final class MainActivity_MembersInjector implements MembersInjector<MainA
     injectNostrClient(instance, nostrClientProvider.get());
     injectBlossomClient(instance, blossomClientProvider.get());
     injectPinPrefs(instance, pinPrefsProvider.get());
+    injectSalaryRepository(instance, salaryRepositoryProvider.get());
+    injectBillRepository(instance, billRepositoryProvider.get());
+    injectGoalRepository(instance, goalRepositoryProvider.get());
   }
 
   @InjectedFieldSignature("com.fiatlife.app.MainActivity.dataStore")
@@ -75,5 +95,21 @@ public final class MainActivity_MembersInjector implements MembersInjector<MainA
   @InjectedFieldSignature("com.fiatlife.app.MainActivity.pinPrefs")
   public static void injectPinPrefs(MainActivity instance, PinPrefs pinPrefs) {
     instance.pinPrefs = pinPrefs;
+  }
+
+  @InjectedFieldSignature("com.fiatlife.app.MainActivity.salaryRepository")
+  public static void injectSalaryRepository(MainActivity instance,
+      SalaryRepository salaryRepository) {
+    instance.salaryRepository = salaryRepository;
+  }
+
+  @InjectedFieldSignature("com.fiatlife.app.MainActivity.billRepository")
+  public static void injectBillRepository(MainActivity instance, BillRepository billRepository) {
+    instance.billRepository = billRepository;
+  }
+
+  @InjectedFieldSignature("com.fiatlife.app.MainActivity.goalRepository")
+  public static void injectGoalRepository(MainActivity instance, GoalRepository goalRepository) {
+    instance.goalRepository = goalRepository;
   }
 }
