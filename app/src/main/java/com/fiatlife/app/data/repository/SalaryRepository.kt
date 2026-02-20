@@ -27,7 +27,7 @@ class SalaryRepository @Inject constructor(
         }
     }
 
-    suspend fun saveSalaryConfig(config: SalaryConfig, privateKey: ByteArray?) {
+    suspend fun saveSalaryConfig(config: SalaryConfig) {
         val configWithId = if (config.id.isEmpty()) {
             config.copy(id = UUID.randomUUID().toString(), updatedAt = System.currentTimeMillis())
         } else {
@@ -44,18 +44,17 @@ class SalaryRepository @Inject constructor(
             )
         )
 
-        if (privateKey != null) {
+        if (nostrClient.hasSigner) {
             try {
-                nostrClient.publishEncryptedAppData(NOSTR_D_TAG, jsonStr, privateKey)
-            } catch (_: Exception) {
-                // Sync will retry later
-            }
+                nostrClient.publishEncryptedAppData(NOSTR_D_TAG, jsonStr)
+            } catch (_: Exception) { }
         }
     }
 
-    suspend fun syncFromNostr(pubkey: String, privateKey: ByteArray) {
+    suspend fun syncFromNostr() {
+        if (!nostrClient.hasSigner) return
         try {
-            nostrClient.subscribeToAppData(pubkey, NOSTR_D_TAG).collect { decrypted ->
+            nostrClient.subscribeToAppData(dTag = NOSTR_D_TAG).collect { (_, decrypted) ->
                 val config = json.decodeFromString<SalaryConfig>(decrypted)
                 salaryDao.upsert(
                     SalaryEntity(
@@ -65,8 +64,6 @@ class SalaryRepository @Inject constructor(
                     )
                 )
             }
-        } catch (_: Exception) {
-            // Will retry on next sync
-        }
+        } catch (_: Exception) { }
     }
 }

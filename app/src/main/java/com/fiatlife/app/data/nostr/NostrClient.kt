@@ -1,14 +1,15 @@
 package com.fiatlife.app.data.nostr
 
+import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.json.*
 import okhttp3.*
-import java.util.UUID
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+
+private const val TAG = "NostrClient"
 
 sealed class NostrMessage {
     data class EventReceived(val subscriptionId: String, val event: NostrEvent) : NostrMessage()
@@ -27,7 +28,7 @@ class NostrClient @Inject constructor(
 ) {
     private var webSocket: WebSocket? = null
     private var relayUrl: String = ""
-    private var privateKey: ByteArray? = null
+    private var signer: NostrSigner? = null
     private var isAuthenticated = false
 
     private val _messages = MutableSharedFlow<NostrMessage>(extraBufferCapacity = 64)
@@ -39,9 +40,11 @@ class NostrClient @Inject constructor(
     private val pendingQueue = Channel<String>(Channel.BUFFERED)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    fun connect(relayUrl: String, privateKey: ByteArray) {
+    val hasSigner: Boolean get() = signer != null
+
+    fun connect(relayUrl: String, signer: NostrSigner) {
         this.relayUrl = relayUrl
-        this.privateKey = privateKey
+        this.signer = signer
         this.isAuthenticated = false
 
         disconnect()
@@ -82,6 +85,16 @@ class NostrClient @Inject constructor(
         isAuthenticated = false
     }
 
+    fun clearSigner() {
+        disconnect()
+        signer = null
+    }
+
+    suspend fun publishSignedEventJson(signedEventJson: String): Boolean {
+        val message = """["EVENT",$signedEventJson]"""
+        return sendOrQueue(message)
+    }
+
     suspend fun publishEvent(event: NostrEvent): Boolean {
         val message = buildJsonArray {
             add("EVENT")
@@ -93,7 +106,7 @@ class NostrClient @Inject constructor(
 
     suspend fun subscribe(
         filter: NostrFilter,
-        subscriptionId: String = UUID.randomUUID().toString().take(8)
+        subscriptionId: String = java.util.UUID.randomUUID().toString().take(8)
     ): String {
         val message = buildJsonArray {
             add("REQ")
@@ -114,42 +127,67 @@ class NostrClient @Inject constructor(
         sendOrQueue(message)
     }
 
+    /**
+     * Encrypt and publish app data using the configured signer.
+     * Returns false if no signer is configured or encryption/signing fails.
+     */
     suspend fun publishEncryptedAppData(
         dTag: String,
-        jsonContent: String,
-        privateKey: ByteArray
+        jsonContent: String
     ): Boolean {
-        val encrypted = Nip44Encryption.encryptToSelf(jsonContent, privateKey)
-        val event = NostrEvent.createAppData(privateKey, dTag, encrypted)
-        return publishEvent(event)
+        val s = signer ?: return false
+        val encrypted = s.nip44Encrypt(jsonContent, s.pubkeyHex) ?: return false
+
+        val unsignedJson = NostrEvent.buildUnsignedJson(
+            pubkeyHex = s.pubkeyHex,
+            kind = NostrEvent.KIND_APP_SPECIFIC_DATA,
+            content = encrypted,
+            tags = listOf(listOf("d", dTag))
+        )
+        val signedJson = s.signEvent(unsignedJson) ?: return false
+        return publishSignedEventJson(signedJson)
     }
 
+    /**
+     * Subscribe to app data events and decrypt them using the configured signer.
+     * When [dTag] is provided, only events with that exact d-tag are returned.
+     * When [dTagPrefix] is provided (and [dTag] is null), events whose d-tag
+     * starts with the prefix are returned. This prevents cross-app contamination
+     * when multiple apps store kind 30078 events on the same relay.
+     */
     fun subscribeToAppData(
-        pubkey: String,
-        dTag: String? = null
-    ): Flow<String> = flow {
+        dTag: String? = null,
+        dTagPrefix: String? = null
+    ): Flow<Pair<String, String>> = flow {
+        val s = signer ?: throw IllegalStateException("No signer configured")
+
         val tagFilters = mutableMapOf<String, List<String>>()
         if (dTag != null) tagFilters["d"] = listOf(dTag)
 
         val filter = NostrFilter(
-            authors = listOf(pubkey),
+            authors = listOf(s.pubkeyHex),
             kinds = listOf(NostrEvent.KIND_APP_SPECIFIC_DATA),
             tagFilters = tagFilters
         )
 
         val subId = subscribe(filter)
-        val pk = privateKey ?: throw IllegalStateException("Not connected")
 
         try {
             messages.collect { msg ->
                 when (msg) {
                     is NostrMessage.EventReceived -> {
                         if (msg.subscriptionId == subId) {
+                            val eventDTag = msg.event.tags
+                                .firstOrNull { it.size >= 2 && it[0] == "d" }
+                                ?.getOrNull(1) ?: ""
+
+                            if (dTagPrefix != null && !eventDTag.startsWith(dTagPrefix)) {
+                                return@collect
+                            }
+
                             try {
-                                val decrypted = Nip44Encryption.decryptFromSelf(
-                                    msg.event.content, pk
-                                )
-                                emit(decrypted)
+                                val decrypted = s.nip44Decrypt(msg.event.content, s.pubkeyHex)
+                                if (decrypted != null) emit(eventDTag to decrypted)
                             } catch (e: Exception) {
                                 _messages.tryEmit(NostrMessage.Error(e))
                             }
@@ -200,11 +238,30 @@ class NostrClient @Inject constructor(
     }
 
     private fun handleAuthChallenge(challenge: String) {
-        val pk = privateKey ?: return
-        val authEvent = Nip42Auth.createAuthEvent(pk, challenge, relayUrl)
-        val message = Nip42Auth.buildAuthMessage(authEvent)
-        webSocket?.send(message)
-        isAuthenticated = true
+        val s = signer ?: return
+        scope.launch {
+            try {
+                val unsignedJson = NostrEvent.buildUnsignedJson(
+                    pubkeyHex = s.pubkeyHex,
+                    kind = 22242,
+                    content = "",
+                    tags = listOf(
+                        listOf("relay", relayUrl),
+                        listOf("challenge", challenge)
+                    )
+                )
+                val signedJson = s.signEvent(unsignedJson)
+                if (signedJson != null) {
+                    webSocket?.send("""["AUTH",$signedJson]""")
+                    isAuthenticated = true
+                    drainPendingQueue()
+                } else {
+                    Log.w(TAG, "Auth signing failed/rejected")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Auth challenge handling failed: ${e.message}")
+            }
+        }
     }
 
     private suspend fun sendOrQueue(message: String): Boolean {
@@ -228,9 +285,9 @@ class NostrClient @Inject constructor(
     private fun scheduleReconnect() {
         scope.launch {
             delay(5000)
-            val pk = privateKey
-            if (pk != null && relayUrl.isNotEmpty()) {
-                connect(relayUrl, pk)
+            val s = signer
+            if (s != null && relayUrl.isNotEmpty()) {
+                connect(relayUrl, s)
             }
         }
     }

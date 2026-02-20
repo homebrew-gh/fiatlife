@@ -1,8 +1,8 @@
 package com.fiatlife.app.data.blossom
 
 import com.fiatlife.app.data.nostr.NostrEvent
+import com.fiatlife.app.data.nostr.NostrSigner
 import com.fiatlife.app.data.nostr.toHex
-import fr.acinq.secp256k1.Secp256k1
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -29,12 +29,14 @@ class BlossomClient @Inject constructor(
     private val okHttpClient: OkHttpClient
 ) {
     private var serverUrl: String = ""
-    private var privateKey: ByteArray? = null
+    private var signer: NostrSigner? = null
 
-    fun configure(serverUrl: String, privateKey: ByteArray) {
+    fun configure(serverUrl: String, signer: NostrSigner) {
         this.serverUrl = serverUrl.trimEnd('/')
-        this.privateKey = privateKey
+        this.signer = signer
     }
+
+    fun isConfigured(): Boolean = serverUrl.isNotEmpty() && signer != null
 
     suspend fun uploadBlob(
         data: ByteArray,
@@ -42,12 +44,13 @@ class BlossomClient @Inject constructor(
         filename: String? = null
     ): Result<BlobDescriptor> = withContext(Dispatchers.IO) {
         try {
-            val pk = privateKey ?: return@withContext Result.failure(
+            val s = signer ?: return@withContext Result.failure(
                 IllegalStateException("Not configured")
             )
 
             val sha256 = sha256Hex(data)
-            val authHeader = createAuthHeader(pk, "upload", sha256)
+            val authHeader = createAuthHeader(s, "upload", sha256)
+                ?: return@withContext Result.failure(IOException("Failed to create auth header"))
 
             val requestBuilder = Request.Builder()
                 .url("$serverUrl/upload")
@@ -77,11 +80,12 @@ class BlossomClient @Inject constructor(
 
     suspend fun getBlob(sha256: String): Result<ByteArray> = withContext(Dispatchers.IO) {
         try {
-            val pk = privateKey ?: return@withContext Result.failure(
+            val s = signer ?: return@withContext Result.failure(
                 IllegalStateException("Not configured")
             )
 
-            val authHeader = createAuthHeader(pk, "get", sha256)
+            val authHeader = createAuthHeader(s, "get", sha256)
+                ?: return@withContext Result.failure(IOException("Failed to create auth header"))
 
             val request = Request.Builder()
                 .url("$serverUrl/$sha256")
@@ -107,11 +111,12 @@ class BlossomClient @Inject constructor(
 
     suspend fun listBlobs(pubkey: String): Result<List<BlobDescriptor>> = withContext(Dispatchers.IO) {
         try {
-            val pk = privateKey ?: return@withContext Result.failure(
+            val s = signer ?: return@withContext Result.failure(
                 IllegalStateException("Not configured")
             )
 
-            val authHeader = createAuthHeader(pk, "list", null)
+            val authHeader = createAuthHeader(s, "list", null)
+                ?: return@withContext Result.failure(IOException("Failed to create auth header"))
 
             val request = Request.Builder()
                 .url("$serverUrl/list/$pubkey")
@@ -136,11 +141,12 @@ class BlossomClient @Inject constructor(
 
     suspend fun deleteBlob(sha256: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            val pk = privateKey ?: return@withContext Result.failure(
+            val s = signer ?: return@withContext Result.failure(
                 IllegalStateException("Not configured")
             )
 
-            val authHeader = createAuthHeader(pk, "delete", sha256)
+            val authHeader = createAuthHeader(s, "delete", sha256)
+                ?: return@withContext Result.failure(IOException("Failed to create auth header"))
 
             val request = Request.Builder()
                 .url("$serverUrl/$sha256")
@@ -160,11 +166,11 @@ class BlossomClient @Inject constructor(
         }
     }
 
-    private fun createAuthHeader(
-        privateKey: ByteArray,
+    private suspend fun createAuthHeader(
+        signer: NostrSigner,
         action: String,
         sha256: String?
-    ): String {
+    ): String? {
         val tags = mutableListOf(
             listOf("t", action),
             listOf("expiration", ((System.currentTimeMillis() / 1000) + 300).toString())
@@ -173,16 +179,16 @@ class BlossomClient @Inject constructor(
             tags.add(listOf("x", sha256))
         }
 
-        val event = NostrEvent.create(
-            privateKey = privateKey,
+        val unsignedJson = NostrEvent.buildUnsignedJson(
+            pubkeyHex = signer.pubkeyHex,
             kind = 24242,
             content = "Authorize $action",
             tags = tags
         )
 
-        val json = Json.encodeToString(NostrEvent.serializer(), event)
+        val signedJson = signer.signEvent(unsignedJson) ?: return null
         return android.util.Base64.encodeToString(
-            json.toByteArray(Charsets.UTF_8),
+            signedJson.toByteArray(Charsets.UTF_8),
             android.util.Base64.NO_WRAP
         )
     }

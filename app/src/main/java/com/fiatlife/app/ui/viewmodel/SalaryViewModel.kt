@@ -1,10 +1,7 @@
 package com.fiatlife.app.ui.viewmodel
 
-import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.Preferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.fiatlife.app.data.nostr.hexToByteArray
 import com.fiatlife.app.data.repository.SalaryRepository
 import com.fiatlife.app.domain.model.*
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -28,8 +25,7 @@ data class SalaryState(
 
 @HiltViewModel
 class SalaryViewModel @Inject constructor(
-    private val repository: SalaryRepository,
-    private val dataStore: DataStore<Preferences>
+    private val repository: SalaryRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SalaryState())
@@ -178,9 +174,7 @@ class SalaryViewModel @Inject constructor(
         viewModelScope.launch {
             _state.update { it.copy(isSaving = true) }
             try {
-                val privateKey = dataStore.data.first()[SettingsViewModel.KEY_PRIVATE_KEY]
-                    ?.takeIf { it.isNotEmpty() }?.hexToByteArray()
-                repository.saveSalaryConfig(_state.value.config, privateKey)
+                repository.saveSalaryConfig(_state.value.config)
                 _state.update { it.copy(isSaving = false, message = "Saved") }
             } catch (e: Exception) {
                 _state.update { it.copy(isSaving = false, message = "Error: ${e.message}") }

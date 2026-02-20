@@ -56,6 +56,32 @@ data class NostrEvent(
             )
         }
 
+        /**
+         * Build an unsigned event JSON string suitable for passing to [NostrSigner.signEvent].
+         * The id and sig fields are empty placeholders.
+         */
+        fun buildUnsignedJson(
+            pubkeyHex: String,
+            kind: Int,
+            content: String,
+            tags: List<List<String>> = emptyList()
+        ): String {
+            val createdAt = System.currentTimeMillis() / 1000
+            return buildJsonObject {
+                put("id", "")
+                put("pubkey", pubkeyHex)
+                put("created_at", createdAt)
+                put("kind", kind)
+                put("tags", buildJsonArray {
+                    tags.forEach { tag ->
+                        add(buildJsonArray { tag.forEach { add(it) } })
+                    }
+                })
+                put("content", content)
+                put("sig", "")
+            }.toString()
+        }
+
         fun createAppData(
             privateKey: ByteArray,
             dTag: String,

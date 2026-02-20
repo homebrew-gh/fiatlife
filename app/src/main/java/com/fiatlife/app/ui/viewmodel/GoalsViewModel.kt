@@ -1,13 +1,9 @@
 package com.fiatlife.app.ui.viewmodel
 
-import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.Preferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.fiatlife.app.data.nostr.hexToByteArray
 import com.fiatlife.app.data.repository.GoalRepository
 import com.fiatlife.app.domain.model.FinancialGoal
-import com.fiatlife.app.domain.model.GoalCategory
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -28,8 +24,7 @@ data class GoalsState(
 
 @HiltViewModel
 class GoalsViewModel @Inject constructor(
-    private val repository: GoalRepository,
-    private val dataStore: DataStore<Preferences>
+    private val repository: GoalRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(GoalsState())
@@ -78,9 +73,7 @@ class GoalsViewModel @Inject constructor(
         viewModelScope.launch {
             _state.update { it.copy(isSaving = true) }
             try {
-                val privateKey = dataStore.data.first()[SettingsViewModel.KEY_PRIVATE_KEY]
-                    ?.takeIf { it.isNotEmpty() }?.hexToByteArray()
-                repository.saveGoal(goal, privateKey)
+                repository.saveGoal(goal)
                 _state.update {
                     it.copy(isSaving = false, showAddDialog = false, editingGoal = null)
                 }
@@ -93,9 +86,7 @@ class GoalsViewModel @Inject constructor(
     fun updateProgress(goalId: String, newAmount: Double) {
         viewModelScope.launch {
             try {
-                val privateKey = dataStore.data.first()[SettingsViewModel.KEY_PRIVATE_KEY]
-                    ?.takeIf { it.isNotEmpty() }?.hexToByteArray()
-                repository.updateGoalProgress(goalId, newAmount, privateKey)
+                repository.updateGoalProgress(goalId, newAmount)
                 _state.update {
                     it.copy(showUpdateProgressDialog = false, updatingGoal = null)
                 }

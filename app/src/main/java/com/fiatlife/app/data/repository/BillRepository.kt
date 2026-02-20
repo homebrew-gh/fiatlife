@@ -36,7 +36,7 @@ class BillRepository @Inject constructor(
         }
     }
 
-    suspend fun saveBill(bill: Bill, privateKey: ByteArray?) {
+    suspend fun saveBill(bill: Bill) {
         val billWithId = if (bill.id.isEmpty()) {
             bill.copy(
                 id = UUID.randomUUID().toString(),
@@ -58,12 +58,11 @@ class BillRepository @Inject constructor(
             )
         )
 
-        if (privateKey != null) {
+        if (nostrClient.hasSigner) {
             try {
                 nostrClient.publishEncryptedAppData(
                     "$NOSTR_D_TAG_PREFIX${billWithId.id}",
-                    jsonStr,
-                    privateKey
+                    jsonStr
                 )
             } catch (_: Exception) { }
         }
@@ -91,9 +90,10 @@ class BillRepository @Inject constructor(
         return blossomClient.getBlob(sha256)
     }
 
-    suspend fun syncFromNostr(pubkey: String, privateKey: ByteArray) {
+    suspend fun syncFromNostr() {
+        if (!nostrClient.hasSigner) return
         try {
-            nostrClient.subscribeToAppData(pubkey, null).collect { decrypted ->
+            nostrClient.subscribeToAppData(dTagPrefix = NOSTR_D_TAG_PREFIX).collect { (_, decrypted) ->
                 try {
                     val bill = json.decodeFromString<Bill>(decrypted)
                     if (bill.id.isNotEmpty()) {

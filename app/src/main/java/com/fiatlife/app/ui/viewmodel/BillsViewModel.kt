@@ -1,10 +1,7 @@
 package com.fiatlife.app.ui.viewmodel
 
-import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.Preferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.fiatlife.app.data.nostr.hexToByteArray
 import com.fiatlife.app.data.repository.BillRepository
 import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.domain.model.BillCategory
@@ -27,8 +24,7 @@ data class BillsState(
 
 @HiltViewModel
 class BillsViewModel @Inject constructor(
-    private val repository: BillRepository,
-    private val dataStore: DataStore<Preferences>
+    private val repository: BillRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(BillsState())
@@ -82,9 +78,7 @@ class BillsViewModel @Inject constructor(
         viewModelScope.launch {
             _state.update { it.copy(isSaving = true) }
             try {
-                val privateKey = dataStore.data.first()[SettingsViewModel.KEY_PRIVATE_KEY]
-                    ?.takeIf { it.isNotEmpty() }?.hexToByteArray()
-                repository.saveBill(bill, privateKey)
+                repository.saveBill(bill)
                 _state.update { it.copy(isSaving = false, showAddDialog = false, editingBill = null) }
             } catch (e: Exception) {
                 _state.update { it.copy(isSaving = false, message = "Error: ${e.message}") }
@@ -104,9 +98,7 @@ class BillsViewModel @Inject constructor(
                 isPaid = !bill.isPaid,
                 lastPaidDate = if (!bill.isPaid) System.currentTimeMillis() else bill.lastPaidDate
             )
-            val privateKey = dataStore.data.first()[SettingsViewModel.KEY_PRIVATE_KEY]
-                ?.takeIf { it.isNotEmpty() }?.hexToByteArray()
-            repository.saveBill(updated, privateKey)
+            repository.saveBill(updated)
         }
     }
 

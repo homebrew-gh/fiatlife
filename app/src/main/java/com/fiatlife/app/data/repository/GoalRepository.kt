@@ -27,7 +27,7 @@ class GoalRepository @Inject constructor(
         }
     }
 
-    suspend fun saveGoal(goal: FinancialGoal, privateKey: ByteArray?) {
+    suspend fun saveGoal(goal: FinancialGoal) {
         val goalWithId = if (goal.id.isEmpty()) {
             goal.copy(
                 id = UUID.randomUUID().toString(),
@@ -49,12 +49,11 @@ class GoalRepository @Inject constructor(
             )
         )
 
-        if (privateKey != null) {
+        if (nostrClient.hasSigner) {
             try {
                 nostrClient.publishEncryptedAppData(
                     "$NOSTR_D_TAG_PREFIX${goalWithId.id}",
-                    jsonStr,
-                    privateKey
+                    jsonStr
                 )
             } catch (_: Exception) { }
         }
@@ -62,13 +61,12 @@ class GoalRepository @Inject constructor(
 
     suspend fun updateGoalProgress(
         goalId: String,
-        newAmount: Double,
-        privateKey: ByteArray?
+        newAmount: Double
     ) {
         val entity = goalDao.getById(goalId) ?: return
         val goal = json.decodeFromString<FinancialGoal>(entity.jsonData)
         val updated = goal.copy(currentAmount = newAmount)
-        saveGoal(updated, privateKey)
+        saveGoal(updated)
     }
 
     suspend fun deleteGoal(goal: FinancialGoal) {
@@ -81,9 +79,10 @@ class GoalRepository @Inject constructor(
         )
     }
 
-    suspend fun syncFromNostr(pubkey: String, privateKey: ByteArray) {
+    suspend fun syncFromNostr() {
+        if (!nostrClient.hasSigner) return
         try {
-            nostrClient.subscribeToAppData(pubkey, null).collect { decrypted ->
+            nostrClient.subscribeToAppData(dTagPrefix = NOSTR_D_TAG_PREFIX).collect { (_, decrypted) ->
                 try {
                     val goal = json.decodeFromString<FinancialGoal>(decrypted)
                     if (goal.id.isNotEmpty()) {

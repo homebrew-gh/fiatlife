@@ -10,8 +10,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -25,8 +23,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    var showPrivateKey by remember { mutableStateOf(false) }
-    var importKeyDialog by remember { mutableStateOf(false) }
+    var showLogoutConfirmation by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -82,15 +79,38 @@ fun SettingsScreen(
             }
         }
 
-        // Nostr Key Management
+        // Nostr Identity
         item {
             SectionCard(
                 title = "Nostr Identity",
                 icon = Icons.Filled.Key
             ) {
-                if (state.isKeyGenerated) {
+                if (state.publicKeyHex.isNotEmpty()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (state.authType == "amber")
+                                Icons.Filled.Security else Icons.Filled.Key,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = if (state.authType == "amber")
+                                "Signed in with Amber (NIP-55)"
+                            else "Signed in with local key",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     Text(
-                        text = "Public Key (npub)",
+                        text = "Public Key",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -101,60 +121,12 @@ fun SettingsScreen(
                             modifier = Modifier.padding(vertical = 4.dp)
                         )
                     }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Private Key (nsec)",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        SelectionContainer(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = if (showPrivateKey) state.privateKeyHex
-                                else "••••••••••••••••••••",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                        IconButton(onClick = { showPrivateKey = !showPrivateKey }) {
-                            Icon(
-                                imageVector = if (showPrivateKey) Icons.Filled.VisibilityOff
-                                else Icons.Filled.Visibility,
-                                contentDescription = "Toggle visibility"
-                            )
-                        }
-                    }
                 } else {
                     Text(
-                        text = "No key configured. Generate a new one or import an existing key.",
+                        text = "No identity configured.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = { viewModel.generateNewKey() },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Filled.Add, null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Generate")
-                    }
-                    OutlinedButton(
-                        onClick = { importKeyDialog = true },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Filled.Download, null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Import")
-                    }
                 }
             }
         }
@@ -233,7 +205,7 @@ fun SettingsScreen(
                 )
                 InfoRow(
                     label = "Authentication",
-                    value = "NIP-42 relay auth"
+                    value = if (state.authType == "amber") "NIP-55 (Amber)" else "NIP-42 relay auth"
                 )
             }
         }
@@ -270,6 +242,24 @@ fun SettingsScreen(
             }
         }
 
+        // Logout
+        item {
+            OutlinedButton(
+                onClick = { showLogoutConfirmation = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = MaterialTheme.shapes.large,
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                )
+            ) {
+                Icon(Icons.Filled.Logout, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Sign Out")
+            }
+        }
+
         // About
         item {
             SectionCard(
@@ -292,12 +282,31 @@ fun SettingsScreen(
         item { Spacer(modifier = Modifier.height(80.dp)) }
     }
 
-    if (importKeyDialog) {
-        ImportKeyDialog(
-            onDismiss = { importKeyDialog = false },
-            onImport = { key ->
-                viewModel.importPrivateKey(key)
-                importKeyDialog = false
+    if (showLogoutConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showLogoutConfirmation = false },
+            title = { Text("Sign Out") },
+            text = {
+                Text("This will clear your saved credentials and disconnect from the relay. " +
+                     "Your data remains on the relay and can be restored by signing in again.")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.logout()
+                        showLogoutConfirmation = false
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("Sign Out")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutConfirmation = false }) {
+                    Text("Cancel")
+                }
             }
         )
     }
@@ -322,56 +331,4 @@ private fun InfoRow(label: String, value: String) {
             fontWeight = FontWeight.Medium
         )
     }
-}
-
-@Composable
-private fun ImportKeyDialog(
-    onDismiss: () -> Unit,
-    onImport: (String) -> Unit
-) {
-    var keyInput by remember { mutableStateOf("") }
-    var showKey by remember { mutableStateOf(false) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Import Private Key") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "Enter your private key in hex format",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                OutlinedTextField(
-                    value = keyInput,
-                    onValueChange = { keyInput = it.trim() },
-                    label = { Text("Private Key") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    visualTransformation = if (showKey) VisualTransformation.None
-                    else PasswordVisualTransformation(),
-                    trailingIcon = {
-                        IconButton(onClick = { showKey = !showKey }) {
-                            Icon(
-                                if (showKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                                contentDescription = "Toggle visibility"
-                            )
-                        }
-                    },
-                    shape = MaterialTheme.shapes.medium
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onImport(keyInput) },
-                enabled = keyInput.length == 64
-            ) {
-                Text("Import")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        }
-    )
 }
