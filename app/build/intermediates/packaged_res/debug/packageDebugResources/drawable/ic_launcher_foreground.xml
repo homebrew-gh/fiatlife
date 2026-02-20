@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Dollar sign icon -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,24 L54,28 C47,28.5 42,32 42,38 C42,44 47,47 54,48.5 L54,60 C50,59.5 47,57 46,54 L40,56 C42,61 47,64 54,64.5 L54,68 L58,68 L58,64.5 C65,64 70,60 70,54 C70,48 65,45 58,43.5 L58,32 C62,32.5 64,35 65,37 L71,35 C69,30 65,28.5 58,28 L58,24 Z M54,43.5 C49,42.5 47,41 47,38 C47,35 49,33 54,32.5 Z M58,49 C63,50 65,51.5 65,54.5 C65,57.5 63,59.5 58,60 Z"/>
+</vector>
