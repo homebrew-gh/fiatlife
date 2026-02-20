@@ -41,6 +41,16 @@ class NostrClient @Inject constructor(
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     val hasSigner: Boolean get() = signer != null
+    val currentSigner: NostrSigner? get() = signer
+
+    fun setSigner(signer: NostrSigner) {
+        this.signer = signer
+    }
+
+    fun connect(relayUrl: String) {
+        val s = signer ?: return
+        connect(relayUrl, s)
+    }
 
     fun connect(relayUrl: String, signer: NostrSigner) {
         this.relayUrl = relayUrl

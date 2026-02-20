@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fiatlife.app.ui.components.SectionCard
+import com.fiatlife.app.ui.screens.pin.SetPinSheet
 import com.fiatlife.app.ui.theme.ProfitGreen
 import com.fiatlife.app.ui.viewmodel.SettingsViewModel
 
@@ -24,6 +25,7 @@ fun SettingsScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var showLogoutConfirmation by remember { mutableStateOf(false) }
+    var showSetPinSheet by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -176,12 +178,82 @@ fun SettingsScreen(
                         Icon(Icons.Filled.CloudUpload, contentDescription = null)
                     }
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Used for storing bill statements and attachments",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = if (state.isBlossomConfigured)
+                            Icons.Filled.CheckCircle else Icons.Filled.Cancel,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = if (state.isBlossomConfigured) ProfitGreen
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = if (state.isBlossomConfigured) "Configured \u2014 ready for attachments"
+                            else if (state.blossomUrl.isEmpty()) "Enter a URL and save to enable attachments"
+                            else "Save & Connect to configure",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (state.isBlossomConfigured) ProfitGreen
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        // App PIN Lock
+        item {
+            SectionCard(
+                title = "App Lock",
+                icon = Icons.Filled.Lock
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "PIN Lock",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "Require PIN when returning to app",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = state.isPinLockEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled && !state.hasPinSet) {
+                                showSetPinSheet = true
+                            } else {
+                                viewModel.setPinLockEnabled(enabled)
+                            }
+                        }
+                    )
+                }
+
+                if (state.hasPinSet) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { showSetPinSheet = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.medium
+                    ) {
+                        Icon(
+                            Icons.Filled.Edit,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Change PIN")
+                    }
+                }
             }
         }
 
@@ -309,6 +381,21 @@ fun SettingsScreen(
                 }
             }
         )
+    }
+
+    if (showSetPinSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showSetPinSheet = false }
+        ) {
+            SetPinSheet(
+                onSetPin = { pin ->
+                    val ok = viewModel.pinPrefs.setPin(pin)
+                    if (ok) viewModel.onPinSet()
+                    ok
+                },
+                onDismiss = { showSetPinSheet = false }
+            )
+        }
     }
 }
 

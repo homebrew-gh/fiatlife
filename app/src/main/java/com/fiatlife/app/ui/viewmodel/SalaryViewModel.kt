@@ -10,9 +10,15 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 import javax.inject.Inject
 
+enum class SalaryTab { PAYCHECK, ANNUAL }
+
 data class SalaryState(
     val config: SalaryConfig = SalaryConfig(),
     val calculation: PaycheckCalculation = PaycheckCalculation(),
+    val activeTab: SalaryTab = SalaryTab.PAYCHECK,
+    val annualOvertimeHours: Double = 0.0,
+    val annualProjection: AnnualProjection = AnnualProjection(),
+    val annualBaseProjection: AnnualProjection = AnnualProjection(),
     val isEditing: Boolean = false,
     val showDeductionDialog: Boolean = false,
     val showDepositDialog: Boolean = false,
@@ -44,6 +50,25 @@ class SalaryViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    fun setActiveTab(tab: SalaryTab) {
+        _state.update { state ->
+            val newState = state.copy(activeTab = tab)
+            if (tab == SalaryTab.ANNUAL) recalcAnnual(newState) else newState
+        }
+    }
+
+    fun updateAnnualOvertimeHours(hours: Double) {
+        _state.update { state ->
+            recalcAnnual(state.copy(annualOvertimeHours = hours))
+        }
+    }
+
+    private fun recalcAnnual(state: SalaryState): SalaryState {
+        val withOT = PaycheckCalculator.calculateAnnual(state.config, state.annualOvertimeHours)
+        val baseline = PaycheckCalculator.calculateAnnual(state.config, 0.0)
+        return state.copy(annualProjection = withOT, annualBaseProjection = baseline)
     }
 
     fun updateHourlyRate(rate: Double) {
@@ -185,10 +210,11 @@ class SalaryViewModel @Inject constructor(
     private fun updateConfig(update: (SalaryConfig) -> SalaryConfig) {
         _state.update { state ->
             val newConfig = update(state.config)
-            state.copy(
+            val newState = state.copy(
                 config = newConfig,
                 calculation = PaycheckCalculator.calculate(newConfig)
             )
+            if (state.activeTab == SalaryTab.ANNUAL) recalcAnnual(newState) else newState
         }
     }
 }

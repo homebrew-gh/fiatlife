@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -24,9 +25,11 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.lifecycleScope
 import com.fiatlife.app.data.blossom.BlossomClient
 import com.fiatlife.app.data.nostr.*
+import com.fiatlife.app.data.security.PinPrefs
 import com.fiatlife.app.ui.navigation.FiatLifeNavGraph
 import com.fiatlife.app.ui.screens.login.LoginScreen
 import com.fiatlife.app.ui.screens.login.parseAmberResult
+import com.fiatlife.app.ui.screens.pin.PinLockScreen
 import com.fiatlife.app.ui.theme.FiatLifeTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.first
@@ -43,11 +46,15 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var dataStore: DataStore<Preferences>
     @Inject lateinit var nostrClient: NostrClient
     @Inject lateinit var blossomClient: BlossomClient
+    @Inject lateinit var pinPrefs: PinPrefs
 
     val amberSignerRef = AtomicReference<AmberSigner?>(null)
     lateinit var decryptLauncher: ActivityResultLauncher<Intent>
     lateinit var encryptLauncher: ActivityResultLauncher<Intent>
     lateinit var signLauncher: ActivityResultLauncher<Intent>
+
+    private var needsPinUnlock = mutableStateOf(false)
+    private var isInMainApp = false
 
     companion object {
         val KEY_AUTH_TYPE = stringPreferencesKey("auth_type")
@@ -61,6 +68,15 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE
+        )
+
+        if (pinPrefs.isPinLockEnabled() && pinPrefs.hasPinSet()) {
+            needsPinUnlock.value = true
+        }
 
         val mainHandler = Handler(Looper.getMainLooper())
         var resolvedSignerPackage: String? = null
@@ -121,26 +137,17 @@ class MainActivity : ComponentActivity() {
                 if (isLoggedIn) restoreSession()
             }
 
+            val pinLocked by needsPinUnlock
+
             FiatLifeTheme {
-                if (!isLoggedIn) {
-                    LoginScreen(
-                        onNsecSubmit = { nsecOrHex ->
-                            val keyBytes = nsecToBytes(nsecOrHex)
-                            if (keyBytes != null) {
-                                val hex = keyBytes.toHex()
-                                runBlocking {
-                                    dataStore.edit { prefs ->
-                                        prefs[KEY_AUTH_TYPE] = "local"
-                                        prefs[KEY_PRIVATE_KEY] = hex
-                                        prefs.remove(KEY_AMBER_PUBKEY)
-                                        prefs.remove(KEY_SIGNER_PACKAGE)
-                                    }
-                                }
-                                setupLocalSigner(keyBytes)
-                                true
-                            } else {
-                                val hex = nsecOrHex.trim()
-                                if (hex.length == 64 && hex.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) {
+                when {
+                    !isLoggedIn -> {
+                        isInMainApp = false
+                        LoginScreen(
+                            onNsecSubmit = { nsecOrHex ->
+                                val keyBytes = nsecToBytes(nsecOrHex)
+                                if (keyBytes != null) {
+                                    val hex = keyBytes.toHex()
                                     runBlocking {
                                         dataStore.edit { prefs ->
                                             prefs[KEY_AUTH_TYPE] = "local"
@@ -149,29 +156,59 @@ class MainActivity : ComponentActivity() {
                                             prefs.remove(KEY_SIGNER_PACKAGE)
                                         }
                                     }
-                                    setupLocalSigner(hex.hexToByteArray())
+                                    setupLocalSigner(keyBytes)
                                     true
-                                } else false
+                                } else {
+                                    val hex = nsecOrHex.trim()
+                                    if (hex.length == 64 && hex.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) {
+                                        runBlocking {
+                                            dataStore.edit { prefs ->
+                                                prefs[KEY_AUTH_TYPE] = "local"
+                                                prefs[KEY_PRIVATE_KEY] = hex
+                                                prefs.remove(KEY_AMBER_PUBKEY)
+                                                prefs.remove(KEY_SIGNER_PACKAGE)
+                                            }
+                                        }
+                                        setupLocalSigner(hex.hexToByteArray())
+                                        true
+                                    } else false
+                                }
+                            },
+                            onLoginSuccess = { mainHandler.post { refresh++ } },
+                            onLaunchAmber = {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:"))
+                                intent.putExtra("type", "get_public_key")
+                                intent.putExtra("permissions",
+                                    """[{"type":"nip44_decrypt"},{"type":"nip44_encrypt"},{"type":"sign_event","kind":22242},{"type":"sign_event","kind":24242},{"type":"sign_event","kind":30078}]"""
+                                )
+                                resolvedSignerPackage = packageManager
+                                    .queryIntentActivities(intent, 0)
+                                    .firstOrNull()?.activityInfo?.packageName
+                                Log.d(TAG, "Launching Amber, resolved package: $resolvedSignerPackage")
+                                amberLoginLauncher.launch(intent)
                             }
-                        },
-                        onLoginSuccess = { mainHandler.post { refresh++ } },
-                        onLaunchAmber = {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:"))
-                            intent.putExtra("type", "get_public_key")
-                            intent.putExtra("permissions",
-                                """[{"type":"nip44_decrypt"},{"type":"nip44_encrypt"},{"type":"sign_event","kind":22242},{"type":"sign_event","kind":24242},{"type":"sign_event","kind":30078}]"""
-                            )
-                            resolvedSignerPackage = packageManager
-                                .queryIntentActivities(intent, 0)
-                                .firstOrNull()?.activityInfo?.packageName
-                            Log.d(TAG, "Launching Amber, resolved package: $resolvedSignerPackage")
-                            amberLoginLauncher.launch(intent)
-                        }
-                    )
-                } else {
-                    FiatLifeNavGraph()
+                        )
+                    }
+                    pinLocked -> {
+                        isInMainApp = false
+                        PinLockScreen(
+                            onUnlocked = { needsPinUnlock.value = false },
+                            onVerifyPin = { pinPrefs.verifyPin(it) }
+                        )
+                    }
+                    else -> {
+                        isInMainApp = true
+                        FiatLifeNavGraph()
+                    }
                 }
             }
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (isInMainApp && pinPrefs.isPinLockEnabled() && pinPrefs.hasPinSet()) {
+            needsPinUnlock.value = true
         }
     }
 
@@ -202,8 +239,8 @@ class MainActivity : ComponentActivity() {
 
     private fun setupLocalSigner(privateKey: ByteArray) {
         val signer = LocalSigner(privateKey)
-        nostrClient.clearSigner()
         amberSignerRef.set(null)
+        nostrClient.setSigner(signer)
         Log.d(TAG, "Local signer configured: ${signer.pubkeyHex.take(8)}...")
     }
 
@@ -214,6 +251,7 @@ class MainActivity : ComponentActivity() {
             setLaunchSign { signLauncher.launch(it) }
         }
         amberSignerRef.set(signer)
+        nostrClient.setSigner(signer)
         Log.d(TAG, "Amber signer configured: ${pubkeyHex.take(8)}...")
     }
 

@@ -7,11 +7,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.fiatlife.app.MainActivity
 import com.fiatlife.app.data.blossom.BlossomClient
-import com.fiatlife.app.data.nostr.LocalSigner
 import com.fiatlife.app.data.nostr.NostrClient
-import com.fiatlife.app.data.nostr.NostrSigner
 import com.fiatlife.app.data.nostr.hexToByteArray
 import com.fiatlife.app.data.nostr.toHex
+import com.fiatlife.app.data.security.PinPrefs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import fr.acinq.secp256k1.Secp256k1
 import kotlinx.coroutines.flow.*
@@ -24,6 +23,9 @@ data class SettingsState(
     val publicKeyHex: String = "",
     val authType: String = "",
     val isConnected: Boolean = false,
+    val isBlossomConfigured: Boolean = false,
+    val isPinLockEnabled: Boolean = false,
+    val hasPinSet: Boolean = false,
     val statusMessage: String = ""
 )
 
@@ -31,7 +33,8 @@ data class SettingsState(
 class SettingsViewModel @Inject constructor(
     private val dataStore: DataStore<Preferences>,
     private val nostrClient: NostrClient,
-    private val blossomClient: BlossomClient
+    private val blossomClient: BlossomClient,
+    val pinPrefs: PinPrefs
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsState())
@@ -62,12 +65,11 @@ class SettingsViewModel @Inject constructor(
                         relayUrl = relayUrl,
                         blossomUrl = blossomUrl,
                         publicKeyHex = publicKeyHex,
-                        authType = authType
+                        authType = authType,
+                        isBlossomConfigured = blossomClient.isConfigured(),
+                        isPinLockEnabled = pinPrefs.isPinLockEnabled(),
+                        hasPinSet = pinPrefs.hasPinSet()
                     )
-                }
-
-                if (relayUrl.isNotEmpty() && nostrClient.hasSigner) {
-                    // Already connected from MainActivity restore
                 }
             }
         }
@@ -76,7 +78,17 @@ class SettingsViewModel @Inject constructor(
     private fun observeConnection() {
         viewModelScope.launch {
             nostrClient.connectionState.collect { connected ->
-                _state.update { it.copy(isConnected = connected) }
+                _state.update {
+                    val msg = when {
+                        connected && it.statusMessage == "Connecting to relay..." -> {
+                            val blossomPart = if (it.isBlossomConfigured) " | Blossom ready" else ""
+                            "Connected to relay$blossomPart"
+                        }
+                        !connected && it.isConnected -> "Disconnected from relay"
+                        else -> it.statusMessage
+                    }
+                    it.copy(isConnected = connected, statusMessage = msg)
+                }
             }
         }
     }
@@ -98,36 +110,44 @@ class SettingsViewModel @Inject constructor(
                 prefs[MainActivity.KEY_BLOSSOM_URL] = current.blossomUrl
             }
 
-            val signer = buildSigner()
-            if (signer != null) {
-                if (current.relayUrl.isNotEmpty()) {
-                    nostrClient.connect(current.relayUrl, signer)
-                }
-                if (current.blossomUrl.isNotEmpty()) {
-                    blossomClient.configure(current.blossomUrl, signer)
-                }
+            if (!nostrClient.hasSigner) {
+                _state.update { it.copy(statusMessage = "No signer configured. Sign out and sign back in.") }
+                return@launch
             }
 
-            _state.update { it.copy(statusMessage = "Settings saved") }
+            if (current.relayUrl.isNotEmpty()) {
+                _state.update { it.copy(statusMessage = "Connecting to relay...") }
+                nostrClient.connect(current.relayUrl)
+            }
+
+            val signer = nostrClient.currentSigner
+            if (current.blossomUrl.isNotEmpty() && signer != null) {
+                blossomClient.configure(current.blossomUrl, signer)
+                _state.update { it.copy(isBlossomConfigured = true) }
+            } else if (current.blossomUrl.isEmpty()) {
+                _state.update { it.copy(isBlossomConfigured = false) }
+            }
+
+            if (current.relayUrl.isEmpty()) {
+                _state.update { it.copy(statusMessage = "Settings saved") }
+            }
         }
+    }
+
+    fun setPinLockEnabled(enabled: Boolean) {
+        if (enabled && !pinPrefs.hasPinSet()) return
+        pinPrefs.setPinLockEnabled(enabled)
+        _state.update { it.copy(isPinLockEnabled = enabled, hasPinSet = pinPrefs.hasPinSet()) }
+    }
+
+    fun onPinSet() {
+        _state.update { it.copy(isPinLockEnabled = true, hasPinSet = true) }
     }
 
     fun logout() {
         viewModelScope.launch {
             nostrClient.clearSigner()
             dataStore.edit { it.clear() }
-        }
-    }
-
-    private suspend fun buildSigner(): NostrSigner? {
-        val prefs = dataStore.data.first()
-        return when (prefs[MainActivity.KEY_AUTH_TYPE]) {
-            "local" -> {
-                val hex = prefs[MainActivity.KEY_PRIVATE_KEY] ?: return null
-                if (hex.isNotEmpty()) LocalSigner(hex.hexToByteArray()) else null
-            }
-            "amber" -> null // Amber signer is managed by MainActivity
-            else -> null
         }
     }
 
