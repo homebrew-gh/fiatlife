@@ -11,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -116,8 +117,8 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            if (isLoggedIn) {
-                remember(refresh) { restoreSession() }
+            LaunchedEffect(isLoggedIn, refresh) {
+                if (isLoggedIn) restoreSession()
             }
 
             FiatLifeTheme {
