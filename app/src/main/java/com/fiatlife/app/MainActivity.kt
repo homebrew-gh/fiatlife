@@ -25,6 +25,9 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.lifecycleScope
 import com.fiatlife.app.data.blossom.BlossomClient
 import com.fiatlife.app.data.nostr.*
+import com.fiatlife.app.data.repository.BillRepository
+import com.fiatlife.app.data.repository.GoalRepository
+import com.fiatlife.app.data.repository.SalaryRepository
 import com.fiatlife.app.data.security.PinPrefs
 import com.fiatlife.app.ui.navigation.FiatLifeNavGraph
 import com.fiatlife.app.ui.screens.login.LoginScreen
@@ -32,6 +35,7 @@ import com.fiatlife.app.ui.screens.login.parseAmberResult
 import com.fiatlife.app.ui.screens.pin.PinLockScreen
 import com.fiatlife.app.ui.theme.FiatLifeTheme
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -47,6 +51,9 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var nostrClient: NostrClient
     @Inject lateinit var blossomClient: BlossomClient
     @Inject lateinit var pinPrefs: PinPrefs
+    @Inject lateinit var salaryRepository: SalaryRepository
+    @Inject lateinit var billRepository: BillRepository
+    @Inject lateinit var goalRepository: GoalRepository
 
     val amberSignerRef = AtomicReference<AmberSigner?>(null)
     lateinit var decryptLauncher: ActivityResultLauncher<Intent>
@@ -192,7 +199,10 @@ class MainActivity : ComponentActivity() {
                     pinLocked -> {
                         isInMainApp = false
                         PinLockScreen(
-                            onUnlocked = { needsPinUnlock.value = false },
+                            onUnlocked = {
+                                needsPinUnlock.value = false
+                                syncFromRelay()
+                            },
                             onVerifyPin = { pinPrefs.verifyPin(it) }
                         )
                     }
@@ -271,9 +281,36 @@ class MainActivity : ComponentActivity() {
 
         if (relayUrl.isNotEmpty()) {
             nostrClient.connect(relayUrl, signer)
+            waitForAuth()
+            syncFromRelay()
         }
         if (!blossomUrl.isNullOrEmpty()) {
             blossomClient.configure(blossomUrl, signer)
+        }
+    }
+
+    /**
+     * Wait briefly for the relay to complete NIP-42 auth handshake
+     * before attempting to sync. Gives up after a few seconds.
+     */
+    private suspend fun waitForAuth() {
+        repeat(30) {
+            if (nostrClient.connectionState.value) return
+            delay(100)
+        }
+    }
+
+    /**
+     * One-shot sync of all app data from the relay. Called once on app open
+     * and again after PIN unlock when returning from background.
+     */
+    fun syncFromRelay() {
+        if (!nostrClient.hasSigner) return
+        lifecycleScope.launch {
+            Log.d(TAG, "Starting one-shot sync from relay")
+            launch { try { salaryRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Salary sync: ${e.message}") } }
+            launch { try { billRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bill sync: ${e.message}") } }
+            launch { try { goalRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Goal sync: ${e.message}") } }
         }
     }
 }
