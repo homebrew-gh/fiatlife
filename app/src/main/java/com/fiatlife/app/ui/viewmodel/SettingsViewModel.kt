@@ -1,6 +1,7 @@
 package com.fiatlife.app.ui.viewmodel
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
@@ -20,6 +21,9 @@ import com.fiatlife.app.data.notification.NotifDetailLevel
 import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.nostr.hexToByteArray
 import com.fiatlife.app.data.nostr.toHex
+import com.fiatlife.app.data.repository.BillRepository
+import com.fiatlife.app.data.repository.GoalRepository
+import com.fiatlife.app.data.repository.SalaryRepository
 import com.fiatlife.app.data.security.PinPrefs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -29,6 +33,7 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
+private const val TAG = "SettingsVM"
 private val Context.notifPrefsStore by preferencesDataStore(name = "bill_notif_prefs")
 
 data class SettingsState(
@@ -52,6 +57,9 @@ class SettingsViewModel @Inject constructor(
     private val dataStore: DataStore<Preferences>,
     private val nostrClient: NostrClient,
     private val blossomClient: BlossomClient,
+    private val salaryRepository: SalaryRepository,
+    private val billRepository: BillRepository,
+    private val goalRepository: GoalRepository,
     val pinPrefs: PinPrefs
 ) : ViewModel() {
 
@@ -145,11 +153,6 @@ class SettingsViewModel @Inject constructor(
                 return@launch
             }
 
-            if (current.relayUrl.isNotEmpty()) {
-                _state.update { it.copy(statusMessage = "Connecting to relay...") }
-                nostrClient.connect(current.relayUrl)
-            }
-
             val signer = nostrClient.currentSigner
             if (current.blossomUrl.isNotEmpty() && signer != null) {
                 blossomClient.configure(current.blossomUrl, signer)
@@ -158,10 +161,33 @@ class SettingsViewModel @Inject constructor(
                 _state.update { it.copy(isBlossomConfigured = false) }
             }
 
-            if (current.relayUrl.isEmpty()) {
+            if (current.relayUrl.isNotEmpty()) {
+                _state.update { it.copy(statusMessage = "Connecting to relay...") }
+                nostrClient.connect(current.relayUrl)
+
+                if (nostrClient.awaitReady()) {
+                    val blossomPart = if (_state.value.isBlossomConfigured) " | Blossom ready" else ""
+                    _state.update { it.copy(statusMessage = "Connected — syncing data...$blossomPart") }
+                    syncAllFromRelay()
+                    _state.update { it.copy(statusMessage = "Connected to relay$blossomPart") }
+                } else {
+                    _state.update { it.copy(statusMessage = "Connected but auth pending — data may not sync yet") }
+                }
+            } else {
                 _state.update { it.copy(statusMessage = "Settings saved") }
             }
         }
+    }
+
+    private suspend fun syncAllFromRelay() {
+        Log.d(TAG, "Syncing all data from relay")
+        val jobs = listOf(
+            viewModelScope.launch { try { salaryRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Salary sync: ${e.message}") } },
+            viewModelScope.launch { try { billRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bill sync: ${e.message}") } },
+            viewModelScope.launch { try { goalRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Goal sync: ${e.message}") } }
+        )
+        jobs.forEach { it.join() }
+        Log.d(TAG, "Sync complete")
     }
 
     fun setPinLockEnabled(enabled: Boolean) {
