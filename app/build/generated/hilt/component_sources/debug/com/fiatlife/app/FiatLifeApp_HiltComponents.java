@@ -1,5 +1,7 @@
 package com.fiatlife.app;
 
+import androidx.hilt.work.HiltWrapper_WorkerFactoryModule;
+import com.fiatlife.app.data.notification.BillReminderWorker_HiltModule;
 import com.fiatlife.app.di.AppModule;
 import com.fiatlife.app.di.DatabaseModule;
 import com.fiatlife.app.di.NetworkModule;
@@ -134,10 +136,12 @@ public final class FiatLifeApp_HiltComponents {
       modules = {
           AppModule.class,
           ApplicationContextModule.class,
+          BillReminderWorker_HiltModule.class,
           DatabaseModule.class,
           ActivityRetainedCBuilderModule.class,
           ServiceCBuilderModule.class,
           HiltWrapper_FragmentGetContextFix_FragmentGetContextFixModule.class,
+          HiltWrapper_WorkerFactoryModule.class,
           NetworkModule.class
       }
   )

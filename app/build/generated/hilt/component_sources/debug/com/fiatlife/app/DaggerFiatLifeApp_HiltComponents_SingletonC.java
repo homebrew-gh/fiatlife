@@ -2,23 +2,35 @@ package com.fiatlife.app;
 
 import android.app.Activity;
 import android.app.Service;
+import android.content.Context;
 import android.view.View;
 import androidx.datastore.core.DataStore;
 import androidx.datastore.preferences.core.Preferences;
 import androidx.fragment.app.Fragment;
+import androidx.hilt.work.HiltWorkerFactory;
+import androidx.hilt.work.WorkerAssistedFactory;
+import androidx.hilt.work.WorkerFactoryModule_ProvideFactoryFactory;
 import androidx.lifecycle.SavedStateHandle;
 import androidx.lifecycle.ViewModel;
+import androidx.work.ListenableWorker;
+import androidx.work.WorkerParameters;
 import com.fiatlife.app.data.blossom.BlossomClient;
 import com.fiatlife.app.data.local.FiatLifeDatabase;
 import com.fiatlife.app.data.local.dao.BillDao;
 import com.fiatlife.app.data.local.dao.GoalDao;
 import com.fiatlife.app.data.local.dao.SalaryDao;
 import com.fiatlife.app.data.nostr.NostrClient;
+import com.fiatlife.app.data.notification.BillNotificationManager;
+import com.fiatlife.app.data.notification.BillReminderWorker;
+import com.fiatlife.app.data.notification.BillReminderWorker_AssistedFactory;
 import com.fiatlife.app.data.repository.BillRepository;
 import com.fiatlife.app.data.repository.GoalRepository;
 import com.fiatlife.app.data.repository.SalaryRepository;
+import com.fiatlife.app.data.security.PinPrefs;
+import com.fiatlife.app.di.AppModule_ProvideBillNotificationManagerFactory;
 import com.fiatlife.app.di.AppModule_ProvideDataStoreFactory;
 import com.fiatlife.app.di.AppModule_ProvideJsonFactory;
+import com.fiatlife.app.di.AppModule_ProvidePinPrefsFactory;
 import com.fiatlife.app.di.DatabaseModule_ProvideBillDaoFactory;
 import com.fiatlife.app.di.DatabaseModule_ProvideDatabaseFactory;
 import com.fiatlife.app.di.DatabaseModule_ProvideGoalDaoFactory;
@@ -57,6 +69,7 @@ import dagger.internal.LazyClassKeyMap;
 import dagger.internal.MapBuilder;
 import dagger.internal.Preconditions;
 import dagger.internal.Provider;
+import dagger.internal.SingleCheck;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
@@ -419,23 +432,27 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
       MainActivity_MembersInjector.injectDataStore(instance, singletonCImpl.provideDataStoreProvider.get());
       MainActivity_MembersInjector.injectNostrClient(instance, singletonCImpl.nostrClientProvider.get());
       MainActivity_MembersInjector.injectBlossomClient(instance, singletonCImpl.blossomClientProvider.get());
+      MainActivity_MembersInjector.injectPinPrefs(instance, singletonCImpl.providePinPrefsProvider.get());
       return instance;
     }
 
     @IdentifierNameString
     private static final class LazyClassKeyProvider {
-      static String com_fiatlife_app_ui_viewmodel_SalaryViewModel = "com.fiatlife.app.ui.viewmodel.SalaryViewModel";
+      static String com_fiatlife_app_ui_viewmodel_SettingsViewModel = "com.fiatlife.app.ui.viewmodel.SettingsViewModel";
+
+      static String com_fiatlife_app_ui_viewmodel_GoalsViewModel = "com.fiatlife.app.ui.viewmodel.GoalsViewModel";
 
       static String com_fiatlife_app_ui_viewmodel_BillsViewModel = "com.fiatlife.app.ui.viewmodel.BillsViewModel";
 
       static String com_fiatlife_app_ui_viewmodel_DashboardViewModel = "com.fiatlife.app.ui.viewmodel.DashboardViewModel";
 
-      static String com_fiatlife_app_ui_viewmodel_GoalsViewModel = "com.fiatlife.app.ui.viewmodel.GoalsViewModel";
-
-      static String com_fiatlife_app_ui_viewmodel_SettingsViewModel = "com.fiatlife.app.ui.viewmodel.SettingsViewModel";
+      static String com_fiatlife_app_ui_viewmodel_SalaryViewModel = "com.fiatlife.app.ui.viewmodel.SalaryViewModel";
 
       @KeepFieldType
-      SalaryViewModel com_fiatlife_app_ui_viewmodel_SalaryViewModel2;
+      SettingsViewModel com_fiatlife_app_ui_viewmodel_SettingsViewModel2;
+
+      @KeepFieldType
+      GoalsViewModel com_fiatlife_app_ui_viewmodel_GoalsViewModel2;
 
       @KeepFieldType
       BillsViewModel com_fiatlife_app_ui_viewmodel_BillsViewModel2;
@@ -444,10 +461,7 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
       DashboardViewModel com_fiatlife_app_ui_viewmodel_DashboardViewModel2;
 
       @KeepFieldType
-      GoalsViewModel com_fiatlife_app_ui_viewmodel_GoalsViewModel2;
-
-      @KeepFieldType
-      SettingsViewModel com_fiatlife_app_ui_viewmodel_SettingsViewModel2;
+      SalaryViewModel com_fiatlife_app_ui_viewmodel_SalaryViewModel2;
     }
   }
 
@@ -500,30 +514,30 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
 
     @IdentifierNameString
     private static final class LazyClassKeyProvider {
-      static String com_fiatlife_app_ui_viewmodel_GoalsViewModel = "com.fiatlife.app.ui.viewmodel.GoalsViewModel";
-
-      static String com_fiatlife_app_ui_viewmodel_SalaryViewModel = "com.fiatlife.app.ui.viewmodel.SalaryViewModel";
-
-      static String com_fiatlife_app_ui_viewmodel_SettingsViewModel = "com.fiatlife.app.ui.viewmodel.SettingsViewModel";
+      static String com_fiatlife_app_ui_viewmodel_DashboardViewModel = "com.fiatlife.app.ui.viewmodel.DashboardViewModel";
 
       static String com_fiatlife_app_ui_viewmodel_BillsViewModel = "com.fiatlife.app.ui.viewmodel.BillsViewModel";
 
-      static String com_fiatlife_app_ui_viewmodel_DashboardViewModel = "com.fiatlife.app.ui.viewmodel.DashboardViewModel";
+      static String com_fiatlife_app_ui_viewmodel_SalaryViewModel = "com.fiatlife.app.ui.viewmodel.SalaryViewModel";
+
+      static String com_fiatlife_app_ui_viewmodel_GoalsViewModel = "com.fiatlife.app.ui.viewmodel.GoalsViewModel";
+
+      static String com_fiatlife_app_ui_viewmodel_SettingsViewModel = "com.fiatlife.app.ui.viewmodel.SettingsViewModel";
 
       @KeepFieldType
-      GoalsViewModel com_fiatlife_app_ui_viewmodel_GoalsViewModel2;
-
-      @KeepFieldType
-      SalaryViewModel com_fiatlife_app_ui_viewmodel_SalaryViewModel2;
-
-      @KeepFieldType
-      SettingsViewModel com_fiatlife_app_ui_viewmodel_SettingsViewModel2;
+      DashboardViewModel com_fiatlife_app_ui_viewmodel_DashboardViewModel2;
 
       @KeepFieldType
       BillsViewModel com_fiatlife_app_ui_viewmodel_BillsViewModel2;
 
       @KeepFieldType
-      DashboardViewModel com_fiatlife_app_ui_viewmodel_DashboardViewModel2;
+      SalaryViewModel com_fiatlife_app_ui_viewmodel_SalaryViewModel2;
+
+      @KeepFieldType
+      GoalsViewModel com_fiatlife_app_ui_viewmodel_GoalsViewModel2;
+
+      @KeepFieldType
+      SettingsViewModel com_fiatlife_app_ui_viewmodel_SettingsViewModel2;
     }
 
     private static final class SwitchingProvider<T> implements Provider<T> {
@@ -560,7 +574,7 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
           return (T) new SalaryViewModel(singletonCImpl.salaryRepositoryProvider.get());
 
           case 4: // com.fiatlife.app.ui.viewmodel.SettingsViewModel 
-          return (T) new SettingsViewModel(singletonCImpl.provideDataStoreProvider.get(), singletonCImpl.nostrClientProvider.get(), singletonCImpl.blossomClientProvider.get());
+          return (T) new SettingsViewModel(ApplicationContextModule_ProvideContextFactory.provideContext(singletonCImpl.applicationContextModule), singletonCImpl.provideDataStoreProvider.get(), singletonCImpl.nostrClientProvider.get(), singletonCImpl.blossomClientProvider.get(), singletonCImpl.providePinPrefsProvider.get());
 
           default: throw new AssertionError(id);
         }
@@ -642,6 +656,14 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
 
     private final SingletonCImpl singletonCImpl = this;
 
+    private Provider<FiatLifeDatabase> provideDatabaseProvider;
+
+    private Provider<BillNotificationManager> provideBillNotificationManagerProvider;
+
+    private Provider<Json> provideJsonProvider;
+
+    private Provider<BillReminderWorker_AssistedFactory> billReminderWorker_AssistedFactoryProvider;
+
     private Provider<DataStore<Preferences>> provideDataStoreProvider;
 
     private Provider<OkHttpClient> provideOkHttpClientProvider;
@@ -650,9 +672,7 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
 
     private Provider<BlossomClient> blossomClientProvider;
 
-    private Provider<FiatLifeDatabase> provideDatabaseProvider;
-
-    private Provider<Json> provideJsonProvider;
+    private Provider<PinPrefs> providePinPrefsProvider;
 
     private Provider<BillRepository> billRepositoryProvider;
 
@@ -670,6 +690,15 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
       return DatabaseModule_ProvideBillDaoFactory.provideBillDao(provideDatabaseProvider.get());
     }
 
+    private Map<String, javax.inject.Provider<WorkerAssistedFactory<? extends ListenableWorker>>> mapOfStringAndProviderOfWorkerAssistedFactoryOf(
+        ) {
+      return Collections.<String, javax.inject.Provider<WorkerAssistedFactory<? extends ListenableWorker>>>singletonMap("com.fiatlife.app.data.notification.BillReminderWorker", ((Provider) billReminderWorker_AssistedFactoryProvider));
+    }
+
+    private HiltWorkerFactory hiltWorkerFactory() {
+      return WorkerFactoryModule_ProvideFactoryFactory.provideFactory(mapOfStringAndProviderOfWorkerAssistedFactoryOf());
+    }
+
     private SalaryDao salaryDao() {
       return DatabaseModule_ProvideSalaryDaoFactory.provideSalaryDao(provideDatabaseProvider.get());
     }
@@ -680,19 +709,23 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
 
     @SuppressWarnings("unchecked")
     private void initialize(final ApplicationContextModule applicationContextModuleParam) {
-      this.provideDataStoreProvider = DoubleCheck.provider(new SwitchingProvider<DataStore<Preferences>>(singletonCImpl, 0));
-      this.provideOkHttpClientProvider = DoubleCheck.provider(new SwitchingProvider<OkHttpClient>(singletonCImpl, 2));
-      this.nostrClientProvider = DoubleCheck.provider(new SwitchingProvider<NostrClient>(singletonCImpl, 1));
-      this.blossomClientProvider = DoubleCheck.provider(new SwitchingProvider<BlossomClient>(singletonCImpl, 3));
-      this.provideDatabaseProvider = DoubleCheck.provider(new SwitchingProvider<FiatLifeDatabase>(singletonCImpl, 5));
-      this.provideJsonProvider = DoubleCheck.provider(new SwitchingProvider<Json>(singletonCImpl, 6));
-      this.billRepositoryProvider = DoubleCheck.provider(new SwitchingProvider<BillRepository>(singletonCImpl, 4));
-      this.salaryRepositoryProvider = DoubleCheck.provider(new SwitchingProvider<SalaryRepository>(singletonCImpl, 7));
-      this.goalRepositoryProvider = DoubleCheck.provider(new SwitchingProvider<GoalRepository>(singletonCImpl, 8));
+      this.provideDatabaseProvider = DoubleCheck.provider(new SwitchingProvider<FiatLifeDatabase>(singletonCImpl, 1));
+      this.provideBillNotificationManagerProvider = DoubleCheck.provider(new SwitchingProvider<BillNotificationManager>(singletonCImpl, 2));
+      this.provideJsonProvider = DoubleCheck.provider(new SwitchingProvider<Json>(singletonCImpl, 3));
+      this.billReminderWorker_AssistedFactoryProvider = SingleCheck.provider(new SwitchingProvider<BillReminderWorker_AssistedFactory>(singletonCImpl, 0));
+      this.provideDataStoreProvider = DoubleCheck.provider(new SwitchingProvider<DataStore<Preferences>>(singletonCImpl, 4));
+      this.provideOkHttpClientProvider = DoubleCheck.provider(new SwitchingProvider<OkHttpClient>(singletonCImpl, 6));
+      this.nostrClientProvider = DoubleCheck.provider(new SwitchingProvider<NostrClient>(singletonCImpl, 5));
+      this.blossomClientProvider = DoubleCheck.provider(new SwitchingProvider<BlossomClient>(singletonCImpl, 7));
+      this.providePinPrefsProvider = DoubleCheck.provider(new SwitchingProvider<PinPrefs>(singletonCImpl, 8));
+      this.billRepositoryProvider = DoubleCheck.provider(new SwitchingProvider<BillRepository>(singletonCImpl, 9));
+      this.salaryRepositoryProvider = DoubleCheck.provider(new SwitchingProvider<SalaryRepository>(singletonCImpl, 10));
+      this.goalRepositoryProvider = DoubleCheck.provider(new SwitchingProvider<GoalRepository>(singletonCImpl, 11));
     }
 
     @Override
     public void injectFiatLifeApp(FiatLifeApp fiatLifeApp) {
+      injectFiatLifeApp2(fiatLifeApp);
     }
 
     @Override
@@ -710,6 +743,12 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
       return new ServiceCBuilder(singletonCImpl);
     }
 
+    private FiatLifeApp injectFiatLifeApp2(FiatLifeApp instance) {
+      FiatLifeApp_MembersInjector.injectWorkerFactory(instance, hiltWorkerFactory());
+      FiatLifeApp_MembersInjector.injectBillNotificationManager(instance, provideBillNotificationManagerProvider.get());
+      return instance;
+    }
+
     private static final class SwitchingProvider<T> implements Provider<T> {
       private final SingletonCImpl singletonCImpl;
 
@@ -724,31 +763,45 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
       @Override
       public T get() {
         switch (id) {
-          case 0: // androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences> 
-          return (T) AppModule_ProvideDataStoreFactory.provideDataStore(ApplicationContextModule_ProvideContextFactory.provideContext(singletonCImpl.applicationContextModule));
+          case 0: // com.fiatlife.app.data.notification.BillReminderWorker_AssistedFactory 
+          return (T) new BillReminderWorker_AssistedFactory() {
+            @Override
+            public BillReminderWorker create(Context appContext, WorkerParameters workerParams) {
+              return new BillReminderWorker(appContext, workerParams, singletonCImpl.billDao(), singletonCImpl.provideBillNotificationManagerProvider.get(), singletonCImpl.provideJsonProvider.get());
+            }
+          };
 
-          case 1: // com.fiatlife.app.data.nostr.NostrClient 
-          return (T) new NostrClient(singletonCImpl.provideOkHttpClientProvider.get());
-
-          case 2: // okhttp3.OkHttpClient 
-          return (T) NetworkModule_ProvideOkHttpClientFactory.provideOkHttpClient();
-
-          case 3: // com.fiatlife.app.data.blossom.BlossomClient 
-          return (T) new BlossomClient(singletonCImpl.provideOkHttpClientProvider.get());
-
-          case 4: // com.fiatlife.app.data.repository.BillRepository 
-          return (T) new BillRepository(singletonCImpl.billDao(), singletonCImpl.nostrClientProvider.get(), singletonCImpl.blossomClientProvider.get(), singletonCImpl.provideJsonProvider.get());
-
-          case 5: // com.fiatlife.app.data.local.FiatLifeDatabase 
+          case 1: // com.fiatlife.app.data.local.FiatLifeDatabase 
           return (T) DatabaseModule_ProvideDatabaseFactory.provideDatabase(ApplicationContextModule_ProvideContextFactory.provideContext(singletonCImpl.applicationContextModule));
 
-          case 6: // kotlinx.serialization.json.Json 
+          case 2: // com.fiatlife.app.data.notification.BillNotificationManager 
+          return (T) AppModule_ProvideBillNotificationManagerFactory.provideBillNotificationManager(ApplicationContextModule_ProvideContextFactory.provideContext(singletonCImpl.applicationContextModule));
+
+          case 3: // kotlinx.serialization.json.Json 
           return (T) AppModule_ProvideJsonFactory.provideJson();
 
-          case 7: // com.fiatlife.app.data.repository.SalaryRepository 
+          case 4: // androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences> 
+          return (T) AppModule_ProvideDataStoreFactory.provideDataStore(ApplicationContextModule_ProvideContextFactory.provideContext(singletonCImpl.applicationContextModule));
+
+          case 5: // com.fiatlife.app.data.nostr.NostrClient 
+          return (T) new NostrClient(singletonCImpl.provideOkHttpClientProvider.get());
+
+          case 6: // okhttp3.OkHttpClient 
+          return (T) NetworkModule_ProvideOkHttpClientFactory.provideOkHttpClient();
+
+          case 7: // com.fiatlife.app.data.blossom.BlossomClient 
+          return (T) new BlossomClient(singletonCImpl.provideOkHttpClientProvider.get());
+
+          case 8: // com.fiatlife.app.data.security.PinPrefs 
+          return (T) AppModule_ProvidePinPrefsFactory.providePinPrefs(ApplicationContextModule_ProvideContextFactory.provideContext(singletonCImpl.applicationContextModule));
+
+          case 9: // com.fiatlife.app.data.repository.BillRepository 
+          return (T) new BillRepository(singletonCImpl.billDao(), singletonCImpl.nostrClientProvider.get(), singletonCImpl.blossomClientProvider.get(), singletonCImpl.provideJsonProvider.get());
+
+          case 10: // com.fiatlife.app.data.repository.SalaryRepository 
           return (T) new SalaryRepository(singletonCImpl.salaryDao(), singletonCImpl.nostrClientProvider.get(), singletonCImpl.provideJsonProvider.get());
 
-          case 8: // com.fiatlife.app.data.repository.GoalRepository 
+          case 11: // com.fiatlife.app.data.repository.GoalRepository 
           return (T) new GoalRepository(singletonCImpl.goalDao(), singletonCImpl.nostrClientProvider.get(), singletonCImpl.provideJsonProvider.get());
 
           default: throw new AssertionError(id);
