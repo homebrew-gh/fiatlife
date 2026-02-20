@@ -35,7 +35,6 @@ import com.fiatlife.app.ui.screens.login.parseAmberResult
 import com.fiatlife.app.ui.screens.pin.PinLockScreen
 import com.fiatlife.app.ui.theme.FiatLifeTheme
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -281,22 +280,14 @@ class MainActivity : ComponentActivity() {
 
         if (relayUrl.isNotEmpty()) {
             nostrClient.connect(relayUrl, signer)
-            waitForAuth()
-            syncFromRelay()
+            if (nostrClient.awaitReady()) {
+                syncFromRelay()
+            } else {
+                Log.w(TAG, "Relay not ready after timeout, skipping sync")
+            }
         }
         if (!blossomUrl.isNullOrEmpty()) {
             blossomClient.configure(blossomUrl, signer)
-        }
-    }
-
-    /**
-     * Wait briefly for the relay to complete NIP-42 auth handshake
-     * before attempting to sync. Gives up after a few seconds.
-     */
-    private suspend fun waitForAuth() {
-        repeat(30) {
-            if (nostrClient.connectionState.value) return
-            delay(100)
         }
     }
 

@@ -102,6 +102,20 @@ class NostrClient @Inject constructor(
         connect(relayUrl, s)
     }
 
+    /**
+     * Suspend until the relay WebSocket is connected AND NIP-42 auth is complete,
+     * or until timeout. Returns true if ready, false if timed out.
+     */
+    suspend fun awaitReady(timeoutMs: Long = 5000): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (_connectionState.value && isAuthenticated) return true
+            delay(100)
+        }
+        Log.d(TAG, "awaitReady timed out — connected=${_connectionState.value}, authed=$isAuthenticated")
+        return _connectionState.value && isAuthenticated
+    }
+
     fun disconnect() {
         webSocket?.close(1000, "Client closing")
         webSocket = null
