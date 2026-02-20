@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
+import com.fiatlife.app.data.notification.BillNotificationManager
 import com.fiatlife.app.data.security.PinPrefs
 import dagger.Module
 import dagger.Provides
@@ -38,5 +39,11 @@ object AppModule {
     @Singleton
     fun providePinPrefs(@ApplicationContext context: Context): PinPrefs {
         return PinPrefs(context)
+    }
+
+    @Provides
+    @Singleton
+    fun provideBillNotificationManager(@ApplicationContext context: Context): BillNotificationManager {
+        return BillNotificationManager(context)
     }
 }

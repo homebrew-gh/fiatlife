@@ -1,5 +1,9 @@
 package com.fiatlife.app.ui.screens.settings
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -9,10 +13,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.fiatlife.app.data.notification.NotifDetailLevel
 import com.fiatlife.app.ui.components.SectionCard
 import com.fiatlife.app.ui.screens.pin.SetPinSheet
 import com.fiatlife.app.ui.theme.ProfitGreen
@@ -26,6 +33,24 @@ fun SettingsScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     var showLogoutConfirmation by remember { mutableStateOf(false) }
     var showSetPinSheet by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    var hasNotifPermission by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.POST_NOTIFICATIONS
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            } else true
+        )
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasNotifPermission = granted
+        if (granted) viewModel.setBillNotifEnabled(true)
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -253,6 +278,116 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Change PIN")
                     }
+                }
+            }
+        }
+
+        // Bill Notifications
+        item {
+            SectionCard(
+                title = "Bill Reminders",
+                icon = Icons.Filled.Notifications
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Due Date Reminders",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "Get notified before bills are due",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = state.billNotifEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled && !hasNotifPermission && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            } else {
+                                viewModel.setBillNotifEnabled(enabled)
+                            }
+                        }
+                    )
+                }
+
+                if (state.billNotifEnabled) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider()
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = "Notification Detail",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        SegmentedButton(
+                            selected = state.billNotifDetailLevel == NotifDetailLevel.PRIVATE,
+                            onClick = { viewModel.setBillNotifDetailLevel(NotifDetailLevel.PRIVATE) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+                        ) {
+                            Text("Private")
+                        }
+                        SegmentedButton(
+                            selected = state.billNotifDetailLevel == NotifDetailLevel.DETAILED,
+                            onClick = { viewModel.setBillNotifDetailLevel(NotifDetailLevel.DETAILED) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+                        ) {
+                            Text("Detailed")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = if (state.billNotifDetailLevel == NotifDetailLevel.PRIVATE)
+                            "Shows generic reminder — no bill name or amount"
+                        else
+                            "Shows bill name, amount, and category",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = "Remind Me",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        val options = listOf(1, 3, 7)
+                        options.forEachIndexed { index, days ->
+                            SegmentedButton(
+                                selected = state.billNotifDaysBefore == days,
+                                onClick = { viewModel.setBillNotifDaysBefore(days) },
+                                shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size)
+                            ) {
+                                Text(
+                                    when (days) {
+                                        1 -> "1 day"
+                                        else -> "$days days"
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Days before due date to send reminder",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
