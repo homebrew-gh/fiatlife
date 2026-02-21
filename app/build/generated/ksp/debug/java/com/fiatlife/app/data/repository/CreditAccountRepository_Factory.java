@@ -1,5 +1,6 @@
 package com.fiatlife.app.data.repository;
 
+import com.fiatlife.app.data.blossom.BlossomClient;
 import com.fiatlife.app.data.local.dao.CreditAccountDao;
 import com.fiatlife.app.data.nostr.NostrClient;
 import dagger.internal.DaggerGenerated;
@@ -29,28 +30,33 @@ public final class CreditAccountRepository_Factory implements Factory<CreditAcco
 
   private final Provider<NostrClient> nostrClientProvider;
 
+  private final Provider<BlossomClient> blossomClientProvider;
+
   private final Provider<Json> jsonProvider;
 
   public CreditAccountRepository_Factory(Provider<CreditAccountDao> creditAccountDaoProvider,
-      Provider<NostrClient> nostrClientProvider, Provider<Json> jsonProvider) {
+      Provider<NostrClient> nostrClientProvider, Provider<BlossomClient> blossomClientProvider,
+      Provider<Json> jsonProvider) {
     this.creditAccountDaoProvider = creditAccountDaoProvider;
     this.nostrClientProvider = nostrClientProvider;
+    this.blossomClientProvider = blossomClientProvider;
     this.jsonProvider = jsonProvider;
   }
 
   @Override
   public CreditAccountRepository get() {
-    return newInstance(creditAccountDaoProvider.get(), nostrClientProvider.get(), jsonProvider.get());
+    return newInstance(creditAccountDaoProvider.get(), nostrClientProvider.get(), blossomClientProvider.get(), jsonProvider.get());
   }
 
   public static CreditAccountRepository_Factory create(
       Provider<CreditAccountDao> creditAccountDaoProvider,
-      Provider<NostrClient> nostrClientProvider, Provider<Json> jsonProvider) {
-    return new CreditAccountRepository_Factory(creditAccountDaoProvider, nostrClientProvider, jsonProvider);
+      Provider<NostrClient> nostrClientProvider, Provider<BlossomClient> blossomClientProvider,
+      Provider<Json> jsonProvider) {
+    return new CreditAccountRepository_Factory(creditAccountDaoProvider, nostrClientProvider, blossomClientProvider, jsonProvider);
   }
 
   public static CreditAccountRepository newInstance(CreditAccountDao creditAccountDao,
-      NostrClient nostrClient, Json json) {
-    return new CreditAccountRepository(creditAccountDao, nostrClient, json);
+      NostrClient nostrClient, BlossomClient blossomClient, Json json) {
+    return new CreditAccountRepository(creditAccountDao, nostrClient, blossomClient, json);
   }
 }

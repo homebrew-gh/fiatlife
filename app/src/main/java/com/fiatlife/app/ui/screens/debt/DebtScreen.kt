@@ -518,7 +518,7 @@ internal fun CreditAccountDialog(
                             startDate = account?.startDate,
                             endDate = account?.endDate
                         ),
-                        createBillForPayment = account == null && createBillForPayment
+                        account == null && createBillForPayment
                     )
                 },
                 enabled = name.isNotBlank() && !isSaving

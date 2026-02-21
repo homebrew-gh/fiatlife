@@ -1,6 +1,7 @@
 package com.fiatlife.app.ui.viewmodel;
 
 import androidx.lifecycle.SavedStateHandle;
+import com.fiatlife.app.data.repository.BillRepository;
 import com.fiatlife.app.data.repository.CreditAccountRepository;
 import dagger.internal.DaggerGenerated;
 import dagger.internal.Factory;
@@ -28,25 +29,30 @@ public final class DebtDetailViewModel_Factory implements Factory<DebtDetailView
 
   private final Provider<CreditAccountRepository> repositoryProvider;
 
+  private final Provider<BillRepository> billRepositoryProvider;
+
   public DebtDetailViewModel_Factory(Provider<SavedStateHandle> savedStateHandleProvider,
-      Provider<CreditAccountRepository> repositoryProvider) {
+      Provider<CreditAccountRepository> repositoryProvider,
+      Provider<BillRepository> billRepositoryProvider) {
     this.savedStateHandleProvider = savedStateHandleProvider;
     this.repositoryProvider = repositoryProvider;
+    this.billRepositoryProvider = billRepositoryProvider;
   }
 
   @Override
   public DebtDetailViewModel get() {
-    return newInstance(savedStateHandleProvider.get(), repositoryProvider.get());
+    return newInstance(savedStateHandleProvider.get(), repositoryProvider.get(), billRepositoryProvider.get());
   }
 
   public static DebtDetailViewModel_Factory create(
       Provider<SavedStateHandle> savedStateHandleProvider,
-      Provider<CreditAccountRepository> repositoryProvider) {
-    return new DebtDetailViewModel_Factory(savedStateHandleProvider, repositoryProvider);
+      Provider<CreditAccountRepository> repositoryProvider,
+      Provider<BillRepository> billRepositoryProvider) {
+    return new DebtDetailViewModel_Factory(savedStateHandleProvider, repositoryProvider, billRepositoryProvider);
   }
 
   public static DebtDetailViewModel newInstance(SavedStateHandle savedStateHandle,
-      CreditAccountRepository repository) {
-    return new DebtDetailViewModel(savedStateHandle, repository);
+      CreditAccountRepository repository, BillRepository billRepository) {
+    return new DebtDetailViewModel(savedStateHandle, repository, billRepository);
   }
 }

@@ -1,6 +1,7 @@
 package com.fiatlife.app.ui.viewmodel;
 
 import com.fiatlife.app.data.nostr.NostrClient;
+import com.fiatlife.app.data.repository.BillRepository;
 import com.fiatlife.app.data.repository.CreditAccountRepository;
 import dagger.internal.DaggerGenerated;
 import dagger.internal.Factory;
@@ -26,26 +27,29 @@ import javax.inject.Provider;
 public final class DebtViewModel_Factory implements Factory<DebtViewModel> {
   private final Provider<CreditAccountRepository> repositoryProvider;
 
+  private final Provider<BillRepository> billRepositoryProvider;
+
   private final Provider<NostrClient> nostrClientProvider;
 
   public DebtViewModel_Factory(Provider<CreditAccountRepository> repositoryProvider,
-      Provider<NostrClient> nostrClientProvider) {
+      Provider<BillRepository> billRepositoryProvider, Provider<NostrClient> nostrClientProvider) {
     this.repositoryProvider = repositoryProvider;
+    this.billRepositoryProvider = billRepositoryProvider;
     this.nostrClientProvider = nostrClientProvider;
   }
 
   @Override
   public DebtViewModel get() {
-    return newInstance(repositoryProvider.get(), nostrClientProvider.get());
+    return newInstance(repositoryProvider.get(), billRepositoryProvider.get(), nostrClientProvider.get());
   }
 
   public static DebtViewModel_Factory create(Provider<CreditAccountRepository> repositoryProvider,
-      Provider<NostrClient> nostrClientProvider) {
-    return new DebtViewModel_Factory(repositoryProvider, nostrClientProvider);
+      Provider<BillRepository> billRepositoryProvider, Provider<NostrClient> nostrClientProvider) {
+    return new DebtViewModel_Factory(repositoryProvider, billRepositoryProvider, nostrClientProvider);
   }
 
   public static DebtViewModel newInstance(CreditAccountRepository repository,
-      NostrClient nostrClient) {
-    return new DebtViewModel(repository, nostrClient);
+      BillRepository billRepository, NostrClient nostrClient) {
+    return new DebtViewModel(repository, billRepository, nostrClient);
   }
 }
