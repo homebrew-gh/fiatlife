@@ -27,6 +27,7 @@ data class DashboardState(
     val totalGoalTarget: Double = 0.0,
     val monthlyDisposable: Double = 0.0,
     val isConnected: Boolean = false,
+    val hasData: Boolean = false,
     val topGoals: List<FinancialGoal> = emptyList(),
     val upcomingBills: List<Bill> = emptyList()
 )
@@ -78,6 +79,7 @@ class DashboardViewModel @Inject constructor(
                     totalGoalTarget = totalTarget,
                     monthlyDisposable = monthlyDisposable,
                     isConnected = connected,
+                    hasData = salary != null || bills.isNotEmpty() || goals.isNotEmpty(),
                     topGoals = goals.sortedByDescending { it.progressPercent }.take(3),
                     upcomingBills = bills.filter { !it.isPaid }.take(5)
                 )

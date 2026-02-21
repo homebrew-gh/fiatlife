@@ -50,11 +50,18 @@ fun DashboardScreen(
                     )
                 }
                 Badge(
-                    containerColor = if (state.isConnected)
-                        ProfitGreen else MaterialTheme.colorScheme.error
+                    containerColor = when {
+                        state.isConnected && state.hasData -> ProfitGreen
+                        state.isConnected -> WarningAmber
+                        else -> MaterialTheme.colorScheme.error
+                    }
                 ) {
                     Text(
-                        text = if (state.isConnected) "Synced" else "Offline",
+                        text = when {
+                            state.isConnected && state.hasData -> "Synced"
+                            state.isConnected -> "Syncing\u2026"
+                            else -> "Offline"
+                        },
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                     )
                 }
