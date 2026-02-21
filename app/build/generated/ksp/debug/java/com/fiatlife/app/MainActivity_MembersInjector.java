@@ -6,6 +6,7 @@ import com.fiatlife.app.data.blossom.BlossomClient;
 import com.fiatlife.app.data.nostr.NostrClient;
 import com.fiatlife.app.data.repository.BillRepository;
 import com.fiatlife.app.data.repository.CreditAccountRepository;
+import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository;
 import com.fiatlife.app.data.repository.GoalRepository;
 import com.fiatlife.app.data.repository.SalaryRepository;
 import com.fiatlife.app.data.security.PinPrefs;
@@ -46,12 +47,15 @@ public final class MainActivity_MembersInjector implements MembersInjector<MainA
 
   private final Provider<CreditAccountRepository> creditAccountRepositoryProvider;
 
+  private final Provider<CypherLogSubscriptionRepository> cypherLogSubscriptionRepositoryProvider;
+
   public MainActivity_MembersInjector(Provider<DataStore<Preferences>> dataStoreProvider,
       Provider<NostrClient> nostrClientProvider, Provider<BlossomClient> blossomClientProvider,
       Provider<PinPrefs> pinPrefsProvider, Provider<SalaryRepository> salaryRepositoryProvider,
       Provider<BillRepository> billRepositoryProvider,
       Provider<GoalRepository> goalRepositoryProvider,
-      Provider<CreditAccountRepository> creditAccountRepositoryProvider) {
+      Provider<CreditAccountRepository> creditAccountRepositoryProvider,
+      Provider<CypherLogSubscriptionRepository> cypherLogSubscriptionRepositoryProvider) {
     this.dataStoreProvider = dataStoreProvider;
     this.nostrClientProvider = nostrClientProvider;
     this.blossomClientProvider = blossomClientProvider;
@@ -60,6 +64,7 @@ public final class MainActivity_MembersInjector implements MembersInjector<MainA
     this.billRepositoryProvider = billRepositoryProvider;
     this.goalRepositoryProvider = goalRepositoryProvider;
     this.creditAccountRepositoryProvider = creditAccountRepositoryProvider;
+    this.cypherLogSubscriptionRepositoryProvider = cypherLogSubscriptionRepositoryProvider;
   }
 
   public static MembersInjector<MainActivity> create(
@@ -68,8 +73,9 @@ public final class MainActivity_MembersInjector implements MembersInjector<MainA
       Provider<SalaryRepository> salaryRepositoryProvider,
       Provider<BillRepository> billRepositoryProvider,
       Provider<GoalRepository> goalRepositoryProvider,
-      Provider<CreditAccountRepository> creditAccountRepositoryProvider) {
-    return new MainActivity_MembersInjector(dataStoreProvider, nostrClientProvider, blossomClientProvider, pinPrefsProvider, salaryRepositoryProvider, billRepositoryProvider, goalRepositoryProvider, creditAccountRepositoryProvider);
+      Provider<CreditAccountRepository> creditAccountRepositoryProvider,
+      Provider<CypherLogSubscriptionRepository> cypherLogSubscriptionRepositoryProvider) {
+    return new MainActivity_MembersInjector(dataStoreProvider, nostrClientProvider, blossomClientProvider, pinPrefsProvider, salaryRepositoryProvider, billRepositoryProvider, goalRepositoryProvider, creditAccountRepositoryProvider, cypherLogSubscriptionRepositoryProvider);
   }
 
   @Override
@@ -82,6 +88,7 @@ public final class MainActivity_MembersInjector implements MembersInjector<MainA
     injectBillRepository(instance, billRepositoryProvider.get());
     injectGoalRepository(instance, goalRepositoryProvider.get());
     injectCreditAccountRepository(instance, creditAccountRepositoryProvider.get());
+    injectCypherLogSubscriptionRepository(instance, cypherLogSubscriptionRepositoryProvider.get());
   }
 
   @InjectedFieldSignature("com.fiatlife.app.MainActivity.dataStore")
@@ -124,5 +131,11 @@ public final class MainActivity_MembersInjector implements MembersInjector<MainA
   public static void injectCreditAccountRepository(MainActivity instance,
       CreditAccountRepository creditAccountRepository) {
     instance.creditAccountRepository = creditAccountRepository;
+  }
+
+  @InjectedFieldSignature("com.fiatlife.app.MainActivity.cypherLogSubscriptionRepository")
+  public static void injectCypherLogSubscriptionRepository(MainActivity instance,
+      CypherLogSubscriptionRepository cypherLogSubscriptionRepository) {
+    instance.cypherLogSubscriptionRepository = cypherLogSubscriptionRepository;
   }
 }
