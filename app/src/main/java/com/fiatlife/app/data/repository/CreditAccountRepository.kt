@@ -1,6 +1,7 @@
 package com.fiatlife.app.data.repository
 
 import android.util.Log
+import com.fiatlife.app.data.blossom.BlossomClient
 import com.fiatlife.app.data.local.dao.CreditAccountDao
 import com.fiatlife.app.data.local.entity.CreditAccountEntity
 import com.fiatlife.app.data.nostr.NostrClient
@@ -23,6 +24,7 @@ private const val TAG = "CreditAccountRepo"
 class CreditAccountRepository @Inject constructor(
     private val creditAccountDao: CreditAccountDao,
     private val nostrClient: NostrClient,
+    private val blossomClient: BlossomClient,
     private val json: Json
 ) {
     companion object {
@@ -69,6 +71,18 @@ class CreditAccountRepository @Inject constructor(
             }
         }
         return withId
+    }
+
+    suspend fun uploadAttachment(
+        data: ByteArray,
+        contentType: String,
+        filename: String
+    ): Result<String> {
+        return blossomClient.uploadBlob(data, contentType, filename).map { it.sha256 }
+    }
+
+    suspend fun downloadAttachment(sha256: String): Result<ByteArray> {
+        return blossomClient.getBlob(sha256)
     }
 
     suspend fun deleteCreditAccount(account: CreditAccount) {

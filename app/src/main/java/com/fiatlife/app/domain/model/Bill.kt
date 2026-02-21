@@ -223,7 +223,9 @@ data class Bill(
     val lastPaidDate: Long? = null,
     val createdAt: Long = 0L,
     val updatedAt: Long = 0L,
-    val creditCardDetails: CreditCardDetails? = null
+    val creditCardDetails: CreditCardDetails? = null,
+    /** When set, this bill represents the monthly payment for the linked credit/loan account (Debt tab). */
+    val linkedCreditAccountId: String? = null
 ) {
     /** Resolved subcategory: [subcategory] if set, else derived from legacy [category]. */
     val effectiveSubcategory: BillSubcategory

@@ -1,5 +1,10 @@
 package com.fiatlife.app.ui.screens.debt
 
+import android.content.Intent
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -10,16 +15,23 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.fiatlife.app.domain.model.CreditAccount
+import com.fiatlife.app.domain.model.StatementEntry
 import com.fiatlife.app.ui.components.MoneyText
+import com.fiatlife.app.ui.navigation.Screen
 import com.fiatlife.app.ui.components.SectionCard
 import com.fiatlife.app.ui.components.formatCurrency
 import com.fiatlife.app.ui.viewmodel.DebtDetailViewModel
+import kotlinx.coroutines.launch
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -28,9 +40,24 @@ fun DebtDetailScreen(
     viewModel: DebtDetailViewModel = hiltViewModel()
 ) {
     val account by viewModel.account.collectAsStateWithLifecycle()
+    val linkedBill by viewModel.linkedBill.collectAsStateWithLifecycle()
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
     var hasLoadedAccount by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            context.contentResolver.openInputStream(it)?.use { stream ->
+                val bytes = stream.readBytes()
+                val mimeType = context.contentResolver.getType(it) ?: "application/octet-stream"
+                val fileName = "statement_${System.currentTimeMillis()}"
+                account?.let { acc -> viewModel.uploadAndAddStatement(acc, bytes, mimeType, fileName) }
+            }
+        }
+    }
 
     LaunchedEffect(account) {
         if (account != null) {
@@ -103,6 +130,39 @@ fun DebtDetailScreen(
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
+
+                if (linkedBill != null) {
+                    val bill = linkedBill!!
+                    SectionCard(title = "Tracked in Bills", icon = Icons.Filled.Receipt) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { navController.navigate(Screen.BillDetail.routeWithId(bill.id)) },
+                            shape = MaterialTheme.shapes.medium,
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = bill.name,
+                                        style = MaterialTheme.typography.bodyLarge
+                                    )
+                                    Icon(Icons.Filled.ChevronRight, contentDescription = "View", modifier = Modifier.size(20.dp))
+                                }
+                                Text(
+                                    text = "See payment history in Bills",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
 
                 SectionCard(title = "Overview") {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -205,6 +265,77 @@ fun DebtDetailScreen(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(16.dp))
+
+                SectionCard(title = "Statements", icon = Icons.Filled.AttachFile) {
+                    val statements = acc.statementEntries.sortedByDescending { it.addedAt }
+                    if (statements.isEmpty()) {
+                        Text(
+                            text = "No statements attached.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = { filePicker.launch("*/*") },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Filled.AttachFile, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Attach statement")
+                        }
+                    } else {
+                        statements.forEach { entry ->
+                            DebtStatementRow(
+                                entry = entry,
+                                onView = {
+                                    scope.launch {
+                                        viewModel.getStatementBytes(entry.hash).onSuccess { bytes ->
+                                            val ext = when {
+                                                entry.label.contains(".pdf", ignoreCase = true) -> "pdf"
+                                                entry.label.contains("png", ignoreCase = true) -> "png"
+                                                entry.label.contains("jpg", ignoreCase = true) -> "jpg"
+                                                else -> "bin"
+                                            }
+                                            val file = File(context.cacheDir, "statement_${entry.hash.take(8)}.$ext")
+                                            file.writeBytes(bytes)
+                                            val uri = Uri.fromFile(file)
+                                            val mime = when (ext) {
+                                                "pdf" -> "application/pdf"
+                                                "png", "jpg" -> "image/*"
+                                                else -> "application/octet-stream"
+                                            }
+                                            try {
+                                                context.startActivity(
+                                                    Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
+                                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                )
+                                            } catch (_: Exception) {
+                                                context.startActivity(
+                                                    Intent.createChooser(
+                                                        Intent(Intent.ACTION_SEND).setType(mime).putExtra(Intent.EXTRA_STREAM, uri),
+                                                        "Open statement"
+                                                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = { filePicker.launch("*/*") },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Filled.Add, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Attach another")
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(24.dp))
             }
         )
@@ -237,12 +368,42 @@ fun DebtDetailScreen(
         CreditAccountDialog(
             account = accountForDialog,
             onDismiss = { showEditDialog = false },
-            onSave = {
-                viewModel.saveAccount(it)
+            onSave = { acc, _ ->
+                viewModel.saveAccount(acc)
                 showEditDialog = false
                 navController.popBackStack()
             },
             isSaving = false
         )
+    }
+}
+
+@Composable
+private fun DebtStatementRow(
+    entry: StatementEntry,
+    onView: () -> Unit
+) {
+    val dateStr = if (entry.addedAt > 0)
+        SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(entry.addedAt))
+    else "—"
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = entry.label.ifBlank { "Statement" },
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = dateStr,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        TextButton(onClick = onView) { Text("View") }
     }
 }

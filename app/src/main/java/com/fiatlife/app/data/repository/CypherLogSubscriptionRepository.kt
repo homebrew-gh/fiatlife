@@ -29,8 +29,14 @@ private const val TAG = "CypherLogSubRepo"
 /** CypherLog 37004 tag keys we map to Bill; all others are preserved for round-trip */
 private val MAPPED_TAG_KEYS = setOf(
     "d", "name", "cost", "currency", "billing_frequency", "subscription_type",
-    "company_name", "company_id", "notes"
+    "company_name", "company_id", "notes", "alt"
 )
+
+/** When name is empty, try to derive from CypherLog "alt" tag (e.g. "Subscription: Netflix"). */
+private fun nameFromAltTag(tagMap: Map<String, List<String>>): String {
+    val alt = tagMap["alt"]?.firstOrNull() ?: return ""
+    return alt.removePrefix("Subscription:").removePrefix("subscription:").trim()
+}
 
 @Singleton
 class CypherLogSubscriptionRepository @Inject constructor(
@@ -172,18 +178,26 @@ class CypherLogSubscriptionRepository @Inject constructor(
         try {
             val obj = json.parseToJsonElement(contentJson).jsonObject
             fun str(vararg keys: String): String? = keys.mapNotNull { obj[it]?.jsonPrimitive?.content }.firstOrNull()
-            name = str("name") ?: ""
-            cost = str("cost", "amount")?.toDoubleOrNull() ?: 0.0
+            fun doubleVal(vararg keys: String): Double? = keys.mapNotNull { key ->
+                obj[key]?.jsonPrimitive?.content?.toDoubleOrNull()
+            }.firstOrNull()
+            var nameFromContent = str("name") ?: ""
+            cost = doubleVal("cost", "amount", "price") ?: str("cost", "amount", "price")?.toDoubleOrNull() ?: 0.0
             frequency = billingFrequencyToBillFrequency(str("billing_frequency", "billingFrequency"))
             notes = str("notes") ?: ""
             companyName = str("company_name", "companyName") ?: ""
+            if (nameFromContent.isBlank()) {
+                val altName = nameFromAltTag(tagMap)
+                nameFromContent = altName
+            }
+            name = nameFromContent
         } catch (_: Exception) {
             return tags37004ToBill(dTag, tags)
         }
 
         val bill = Bill(
             id = dTag,
-            name = name,
+            name = name.ifBlank { "Subscription" },
             amount = cost,
             category = BillCategory.OTHER,
             subcategory = BillSubcategory.OTHER_SUBSCRIPTION,
@@ -205,7 +219,8 @@ class CypherLogSubscriptionRepository @Inject constructor(
         }
         fun first(key: String): String? = tagMap[key]?.firstOrNull()
 
-        val name = first("name") ?: ""
+        var name = first("name") ?: ""
+        if (name.isBlank()) name = nameFromAltTag(tagMap)
         val cost = first("cost")?.toDoubleOrNull() ?: 0.0
         val frequency = billingFrequencyToBillFrequency(first("billing_frequency"))
         val notes = first("notes") ?: ""
@@ -217,7 +232,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
 
         val bill = Bill(
             id = dTag,
-            name = name,
+            name = name.ifBlank { "Subscription" },
             amount = cost,
             category = BillCategory.OTHER,
             subcategory = BillSubcategory.OTHER_SUBSCRIPTION,

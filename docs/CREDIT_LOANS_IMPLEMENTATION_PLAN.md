@@ -1,13 +1,15 @@
 # Credit & Loans Tab — Implementation Plan
 
-## Implementation status (Phases 1–4 complete)
+## Implementation status (Phases 1–7 complete)
 
 - **Tab name**: Implemented as **"Debt"** in bottom nav (route `debt`, detail `debt_detail/{accountId}`).
 - **Phase 1**: Done — `CreditAccount` / `CreditAccountType`, `CreditAccountEntity`, `CreditAccountDao`, DB v3 + migration, `CreditAccountRepository` with Nostr sync (`fiatlife/credit/`). Sync wired in `MainActivity.syncFromRelay()`.
 - **Phase 2**: Done — `Screen.Debt` and `Screen.DebtDetail`, Debt in bottom nav, `DebtScreen` (summary card: total debt, monthly payment, credit available/utilization when applicable; account list; FAB), `DebtViewModel` (state + sync on connect).
 - **Phase 3**: Done — Add/Edit via `CreditAccountDialog` (type, name, institution, last 4, APR, balance, due day; revolving: limit + min payment type/value; amortizing: original principal, term months, monthly payment; notes). Save/delete via repository (Nostr sync in repository).
 - **Phase 4**: Done — `DebtDetailScreen` (overview: balance, limit if revolving, APR, due day, monthly/min payment, principal/term if amortizing; Edit and Delete). `DebtDetailViewModel` loads by id and supports save/delete.
-- **Phase 5** (link to Bills) and **Phase 6** (statement uploads) are not yet implemented.
+- **Phase 5**: Done — Bill ↔ Debt link: `Bill.linkedCreditAccountId` and `CreditAccount.linkedBillId`; Bill list/detail show "Credit: [name]" with nav to Debt detail; Debt detail shows "Tracked in Bills as: [bill name]" and "See payment history in Bills" with nav to Bill detail; BillDialog "Link to credit/loan" picker; optional "Create a bill for this payment" when adding a credit account.
+- **Phase 6**: Done — Statements on Debt: `CreditAccountRepository` Blossom upload/download; Debt detail "Statements" section with attach and view (same pattern as Bills).
+- **Phase 7**: Done — "See payment history in Bills" on Debt detail when linked; payment-due notifications for unlinked debt accounts (same schedule/channel as bill reminders).
 
 ---
 
@@ -190,23 +192,23 @@ Navigation implementation: use the same `NavController`; from Bills tab pass a r
 
 ### Phase 5 — Link to Bills
 
-- [ ] Add `linkedBillId` to `CreditAccount` and `linkedCreditAccountId` to `Bill` (both in domain and persistence).
-- [ ] Bill list/detail: show “Credit: [name]” when linked; tap → navigate to Credit tab + open that account detail.
-- [ ] Credit detail: show “Tracked in Bills as: [bill name]”; tap → navigate to Bill detail.
-- [ ] BillDialog: optional “Link to credit/loan” picker; on save, update both Bill and CreditAccount.
-- [ ] When creating a credit account with “Create a bill for this payment”, create the Bill and set both link fields.
+- [x] Add `linkedBillId` to `CreditAccount` and `linkedCreditAccountId` to `Bill` (both in domain and persistence).
+- [x] Bill list/detail: show “Credit: [name]” when linked; tap → navigate to Credit tab + open that account detail.
+- [x] Credit detail: show “Tracked in Bills as: [bill name]”; tap → navigate to Bill detail.
+- [x] BillDialog: optional “Link to credit/loan” picker; on save, update both Bill and CreditAccount.
+- [x] When creating a credit account with “Create a bill for this payment”, create the Bill and set both link fields.
 
 ### Phase 6 — Statement uploads (Blossom) per account
 
-- [ ] Add `statementEntries` (and optionally `attachmentHashes`) to `CreditAccount`; persist and sync like other fields.
-- [ ] Credit account detail: “Statements” section listing attached statements (label, date); “View” opens file from Blossom (same flow as Bill statements).
-- [ ] Add/Edit or detail: “Attach statement (PDF/Image)” — pick file, upload to Blossom via existing Blossom client, append `StatementEntry` to account, save and sync. Reuse the same Blossom upload path used for bills.
+- [x] Add `statementEntries` (and optionally `attachmentHashes`) to `CreditAccount`; persist and sync like other fields.
+- [x] Credit account detail: “Statements” section listing attached statements (label, date); “View” opens file from Blossom (same flow as Bill statements).
+- [x] Add/Edit or detail: “Attach statement (PDF/Image)” — pick file, upload to Blossom via existing Blossom client, append `StatementEntry` to account, save and sync. Reuse the same Blossom upload path used for bills.
 
 ### Phase 7 — Polish and extra types
 
-- [ ] Payment history on credit account (or rely on linked bill’s payment history and show “See payment history in Bills”).
-- [ ] HELOC, retirement loan: specific fields if needed.
-- [ ] Notifications: e.g. “Credit payment due in 3 days” (could reuse bill reminder for linked bill, or add a separate reminder for accounts without a linked bill).
+- [x] Payment history on credit account (or rely on linked bill’s payment history and show “See payment history in Bills”).
+- [ ] HELOC, retirement loan: specific fields if needed (deferred; existing types and fields suffice for now).
+- [x] Notifications: “Credit payment due in N days” for accounts without a linked bill (same worker and prefs as bill reminders).
 
 ---
 

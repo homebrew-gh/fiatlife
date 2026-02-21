@@ -3,12 +3,17 @@ package com.fiatlife.app.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.fiatlife.app.data.nostr.NostrClient
+import com.fiatlife.app.data.repository.BillRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
+import com.fiatlife.app.domain.model.Bill
+import com.fiatlife.app.domain.model.BillFrequency
+import com.fiatlife.app.domain.model.BillSubcategory
 import com.fiatlife.app.domain.model.CreditAccount
 import com.fiatlife.app.domain.model.CreditAccountType
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.util.UUID
 import javax.inject.Inject
 
 data class DebtState(
@@ -28,6 +33,7 @@ data class DebtState(
 @HiltViewModel
 class DebtViewModel @Inject constructor(
     private val repository: CreditAccountRepository,
+    private val billRepository: BillRepository,
     private val nostrClient: NostrClient
 ) : ViewModel() {
 
@@ -90,11 +96,28 @@ class DebtViewModel @Inject constructor(
         _state.update { it.copy(navigateToAccountId = null) }
     }
 
-    fun saveAccount(account: CreditAccount) {
+    fun saveAccount(account: CreditAccount, createBillForPayment: Boolean = false) {
         viewModelScope.launch {
             _state.update { it.copy(isSaving = true) }
             try {
-                val saved = repository.saveCreditAccount(account)
+                var saved = repository.saveCreditAccount(account)
+                if (account.id.isBlank() && createBillForPayment) {
+                    val billId = UUID.randomUUID().toString()
+                    val bill = Bill(
+                        id = billId,
+                        name = saved.name,
+                        amount = saved.effectiveMonthlyPayment(),
+                        subcategory = BillSubcategory.OTHER_LOAN,
+                        frequency = BillFrequency.MONTHLY,
+                        dueDay = saved.dueDay,
+                        linkedCreditAccountId = saved.id,
+                        createdAt = System.currentTimeMillis(),
+                        updatedAt = System.currentTimeMillis()
+                    )
+                    billRepository.saveBill(bill)
+                    saved = saved.copy(linkedBillId = billId)
+                    repository.saveCreditAccount(saved)
+                }
                 _state.update {
                     it.copy(
                         isSaving = false,

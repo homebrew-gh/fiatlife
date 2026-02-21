@@ -74,9 +74,9 @@ data class CreditAccount(
         CreditCardMinPaymentType.FULL_BALANCE -> currentBalance.coerceAtLeast(0.0)
     }
 
-    /** Monthly payment to use for totals: revolving = min due, amortizing = monthlyPaymentAmount or 0. */
+    /** Monthly payment to use for totals and display. Revolving: only count when balance > 0 (use minimum due). Amortizing: fixed monthly payment. */
     fun effectiveMonthlyPayment(): Double = when {
-        type.isRevolving -> minimumDue()
+        type.isRevolving -> if (currentBalance > 0) minimumDue() else 0.0
         type.isAmortizing -> monthlyPaymentAmount ?: 0.0
         else -> 0.0
     }

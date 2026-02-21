@@ -92,4 +92,51 @@ class BillNotificationManager @Inject constructor(
 
         NotificationManagerCompat.from(context).notify(bill.id.hashCode(), notification)
     }
+
+    /** Reminder for a credit/loan payment (when not linked to a bill). */
+    @SuppressLint("MissingPermission")
+    fun showDebtReminder(accountName: String, amount: Double, daysUntilDue: Int, accountId: String, detailed: Boolean) {
+        if (!hasPermission()) return
+
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val notificationId = "debt_$accountId".hashCode()
+        val pending = PendingIntent.getActivity(
+            context, notificationId, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val (title, body) = if (detailed) {
+            val dueText = when (daysUntilDue) {
+                0 -> "due today"
+                1 -> "due tomorrow"
+                else -> "due in $daysUntilDue days"
+            }
+            val amountStr = "$%.2f".format(amount)
+            "$accountName — $amountStr" to "Payment $dueText"
+        } else {
+            val dueText = when (daysUntilDue) {
+                0 -> "You have a payment due today"
+                1 -> "You have a payment due tomorrow"
+                else -> "You have a payment due in $daysUntilDue days"
+            }
+            "Payment Reminder" to dueText
+        }
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(pending)
+            .setAutoCancel(true)
+            .setVisibility(
+                if (detailed) NotificationCompat.VISIBILITY_PRIVATE
+                else NotificationCompat.VISIBILITY_PUBLIC
+            )
+            .build()
+
+        NotificationManagerCompat.from(context).notify(notificationId, notification)
+    }
 }

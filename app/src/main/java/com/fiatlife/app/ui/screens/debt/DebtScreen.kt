@@ -170,7 +170,7 @@ fun DebtScreen(
         CreditAccountDialog(
             account = state.editingAccount,
             onDismiss = { viewModel.dismissDialog() },
-            onSave = { viewModel.saveAccount(it) },
+            onSave = { acc, createBill -> viewModel.saveAccount(acc, createBill) },
             isSaving = state.isSaving
         )
     }
@@ -246,33 +246,34 @@ private fun DebtAccountCard(
 internal fun CreditAccountDialog(
     account: CreditAccount?,
     onDismiss: () -> Unit,
-    onSave: (CreditAccount) -> Unit,
+    onSave: (CreditAccount, createBillForPayment: Boolean) -> Unit,
     isSaving: Boolean
 ) {
     var name by remember { mutableStateOf(account?.name ?: "") }
     var type by remember { mutableStateOf(account?.type ?: CreditAccountType.CREDIT_CARD) }
     var institution by remember { mutableStateOf(account?.institution ?: "") }
     var accountNumberLast4 by remember { mutableStateOf(account?.accountNumberLast4 ?: "") }
-    var aprPercent by remember { mutableStateOf("%.2f".format((account?.apr ?: 0.0) * 100.0)) }
-    var currentBalance by remember { mutableStateOf(account?.currentBalance?.toString() ?: "0") }
-    var dueDay by remember { mutableStateOf(account?.dueDay?.toString() ?: "1") }
+    var aprPercent by remember { mutableStateOf(if (account != null) "%.2f".format(account!!.apr * 100.0) else "") }
+    var currentBalance by remember { mutableStateOf(account?.currentBalance?.toString()?.takeIf { it != "0.0" } ?: "") }
+    var dueDay by remember { mutableStateOf(account?.dueDay?.toString() ?: "") }
     var notes by remember { mutableStateOf(account?.notes ?: "") }
     var typeExpanded by remember { mutableStateOf(false) }
 
-    var creditLimit by remember { mutableStateOf(account?.creditLimit?.toString() ?: "0") }
+    var creditLimit by remember { mutableStateOf(account?.creditLimit?.toString()?.takeIf { it != "0.0" } ?: "") }
     var minimumPaymentType by remember { mutableStateOf(account?.minimumPaymentType ?: CreditCardMinPaymentType.PERCENT_OF_BALANCE) }
     var minimumPaymentValue by remember { mutableStateOf(
-        when (account?.minimumPaymentType) {
-            CreditCardMinPaymentType.FIXED -> "%.2f".format(account?.minimumPaymentValue ?: 25.0)
-            CreditCardMinPaymentType.PERCENT_OF_BALANCE -> "%.1f".format(account?.minimumPaymentValue ?: 2.0)
+        if (account != null) when (account!!.minimumPaymentType) {
+            CreditCardMinPaymentType.FIXED -> "%.2f".format(account!!.minimumPaymentValue)
+            CreditCardMinPaymentType.PERCENT_OF_BALANCE -> "%.1f".format(account!!.minimumPaymentValue)
             else -> "25"
-        }
+        } else ""
     ) }
     var minPaymentTypeExpanded by remember { mutableStateOf(false) }
 
-    var originalPrincipal by remember { mutableStateOf(account?.originalPrincipal?.toString() ?: "0") }
+    var originalPrincipal by remember { mutableStateOf(account?.originalPrincipal?.toString()?.takeIf { it != "0.0" } ?: "") }
     var termMonths by remember { mutableStateOf(account?.termMonths?.toString() ?: "") }
     var monthlyPaymentAmount by remember { mutableStateOf(account?.monthlyPaymentAmount?.toString() ?: "") }
+    var createBillForPayment by remember { mutableStateOf(false) }
 
     val isRevolving = type.isRevolving
     val isAmortizing = type.isAmortizing
@@ -342,18 +343,21 @@ internal fun CreditAccountDialog(
                 CurrencyTextField(
                     value = currentBalance,
                     onValueChange = { currentBalance = it },
-                    label = "Current balance"
+                    label = "Current balance",
+                    placeholder = "0"
                 )
                 PercentageTextField(
                     value = aprPercent,
                     onValueChange = { aprPercent = it },
                     label = "APR %",
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "0"
                 )
                 OutlinedTextField(
                     value = dueDay,
                     onValueChange = { dueDay = it.filter { c -> c.isDigit() }.take(2) },
                     label = { Text("Due day (1–31)") },
+                    placeholder = { Text("1") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     shape = MaterialTheme.shapes.medium
@@ -362,7 +366,8 @@ internal fun CreditAccountDialog(
                     CurrencyTextField(
                         value = creditLimit,
                         onValueChange = { creditLimit = it },
-                        label = "Credit limit"
+                        label = "Credit limit",
+                        placeholder = "0"
                     )
                     ExposedDropdownMenuBox(
                         expanded = minPaymentTypeExpanded,
@@ -421,6 +426,15 @@ internal fun CreditAccountDialog(
                                 }
                             )
                         },
+                        placeholder = {
+                            Text(
+                                when (minimumPaymentType) {
+                                    CreditCardMinPaymentType.FIXED -> "25"
+                                    CreditCardMinPaymentType.PERCENT_OF_BALANCE -> "2"
+                                    else -> ""
+                                }
+                            )
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         shape = MaterialTheme.shapes.medium,
@@ -431,12 +445,14 @@ internal fun CreditAccountDialog(
                     CurrencyTextField(
                         value = originalPrincipal,
                         onValueChange = { originalPrincipal = it },
-                        label = "Original principal"
+                        label = "Original principal",
+                        placeholder = "0"
                     )
                     OutlinedTextField(
                         value = termMonths,
                         onValueChange = { termMonths = it.filter { c -> c.isDigit() }.take(5) },
                         label = { Text("Term (months)") },
+                        placeholder = { Text("e.g. 60") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         shape = MaterialTheme.shapes.medium
@@ -444,7 +460,8 @@ internal fun CreditAccountDialog(
                     CurrencyTextField(
                         value = monthlyPaymentAmount,
                         onValueChange = { monthlyPaymentAmount = it },
-                        label = "Monthly payment"
+                        label = "Monthly payment",
+                        placeholder = "0"
                     )
                 }
                 OutlinedTextField(
@@ -455,6 +472,16 @@ internal fun CreditAccountDialog(
                     minLines = 2,
                     shape = MaterialTheme.shapes.medium
                 )
+                if (account == null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Create a bill for this payment")
+                        Switch(checked = createBillForPayment, onCheckedChange = { createBillForPayment = it })
+                    }
+                }
             }
         },
         confirmButton = {
@@ -490,7 +517,8 @@ internal fun CreditAccountDialog(
                             monthlyPaymentAmount = monthlyPaymentAmount.toDoubleOrNull()?.takeIf { it >= 0 },
                             startDate = account?.startDate,
                             endDate = account?.endDate
-                        )
+                        ),
+                        createBillForPayment = account == null && createBillForPayment
                     )
                 },
                 enabled = name.isNotBlank() && !isSaving

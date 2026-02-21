@@ -27,6 +27,7 @@ import com.fiatlife.app.data.blossom.BlossomClient
 import com.fiatlife.app.data.nostr.*
 import com.fiatlife.app.data.repository.BillRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
+import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
 import com.fiatlife.app.data.repository.GoalRepository
 import com.fiatlife.app.data.repository.SalaryRepository
 import com.fiatlife.app.data.security.PinPrefs
@@ -55,6 +56,7 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var billRepository: BillRepository
     @Inject lateinit var goalRepository: GoalRepository
     @Inject lateinit var creditAccountRepository: CreditAccountRepository
+    @Inject lateinit var cypherLogSubscriptionRepository: CypherLogSubscriptionRepository
 
     val amberSignerRef = AtomicReference<AmberSigner?>(null)
     lateinit var decryptLauncher: ActivityResultLauncher<Intent>
@@ -330,6 +332,7 @@ class MainActivity : ComponentActivity() {
             launch { try { billRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bill sync: ${e.message}") } }
             launch { try { goalRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Goal sync: ${e.message}") } }
             launch { try { creditAccountRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Credit account sync: ${e.message}") } }
+            launch { try { cypherLogSubscriptionRepository.syncFromRelay() } catch (e: Exception) { Log.w(TAG, "CypherLog sync: ${e.message}") } }
         }
     }
 }

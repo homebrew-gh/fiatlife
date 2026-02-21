@@ -153,7 +153,8 @@ fun CurrencyTextField(
     onValueChange: (String) -> Unit,
     label: String,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    placeholder: String? = null
 ) {
     OutlinedTextField(
         value = value,
@@ -163,6 +164,7 @@ fun CurrencyTextField(
             }
         },
         label = { Text(label) },
+        placeholder = if (placeholder != null) { { Text(placeholder) } } else null,
         prefix = { Text("$") },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         singleLine = true,
@@ -178,7 +180,8 @@ fun PercentageTextField(
     onValueChange: (String) -> Unit,
     label: String,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    placeholder: String? = null
 ) {
     OutlinedTextField(
         value = value,
@@ -188,6 +191,7 @@ fun PercentageTextField(
             }
         },
         label = { Text(label) },
+        placeholder = if (placeholder != null) { { Text(placeholder) } } else null,
         suffix = { Text("%") },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         singleLine = true,

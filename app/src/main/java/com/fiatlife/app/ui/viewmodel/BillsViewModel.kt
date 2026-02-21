@@ -4,9 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.repository.BillRepository
+import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
 import com.fiatlife.app.domain.model.Bill
+import com.fiatlife.app.domain.model.CreditAccount
 import com.fiatlife.app.domain.model.BillGeneralCategory
+import com.fiatlife.app.domain.model.BillPayment
 import com.fiatlife.app.domain.model.BillWithSource
 import com.fiatlife.app.domain.model.StatementEntry
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -17,6 +20,7 @@ import javax.inject.Inject
 data class BillsState(
     val bills: List<BillWithSource> = emptyList(),
     val filteredBills: List<BillWithSource> = emptyList(),
+    val creditAccounts: List<CreditAccount> = emptyList(),
     val selectedGeneralCategory: BillGeneralCategory? = null,
     val showAddDialog: Boolean = false,
     val editingBill: Bill? = null,
@@ -34,6 +38,7 @@ data class BillsState(
 class BillsViewModel @Inject constructor(
     private val repository: BillRepository,
     private val cypherLogSubscriptionRepository: CypherLogSubscriptionRepository,
+    private val creditAccountRepository: CreditAccountRepository,
     private val nostrClient: NostrClient
 ) : ViewModel() {
 
@@ -41,6 +46,11 @@ class BillsViewModel @Inject constructor(
     val state: StateFlow<BillsState> = _state.asStateFlow()
 
     init {
+        viewModelScope.launch {
+            creditAccountRepository.getAllCreditAccounts().collect { accounts ->
+                _state.update { it.copy(creditAccounts = accounts) }
+            }
+        }
         viewModelScope.launch {
             combine(
                 repository.getAllBills(),
@@ -163,7 +173,20 @@ class BillsViewModel @Inject constructor(
                         )
                     }
                 } else {
+                    val previousBill = current.editingBill
                     val saved = repository.saveBill(merged)
+                    val newLinkedId = saved.linkedCreditAccountId
+                    val oldLinkedId = previousBill?.linkedCreditAccountId
+                    if (oldLinkedId != null && oldLinkedId != newLinkedId) {
+                        creditAccountRepository.getCreditAccountById(oldLinkedId).first()?.let { acc ->
+                            creditAccountRepository.saveCreditAccount(acc.copy(linkedBillId = null))
+                        }
+                    }
+                    if (newLinkedId != null) {
+                        creditAccountRepository.getCreditAccountById(newLinkedId).first()?.let { acc ->
+                            creditAccountRepository.saveCreditAccount(acc.copy(linkedBillId = saved.id))
+                        }
+                    }
                     _state.update {
                         it.copy(
                             isSaving = false,
@@ -192,12 +215,26 @@ class BillsViewModel @Inject constructor(
         }
     }
 
-    fun togglePaid(item: BillWithSource) {
+    /** Record a payment: add to history with amount and date, mark paid, and for credit cards reduce balance. */
+    fun recordPayment(item: BillWithSource) {
         if (item.isCypherLog) return
         viewModelScope.launch {
-            val updated = item.bill.copy(
-                isPaid = !item.bill.isPaid,
-                lastPaidDate = if (!item.bill.isPaid) System.currentTimeMillis() else item.bill.lastPaidDate
+            val bill = item.bill
+            val paymentAmount = bill.effectiveAmountDue()
+            val payment = BillPayment(
+                date = System.currentTimeMillis(),
+                amount = paymentAmount
+            )
+            val updatedCcDetails = bill.creditCardDetails?.let { cc ->
+                cc.copy(
+                    currentBalance = (cc.currentBalance - paymentAmount).coerceAtLeast(0.0)
+                )
+            }
+            val updated = bill.copy(
+                paymentHistory = bill.paymentHistory + payment,
+                isPaid = true,
+                lastPaidDate = payment.date,
+                creditCardDetails = updatedCcDetails
             )
             repository.saveBill(updated)
         }

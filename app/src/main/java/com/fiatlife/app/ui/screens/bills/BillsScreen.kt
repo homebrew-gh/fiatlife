@@ -23,6 +23,7 @@ import androidx.navigation.NavController
 import com.fiatlife.app.domain.model.BillCategory
 import com.fiatlife.app.domain.model.BillGeneralCategory
 import com.fiatlife.app.domain.model.BillFrequency
+import com.fiatlife.app.domain.model.CreditAccount
 import com.fiatlife.app.domain.model.CreditCardDetails
 import com.fiatlife.app.domain.model.CreditCardMinPaymentType
 import com.fiatlife.app.domain.model.StatementEntry
@@ -30,6 +31,7 @@ import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.domain.model.BillSubcategory
 import com.fiatlife.app.domain.model.BillWithSource
 import com.fiatlife.app.ui.navigation.Screen
+import androidx.compose.foundation.clickable
 import com.fiatlife.app.ui.components.*
 import com.fiatlife.app.ui.theme.*
 import com.fiatlife.app.ui.viewmodel.BillsViewModel
@@ -158,10 +160,17 @@ fun BillsScreen(
                 }
             } else {
                 items(state.filteredBills, key = { it.id }) { item ->
+                    val linkedId = item.bill.linkedCreditAccountId
+                    val linkedAccount = state.creditAccounts.find { it.id == linkedId }
                     BillCard(
                         item = item,
+                        linkedAccountName = linkedAccount?.name,
+                        linkedAccountId = linkedId,
                         onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
-                        onTogglePaid = { viewModel.togglePaid(item) }
+                        onMarkPaid = { viewModel.recordPayment(item) },
+                        onCreditClick = if (linkedId != null) {
+                            { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
+                        } else null
                     )
                 }
             }
@@ -173,6 +182,7 @@ fun BillsScreen(
     if (state.showAddDialog) {
         BillDialog(
             bill = state.editingBill,
+            creditAccounts = state.creditAccounts,
             isEditingCypherLog = state.editingIsCypherLog,
             statementCount = state.dialogStatementEntries.size,
             onDismiss = { viewModel.dismissDialog() },
@@ -194,8 +204,11 @@ fun BillsScreen(
 @Composable
 private fun BillCard(
     item: BillWithSource,
+    linkedAccountName: String? = null,
+    linkedAccountId: String? = null,
     onClick: () -> Unit,
-    onTogglePaid: () -> Unit
+    onMarkPaid: () -> Unit,
+    onCreditClick: (() -> Unit)? = null
 ) {
     val bill = item.bill
     Card(
@@ -212,16 +225,34 @@ private fun BillCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 4.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
+                .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (!item.isCypherLog) {
-                Checkbox(
-                    checked = bill.isPaid,
-                    onCheckedChange = { onTogglePaid() },
-                    colors = CheckboxDefaults.colors(checkedColor = ProfitGreen)
-                )
-            } else {
+            if (!item.isCypherLog && !bill.isPaid) {
+                Button(
+                    onClick = { onMarkPaid() },
+                    modifier = Modifier.height(32.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = ProfitGreen),
+                    shape = MaterialTheme.shapes.small
+                ) {
+                    Text("Paid", style = MaterialTheme.typography.labelLarge)
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+            } else if (!item.isCypherLog && bill.isPaid) {
+                Surface(
+                    shape = MaterialTheme.shapes.small,
+                    color = ProfitGreen.copy(alpha = 0.15f)
+                ) {
+                    Text(
+                        text = "Paid",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = ProfitGreen,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+            } else if (item.isCypherLog) {
                 Spacer(modifier = Modifier.width(12.dp))
             }
             Column(modifier = Modifier.weight(1f)) {
@@ -243,6 +274,20 @@ private fun BillCard(
                                 text = "CypherLog",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    if (linkedAccountId != null && onCreditClick != null) {
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.clickable { onCreditClick() }
+                        ) {
+                            Text(
+                                text = "Credit: ${linkedAccountName ?: "…"}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
@@ -308,6 +353,7 @@ private fun BillCard(
 @Composable
 internal fun BillDialog(
     bill: Bill?,
+    creditAccounts: List<CreditAccount> = emptyList(),
     isEditingCypherLog: Boolean = false,
     statementCount: Int = 0,
     onDismiss: () -> Unit,
@@ -354,6 +400,8 @@ internal fun BillDialog(
         )
     }
     var minPaymentTypeExpanded by remember { mutableStateOf(false) }
+    var linkedCreditAccountId by remember { mutableStateOf(bill?.linkedCreditAccountId ?: "") }
+    var linkedCreditAccountExpanded by remember { mutableStateOf(false) }
 
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -629,6 +677,47 @@ internal fun BillDialog(
                         shape = MaterialTheme.shapes.medium
                     )
                 }
+                if (!isEditingCypherLog && creditAccounts.isNotEmpty()) {
+                    item {
+                        ExposedDropdownMenuBox(
+                            expanded = linkedCreditAccountExpanded,
+                            onExpandedChange = { linkedCreditAccountExpanded = it }
+                        ) {
+                            OutlinedTextField(
+                                value = linkedCreditAccountId.let { id ->
+                                    if (id.isBlank()) "None" else creditAccounts.find { it.id == id }?.name ?: "…"
+                                },
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Link to credit/loan") },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(linkedCreditAccountExpanded) },
+                                modifier = Modifier.fillMaxWidth().menuAnchor(),
+                                shape = MaterialTheme.shapes.medium
+                            )
+                            ExposedDropdownMenu(
+                                expanded = linkedCreditAccountExpanded,
+                                onDismissRequest = { linkedCreditAccountExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("None") },
+                                    onClick = {
+                                        linkedCreditAccountId = ""
+                                        linkedCreditAccountExpanded = false
+                                    }
+                                )
+                                creditAccounts.forEach { acc ->
+                                    DropdownMenuItem(
+                                        text = { Text("${acc.name} (${acc.type.displayName})") },
+                                        onClick = {
+                                            linkedCreditAccountId = acc.id
+                                            linkedCreditAccountExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
                 item {
                     OutlinedButton(
                         onClick = { filePicker.launch("*/*") },
@@ -688,7 +777,8 @@ internal fun BillDialog(
                             lastPaidDate = bill?.lastPaidDate,
                             createdAt = bill?.createdAt ?: 0L,
                             updatedAt = 0L,
-                            creditCardDetails = ccDetails
+                            creditCardDetails = ccDetails,
+                            linkedCreditAccountId = linkedCreditAccountId.takeIf { it.isNotBlank() }
                         ),
                         showInCypherLogArg
                     )

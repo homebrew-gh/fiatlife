@@ -14,11 +14,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.fiatlife.app.domain.model.Bill
+import com.fiatlife.app.ui.navigation.Screen
+import com.fiatlife.app.domain.model.BillPayment
 import com.fiatlife.app.domain.model.StatementEntry
 import com.fiatlife.app.ui.components.MoneyText
 import com.fiatlife.app.ui.components.SectionCard
@@ -39,6 +42,8 @@ fun BillDetailScreen(
 ) {
     val bill by viewModel.bill.collectAsStateWithLifecycle()
     val billWithSource by viewModel.billWithSource.collectAsStateWithLifecycle()
+    val linkedCreditAccount by viewModel.linkedCreditAccount.collectAsStateWithLifecycle()
+    val creditAccounts by viewModel.creditAccounts.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -178,6 +183,35 @@ fun BillDetailScreen(
                 }
             }
 
+            if (linkedCreditAccount != null && billWithSource?.isCypherLog != true) {
+                item {
+                    val account = linkedCreditAccount!!
+                    SectionCard(title = "Credit account", icon = Icons.Filled.AccountBalance) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { navController.navigate(Screen.DebtDetail.routeWithId(account.id)) },
+                            shape = MaterialTheme.shapes.medium,
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = account.name,
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                                Icon(Icons.Filled.ChevronRight, contentDescription = "View", modifier = Modifier.size(20.dp))
+                            }
+                        }
+                    }
+                }
+            }
+
             item {
                 SectionCard(title = "This year", icon = Icons.Filled.CalendarToday) {
                     Row(
@@ -216,11 +250,65 @@ fun BillDetailScreen(
                         Spacer(modifier = Modifier.height(12.dp))
                         Button(
                             onClick = { viewModel.recordPayment(b) },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = ProfitGreen)
                         ) {
                             Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Mark as paid")
+                        }
+                    }
+                }
+            }
+
+            if (billWithSource?.isCypherLog != true) {
+                item {
+                    var showFullPaymentHistory by remember { mutableStateOf(false) }
+                    val paymentsReversed = b.paymentHistory.reversed()
+                    val displayPayments = if (showFullPaymentHistory) paymentsReversed else paymentsReversed.take(10)
+                    val hasMore = paymentsReversed.size > 10
+                    SectionCard(title = "Payment history", icon = Icons.Filled.History) {
+                        if (b.paymentHistory.isEmpty()) {
+                            Text(
+                                text = "No payments recorded yet. Tap \"Mark as paid\" when you pay this bill.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            displayPayments.forEach { payment ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(payment.date)),
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    MoneyText(
+                                        amount = payment.amount,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = ProfitGreen
+                                    )
+                                }
+                            }
+                            if (hasMore && !showFullPaymentHistory) {
+                                TextButton(
+                                    onClick = { showFullPaymentHistory = true },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("View entire history (${b.paymentHistory.size} payments)")
+                                }
+                            } else if (hasMore && showFullPaymentHistory) {
+                                TextButton(
+                                    onClick = { showFullPaymentHistory = false },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Show less")
+                                }
+                            }
                         }
                     }
                 }
@@ -320,6 +408,7 @@ fun BillDetailScreen(
         if (editingBill != null) {
             BillDialog(
                 bill = editingBill,
+                creditAccounts = creditAccounts,
                 isEditingCypherLog = billWithSource?.isCypherLog == true,
                 statementCount = editingBill.statementEntries.size,
                 onDismiss = { showEditDialog = false },

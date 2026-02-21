@@ -9,8 +9,10 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.fiatlife.app.data.local.dao.BillDao
+import com.fiatlife.app.data.local.dao.CreditAccountDao
 import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.domain.model.BillFrequency
+import com.fiatlife.app.domain.model.CreditAccount
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.first
@@ -30,6 +32,7 @@ class BillReminderWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted workerParams: WorkerParameters,
     private val billDao: BillDao,
+    private val creditAccountDao: CreditAccountDao,
     private val notificationManager: BillNotificationManager,
     private val json: Json
 ) : CoroutineWorker(appContext, workerParams) {
@@ -57,6 +60,29 @@ class BillReminderWorker @AssistedInject constructor(
                 if (daysUntil in 0..daysBefore) {
                     notificationManager.showBillReminder(bill, daysUntil, detailed)
                 }
+            }
+        }
+
+        // Debt/credit accounts not linked to a bill: payment due reminders
+        val creditAccounts = creditAccountDao.getAll().first()
+        for (entity in creditAccounts) {
+            val account = try {
+                json.decodeFromString<CreditAccount>(entity.jsonData)
+            } catch (_: Exception) { continue }
+            if (account.linkedBillId != null) continue
+            if (account.effectiveMonthlyPayment() <= 0) continue
+            val dueDay = account.dueDay.coerceIn(1, 28)
+            val thisMonth = today.withDayOfMonth(dueDay)
+            val nextDue = if (thisMonth.isBefore(today)) thisMonth.plusMonths(1) else thisMonth
+            val daysUntil = java.time.temporal.ChronoUnit.DAYS.between(today, nextDue).toInt()
+            if (daysUntil in 0..daysBefore) {
+                notificationManager.showDebtReminder(
+                    account.name,
+                    account.effectiveMonthlyPayment(),
+                    daysUntil,
+                    account.id,
+                    detailed
+                )
             }
         }
         return Result.success()

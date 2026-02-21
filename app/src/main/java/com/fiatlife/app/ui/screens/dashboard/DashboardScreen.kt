@@ -168,7 +168,7 @@ fun DashboardScreen(
                             color = ProfitGreen
                         )
                         Text(
-                            text = "${state.goalsProgress.formatPercentage(0)} complete",
+                            text = "%.1f%% complete".format(state.goalsProgress),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -193,7 +193,7 @@ fun DashboardScreen(
                                     )
                                 }
                                 Text(
-                                    text = "${goal.progressPercent.toInt()}%",
+                                    text = "%.1f%%".format(goal.progressPercent),
                                     style = MaterialTheme.typography.labelLarge,
                                     color = ProfitGreen,
                                     fontWeight = FontWeight.Bold
