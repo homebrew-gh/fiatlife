@@ -443,26 +443,17 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
 
     @IdentifierNameString
     private static final class LazyClassKeyProvider {
-      static String com_fiatlife_app_ui_viewmodel_SalaryViewModel = "com.fiatlife.app.ui.viewmodel.SalaryViewModel";
-
-      static String com_fiatlife_app_ui_viewmodel_BillDetailViewModel = "com.fiatlife.app.ui.viewmodel.BillDetailViewModel";
-
-      static String com_fiatlife_app_ui_viewmodel_DashboardViewModel = "com.fiatlife.app.ui.viewmodel.DashboardViewModel";
-
       static String com_fiatlife_app_ui_viewmodel_BillsViewModel = "com.fiatlife.app.ui.viewmodel.BillsViewModel";
 
       static String com_fiatlife_app_ui_viewmodel_SettingsViewModel = "com.fiatlife.app.ui.viewmodel.SettingsViewModel";
 
+      static String com_fiatlife_app_ui_viewmodel_SalaryViewModel = "com.fiatlife.app.ui.viewmodel.SalaryViewModel";
+
       static String com_fiatlife_app_ui_viewmodel_GoalsViewModel = "com.fiatlife.app.ui.viewmodel.GoalsViewModel";
 
-      @KeepFieldType
-      SalaryViewModel com_fiatlife_app_ui_viewmodel_SalaryViewModel2;
+      static String com_fiatlife_app_ui_viewmodel_BillDetailViewModel = "com.fiatlife.app.ui.viewmodel.BillDetailViewModel";
 
-      @KeepFieldType
-      BillDetailViewModel com_fiatlife_app_ui_viewmodel_BillDetailViewModel2;
-
-      @KeepFieldType
-      DashboardViewModel com_fiatlife_app_ui_viewmodel_DashboardViewModel2;
+      static String com_fiatlife_app_ui_viewmodel_DashboardViewModel = "com.fiatlife.app.ui.viewmodel.DashboardViewModel";
 
       @KeepFieldType
       BillsViewModel com_fiatlife_app_ui_viewmodel_BillsViewModel2;
@@ -471,7 +462,16 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
       SettingsViewModel com_fiatlife_app_ui_viewmodel_SettingsViewModel2;
 
       @KeepFieldType
+      SalaryViewModel com_fiatlife_app_ui_viewmodel_SalaryViewModel2;
+
+      @KeepFieldType
       GoalsViewModel com_fiatlife_app_ui_viewmodel_GoalsViewModel2;
+
+      @KeepFieldType
+      BillDetailViewModel com_fiatlife_app_ui_viewmodel_BillDetailViewModel2;
+
+      @KeepFieldType
+      DashboardViewModel com_fiatlife_app_ui_viewmodel_DashboardViewModel2;
     }
   }
 
@@ -529,26 +529,23 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
 
     @IdentifierNameString
     private static final class LazyClassKeyProvider {
-      static String com_fiatlife_app_ui_viewmodel_SettingsViewModel = "com.fiatlife.app.ui.viewmodel.SettingsViewModel";
-
       static String com_fiatlife_app_ui_viewmodel_SalaryViewModel = "com.fiatlife.app.ui.viewmodel.SalaryViewModel";
 
-      static String com_fiatlife_app_ui_viewmodel_BillsViewModel = "com.fiatlife.app.ui.viewmodel.BillsViewModel";
+      static String com_fiatlife_app_ui_viewmodel_BillDetailViewModel = "com.fiatlife.app.ui.viewmodel.BillDetailViewModel";
 
       static String com_fiatlife_app_ui_viewmodel_DashboardViewModel = "com.fiatlife.app.ui.viewmodel.DashboardViewModel";
 
       static String com_fiatlife_app_ui_viewmodel_GoalsViewModel = "com.fiatlife.app.ui.viewmodel.GoalsViewModel";
 
-      static String com_fiatlife_app_ui_viewmodel_BillDetailViewModel = "com.fiatlife.app.ui.viewmodel.BillDetailViewModel";
+      static String com_fiatlife_app_ui_viewmodel_SettingsViewModel = "com.fiatlife.app.ui.viewmodel.SettingsViewModel";
 
-      @KeepFieldType
-      SettingsViewModel com_fiatlife_app_ui_viewmodel_SettingsViewModel2;
+      static String com_fiatlife_app_ui_viewmodel_BillsViewModel = "com.fiatlife.app.ui.viewmodel.BillsViewModel";
 
       @KeepFieldType
       SalaryViewModel com_fiatlife_app_ui_viewmodel_SalaryViewModel2;
 
       @KeepFieldType
-      BillsViewModel com_fiatlife_app_ui_viewmodel_BillsViewModel2;
+      BillDetailViewModel com_fiatlife_app_ui_viewmodel_BillDetailViewModel2;
 
       @KeepFieldType
       DashboardViewModel com_fiatlife_app_ui_viewmodel_DashboardViewModel2;
@@ -557,7 +554,10 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
       GoalsViewModel com_fiatlife_app_ui_viewmodel_GoalsViewModel2;
 
       @KeepFieldType
-      BillDetailViewModel com_fiatlife_app_ui_viewmodel_BillDetailViewModel2;
+      SettingsViewModel com_fiatlife_app_ui_viewmodel_SettingsViewModel2;
+
+      @KeepFieldType
+      BillsViewModel com_fiatlife_app_ui_viewmodel_BillsViewModel2;
     }
 
     private static final class SwitchingProvider<T> implements Provider<T> {
