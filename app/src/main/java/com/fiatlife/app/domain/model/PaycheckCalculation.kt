@@ -87,10 +87,16 @@ object PaycheckCalculator {
         val standardDeduction = FederalTaxTables.standardDeduction(config.filingStatus)
         val federalTaxableAnnual = (annualTaxable - standardDeduction).coerceAtLeast(0.0)
 
-        val federalMarginalRate = findMarginalRate(federalTaxableAnnual, config.filingStatus)
+        val federalMarginalRate = config.taxOverrides.customFederalTaxRate
+            ?: findMarginalRate(federalTaxableAnnual, config.filingStatus)
         val federalTax = if (config.taxOverrides.isExemptFromFederal) 0.0
         else {
-            val annualFederal = calculateFederalTax(federalTaxableAnnual, config.filingStatus)
+            val customRate = config.taxOverrides.customFederalTaxRate
+            val annualFederal = if (customRate != null) {
+                annualTaxable * customRate
+            } else {
+                calculateFederalTax(federalTaxableAnnual, config.filingStatus)
+            }
             (annualFederal / periodsPerYear) + config.taxOverrides.federalAdditionalWithholding
         }
 
@@ -108,8 +114,23 @@ object PaycheckCalculator {
         else (annualTaxable * countyTaxRate) / periodsPerYear
 
         val annualGross = grossPay * periodsPerYear
-        val socialSecurity = calculateSocialSecurity(taxableGross, annualGross, periodsPerYear)
-        val medicare = calculateMedicare(taxableGross, annualGross, periodsPerYear, config.filingStatus)
+        val ssRate = config.taxOverrides.customSocialSecurityRate ?: FicaTaxRates.SOCIAL_SECURITY_RATE
+        val socialSecurity = run {
+            val annualSS = annualGross.coerceAtMost(FicaTaxRates.SOCIAL_SECURITY_WAGE_BASE) * ssRate
+            annualSS / periodsPerYear
+        }
+        val medRate = config.taxOverrides.customMedicareRate ?: FicaTaxRates.MEDICARE_RATE
+        val medicare = run {
+            val threshold = when (config.filingStatus) {
+                FilingStatus.MARRIED_FILING_JOINTLY -> FicaTaxRates.ADDITIONAL_MEDICARE_THRESHOLD_JOINT
+                else -> FicaTaxRates.ADDITIONAL_MEDICARE_THRESHOLD_SINGLE
+            }
+            val baseMedicare = annualGross * medRate
+            val additionalMedicare = if (config.taxOverrides.customMedicareRate == null && annualGross > threshold) {
+                (annualGross - threshold) * FicaTaxRates.ADDITIONAL_MEDICARE_RATE
+            } else 0.0
+            (baseMedicare + additionalMedicare) / periodsPerYear
+        }
 
         val totalTaxes = federalTax + stateTax + countyTax + socialSecurity + medicare
 
@@ -141,9 +162,9 @@ object PaycheckCalculator {
             countyTax = countyTax,
             countyTaxRate = countyTaxRate,
             socialSecurity = socialSecurity,
-            socialSecurityRate = FicaTaxRates.SOCIAL_SECURITY_RATE,
+            socialSecurityRate = ssRate,
             medicare = medicare,
-            medicareRate = FicaTaxRates.MEDICARE_RATE,
+            medicareRate = medRate,
             totalTaxes = totalTaxes,
             totalPostTaxDeductions = totalPostTax,
             postTaxDeductionBreakdown = postTaxBreakdown,
@@ -247,8 +268,13 @@ object PaycheckCalculator {
 
         val annualFederalTax = if (config.taxOverrides.isExemptFromFederal) 0.0
         else {
-            calculateFederalTax(federalTaxableAnnual, config.filingStatus) +
-                    config.taxOverrides.federalAdditionalWithholding * periodsPerYear
+            val customRate = config.taxOverrides.customFederalTaxRate
+            val base = if (customRate != null) {
+                annualTaxable * customRate
+            } else {
+                calculateFederalTax(federalTaxableAnnual, config.filingStatus)
+            }
+            base + config.taxOverrides.federalAdditionalWithholding * periodsPerYear
         }
 
         val annualStateTax = if (config.taxOverrides.isExemptFromState) 0.0
@@ -263,15 +289,16 @@ object PaycheckCalculator {
             annualTaxable * rate
         }
 
-        val annualSS = annualGross.coerceAtMost(FicaTaxRates.SOCIAL_SECURITY_WAGE_BASE) *
-                FicaTaxRates.SOCIAL_SECURITY_RATE
+        val annualSSRate = config.taxOverrides.customSocialSecurityRate ?: FicaTaxRates.SOCIAL_SECURITY_RATE
+        val annualSS = annualGross.coerceAtMost(FicaTaxRates.SOCIAL_SECURITY_WAGE_BASE) * annualSSRate
 
+        val annualMedRate = config.taxOverrides.customMedicareRate ?: FicaTaxRates.MEDICARE_RATE
         val medicareThreshold = when (config.filingStatus) {
             FilingStatus.MARRIED_FILING_JOINTLY -> FicaTaxRates.ADDITIONAL_MEDICARE_THRESHOLD_JOINT
             else -> FicaTaxRates.ADDITIONAL_MEDICARE_THRESHOLD_SINGLE
         }
-        val annualMedicare = annualGross * FicaTaxRates.MEDICARE_RATE +
-                if (annualGross > medicareThreshold)
+        val annualMedicare = annualGross * annualMedRate +
+                if (config.taxOverrides.customMedicareRate == null && annualGross > medicareThreshold)
                     (annualGross - medicareThreshold) * FicaTaxRates.ADDITIONAL_MEDICARE_RATE
                 else 0.0
 

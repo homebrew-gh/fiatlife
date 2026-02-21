@@ -334,60 +334,53 @@ private fun androidx.compose.foundation.lazy.LazyListScope.paycheckContent(
                     shape = MaterialTheme.shapes.medium
                 )
             }
-            Spacer(modifier = Modifier.height(8.dp))
-
-            var stateTaxRateText by remember(state.config.taxOverrides.customStateTaxRate) {
-                val current = state.config.taxOverrides.customStateTaxRate
-                mutableStateOf(if (current != null) "%.2f".format(current * 100) else "")
-            }
-            var countyTaxRateText by remember(state.config.taxOverrides.customCountyTaxRate) {
-                val current = state.config.taxOverrides.customCountyTaxRate
-                mutableStateOf(if (current != null) "%.2f".format(current * 100) else "")
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PercentageTextField(
-                    value = stateTaxRateText,
-                    onValueChange = {
-                        stateTaxRateText = it
-                        val pct = it.toDoubleOrNull()
-                        viewModel.updateCustomStateTaxRate(pct?.let { v -> v / 100.0 })
-                    },
-                    label = "State Tax %",
-                    modifier = Modifier.weight(1f)
-                )
-                PercentageTextField(
-                    value = countyTaxRateText,
-                    onValueChange = {
-                        countyTaxRateText = it
-                        val pct = it.toDoubleOrNull()
-                        viewModel.updateCustomCountyTaxRate(pct?.let { v -> v / 100.0 })
-                    },
-                    label = "County Tax %",
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            if (stateCode.isNotEmpty() && state.config.taxOverrides.customStateTaxRate == null) {
-                Text(
-                    text = "Using estimated rate for $stateCode. Enter a value to override.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
             Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = "Tax Breakdown (per paycheck)",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold
             )
+            Text(
+                text = "Tap any rate to override with your actual withholding percentage",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(modifier = Modifier.height(4.dp))
-            TaxLineWithRate("Federal Income Tax", calc.federalTax, calc.federalMarginalRate)
-            TaxLineWithRate("State Income Tax", calc.stateTax, calc.stateTaxRate)
-            if (calc.countyTax > 0 || calc.countyTaxRate > 0) {
-                TaxLineWithRate("County/Local Tax", calc.countyTax, calc.countyTaxRate)
-            }
-            TaxLineWithRate("Social Security", calc.socialSecurity, calc.socialSecurityRate)
-            TaxLineWithRate("Medicare", calc.medicare, calc.medicareRate)
+            EditableTaxLine(
+                label = "Federal Income Tax",
+                amount = calc.federalTax,
+                defaultRate = calc.federalMarginalRate,
+                customRate = state.config.taxOverrides.customFederalTaxRate,
+                onRateChange = { viewModel.updateCustomFederalTaxRate(it) }
+            )
+            EditableTaxLine(
+                label = "State Income Tax",
+                amount = calc.stateTax,
+                defaultRate = calc.stateTaxRate,
+                customRate = state.config.taxOverrides.customStateTaxRate,
+                onRateChange = { viewModel.updateCustomStateTaxRate(it) }
+            )
+            EditableTaxLine(
+                label = "County/Local Tax",
+                amount = calc.countyTax,
+                defaultRate = calc.countyTaxRate,
+                customRate = state.config.taxOverrides.customCountyTaxRate,
+                onRateChange = { viewModel.updateCustomCountyTaxRate(it) }
+            )
+            EditableTaxLine(
+                label = "Social Security",
+                amount = calc.socialSecurity,
+                defaultRate = calc.socialSecurityRate,
+                customRate = state.config.taxOverrides.customSocialSecurityRate,
+                onRateChange = { viewModel.updateCustomSocialSecurityRate(it) }
+            )
+            EditableTaxLine(
+                label = "Medicare",
+                amount = calc.medicare,
+                defaultRate = calc.medicareRate,
+                customRate = state.config.taxOverrides.customMedicareRate,
+                onRateChange = { viewModel.updateCustomMedicareRate(it) }
+            )
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             TaxLine("Total Taxes", calc.totalTaxes, bold = true)
             Text(
@@ -901,6 +894,94 @@ private fun TaxLineWithRate(
             style = MaterialTheme.typography.bodyMedium,
             color = LossRed
         )
+    }
+}
+
+@Composable
+private fun EditableTaxLine(
+    label: String,
+    amount: Double,
+    defaultRate: Double,
+    customRate: Double?,
+    onRateChange: (Double?) -> Unit
+) {
+    val displayRate = customRate ?: defaultRate
+    var editing by remember { mutableStateOf(false) }
+    var rateText by remember(customRate, defaultRate) {
+        mutableStateOf("%.2f".format(displayRate * 100))
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f)
+        )
+        if (editing) {
+            OutlinedTextField(
+                value = rateText,
+                onValueChange = { input ->
+                    rateText = input
+                    val pct = input.toDoubleOrNull()
+                    if (pct != null) {
+                        onRateChange(pct / 100.0)
+                    }
+                },
+                modifier = Modifier.width(80.dp),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                suffix = { Text("%", style = MaterialTheme.typography.bodySmall) },
+                shape = MaterialTheme.shapes.small
+            )
+            IconButton(
+                onClick = {
+                    editing = false
+                    if (rateText.toDoubleOrNull() == null) {
+                        onRateChange(null)
+                        rateText = "%.2f".format(defaultRate * 100)
+                    }
+                },
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(Icons.Filled.Check, contentDescription = "Done", modifier = Modifier.size(16.dp))
+            }
+        } else {
+            TextButton(
+                onClick = { editing = true },
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                modifier = Modifier.height(28.dp)
+            ) {
+                Text(
+                    text = "%.2f%%".format(displayRate * 100),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (customRate != null)
+                        MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (customRate != null) {
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Icon(
+                        Icons.Filled.Edit,
+                        contentDescription = null,
+                        modifier = Modifier.size(12.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = amount.formatCurrency(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = LossRed
+            )
+        }
     }
 }
 

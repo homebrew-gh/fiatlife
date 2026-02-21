@@ -105,12 +105,24 @@ class SalaryViewModel @Inject constructor(
         updateConfig { it.copy(county = county) }
     }
 
+    fun updateCustomFederalTaxRate(rate: Double?) {
+        updateConfig { it.copy(taxOverrides = it.taxOverrides.copy(customFederalTaxRate = rate)) }
+    }
+
     fun updateCustomStateTaxRate(rate: Double?) {
         updateConfig { it.copy(taxOverrides = it.taxOverrides.copy(customStateTaxRate = rate)) }
     }
 
     fun updateCustomCountyTaxRate(rate: Double?) {
         updateConfig { it.copy(taxOverrides = it.taxOverrides.copy(customCountyTaxRate = rate)) }
+    }
+
+    fun updateCustomSocialSecurityRate(rate: Double?) {
+        updateConfig { it.copy(taxOverrides = it.taxOverrides.copy(customSocialSecurityRate = rate)) }
+    }
+
+    fun updateCustomMedicareRate(rate: Double?) {
+        updateConfig { it.copy(taxOverrides = it.taxOverrides.copy(customMedicareRate = rate)) }
     }
 
     fun showAddDeduction(isPreTax: Boolean) {

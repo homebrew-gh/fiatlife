@@ -9,8 +9,11 @@ data class TaxOverrides(
     val isExemptFromFederal: Boolean = false,
     val isExemptFromState: Boolean = false,
     val isExemptFromLocal: Boolean = false,
+    val customFederalTaxRate: Double? = null,
     val customStateTaxRate: Double? = null,
-    val customCountyTaxRate: Double? = null
+    val customCountyTaxRate: Double? = null,
+    val customSocialSecurityRate: Double? = null,
+    val customMedicareRate: Double? = null
 )
 
 data class FederalTaxBracket(
