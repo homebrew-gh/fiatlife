@@ -28,6 +28,7 @@ import com.fiatlife.app.ui.viewmodel.SettingsViewModel
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
+    onLogout: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -502,6 +503,7 @@ fun SettingsScreen(
                     onClick = {
                         viewModel.logout()
                         showLogoutConfirmation = false
+                        onLogout()
                     },
                     colors = ButtonDefaults.textButtonColors(
                         contentColor = MaterialTheme.colorScheme.error

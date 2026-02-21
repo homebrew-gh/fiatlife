@@ -25,7 +25,7 @@ import com.fiatlife.app.ui.screens.settings.SettingsScreen
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FiatLifeNavGraph() {
+fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
@@ -89,7 +89,7 @@ fun FiatLifeNavGraph() {
                 GoalsScreen()
             }
             composable(Screen.Settings.route) {
-                SettingsScreen()
+                SettingsScreen(onLogout = onLogout)
             }
             composable(
                 route = Screen.BillDetail.route,

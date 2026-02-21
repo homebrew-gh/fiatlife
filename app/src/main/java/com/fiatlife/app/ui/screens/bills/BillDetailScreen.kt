@@ -41,9 +41,12 @@ fun BillDetailScreen(
     val scope = rememberCoroutineScope()
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
+    var hasLoadedBill by remember { mutableStateOf(false) }
 
     LaunchedEffect(bill) {
-        if (bill == null && viewModel.billId.isNotEmpty()) {
+        if (bill != null) {
+            hasLoadedBill = true
+        } else if (hasLoadedBill) {
             navController.popBackStack()
         }
     }
