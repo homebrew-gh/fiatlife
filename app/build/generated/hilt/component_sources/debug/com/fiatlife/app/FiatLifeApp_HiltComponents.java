@@ -5,6 +5,7 @@ import com.fiatlife.app.data.notification.BillReminderWorker_HiltModule;
 import com.fiatlife.app.di.AppModule;
 import com.fiatlife.app.di.DatabaseModule;
 import com.fiatlife.app.di.NetworkModule;
+import com.fiatlife.app.ui.viewmodel.BillDetailViewModel_HiltModules;
 import com.fiatlife.app.ui.viewmodel.BillsViewModel_HiltModules;
 import com.fiatlife.app.ui.viewmodel.DashboardViewModel_HiltModules;
 import com.fiatlife.app.ui.viewmodel.GoalsViewModel_HiltModules;
@@ -165,6 +166,7 @@ public final class FiatLifeApp_HiltComponents {
 
   @Subcomponent(
       modules = {
+          BillDetailViewModel_HiltModules.KeyModule.class,
           BillsViewModel_HiltModules.KeyModule.class,
           DashboardViewModel_HiltModules.KeyModule.class,
           ActivityCBuilderModule.class,
@@ -209,6 +211,7 @@ public final class FiatLifeApp_HiltComponents {
 
   @Subcomponent(
       modules = {
+          BillDetailViewModel_HiltModules.BindsModule.class,
           BillsViewModel_HiltModules.BindsModule.class,
           DashboardViewModel_HiltModules.BindsModule.class,
           GoalsViewModel_HiltModules.BindsModule.class,

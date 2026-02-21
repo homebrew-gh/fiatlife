@@ -1,5 +1,6 @@
 package com.fiatlife.app.ui.viewmodel;
 
+import com.fiatlife.app.data.nostr.NostrClient;
 import com.fiatlife.app.data.repository.BillRepository;
 import dagger.internal.DaggerGenerated;
 import dagger.internal.Factory;
@@ -25,20 +26,25 @@ import javax.inject.Provider;
 public final class BillsViewModel_Factory implements Factory<BillsViewModel> {
   private final Provider<BillRepository> repositoryProvider;
 
-  public BillsViewModel_Factory(Provider<BillRepository> repositoryProvider) {
+  private final Provider<NostrClient> nostrClientProvider;
+
+  public BillsViewModel_Factory(Provider<BillRepository> repositoryProvider,
+      Provider<NostrClient> nostrClientProvider) {
     this.repositoryProvider = repositoryProvider;
+    this.nostrClientProvider = nostrClientProvider;
   }
 
   @Override
   public BillsViewModel get() {
-    return newInstance(repositoryProvider.get());
+    return newInstance(repositoryProvider.get(), nostrClientProvider.get());
   }
 
-  public static BillsViewModel_Factory create(Provider<BillRepository> repositoryProvider) {
-    return new BillsViewModel_Factory(repositoryProvider);
+  public static BillsViewModel_Factory create(Provider<BillRepository> repositoryProvider,
+      Provider<NostrClient> nostrClientProvider) {
+    return new BillsViewModel_Factory(repositoryProvider, nostrClientProvider);
   }
 
-  public static BillsViewModel newInstance(BillRepository repository) {
-    return new BillsViewModel(repository);
+  public static BillsViewModel newInstance(BillRepository repository, NostrClient nostrClient) {
+    return new BillsViewModel(repository, nostrClient);
   }
 }
