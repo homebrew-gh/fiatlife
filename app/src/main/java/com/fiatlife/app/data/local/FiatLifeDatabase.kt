@@ -21,7 +21,7 @@ import com.fiatlife.app.data.local.entity.SalaryEntity
         CypherLogSubscriptionEntity::class,
         CreditAccountEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class FiatLifeDatabase : RoomDatabase() {

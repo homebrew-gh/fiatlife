@@ -17,6 +17,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.JsonPrimitive
 import java.util.UUID
@@ -56,12 +57,23 @@ class CypherLogSubscriptionRepository @Inject constructor(
                 add(buildJsonArray { tag.forEach { add(JsonPrimitive(it)) } })
             }
         }.toString()
+        var contentDecryptedJson: String? = null
+        if (event.content.isNotBlank()) {
+            val signer = nostrClient.currentSigner
+            if (signer != null) {
+                contentDecryptedJson = signer.nip44Decrypt(event.content, signer.pubkeyHex)
+                if (contentDecryptedJson == null) {
+                    Log.w(TAG, "Failed to decrypt 37004 content for d=$dTag")
+                }
+            }
+        }
         dao.upsert(
             CypherLogSubscriptionEntity(
                 dTag = dTag,
                 eventId = event.id,
                 tagsJson = tagsJson,
-                createdAt = event.created_at
+                createdAt = event.created_at,
+                contentDecryptedJson = contentDecryptedJson
             )
         )
         Log.d(TAG, "Upserted 37004 d=$dTag")
@@ -132,8 +144,56 @@ class CypherLogSubscriptionRepository @Inject constructor(
         } catch (_: Exception) {
             emptyList()
         }
-        val (bill, preserved) = tags37004ToBill(entity.dTag, tags)
+        val (bill, preserved) = if (entity.contentDecryptedJson != null) {
+            content37004ToBill(entity.dTag, entity.contentDecryptedJson!!, tags)
+        } else {
+            tags37004ToBill(entity.dTag, tags)
+        }
         return BillWithSource(bill = bill, source = BillSource.CYPHERLOG, preservedTags = preserved)
+    }
+
+    /** Parse CypherLog encrypted content JSON (same logical fields as tags) and build Bill; preserved from tags. */
+    private fun content37004ToBill(dTag: String, contentJson: String, tags: List<List<String>>): Pair<Bill, Map<String, List<String>>?> {
+        val tagMap = mutableMapOf<String, MutableList<String>>()
+        tags.forEach { pair ->
+            if (pair.size >= 2) {
+                tagMap.getOrPut(pair[0]) { mutableListOf() }.add(pair[1])
+            }
+        }
+        val preserved = tagMap.filter { (k, _) -> k !in MAPPED_TAG_KEYS }
+            .mapValues { (_, v) -> v.toList() }
+            .ifEmpty { null }
+
+        val name: String
+        val cost: Double
+        val frequency: BillFrequency
+        val notes: String
+        val companyName: String
+        try {
+            val obj = json.parseToJsonElement(contentJson).jsonObject
+            fun str(vararg keys: String): String? = keys.mapNotNull { obj[it]?.jsonPrimitive?.content }.firstOrNull()
+            name = str("name") ?: ""
+            cost = str("cost", "amount")?.toDoubleOrNull() ?: 0.0
+            frequency = billingFrequencyToBillFrequency(str("billing_frequency", "billingFrequency"))
+            notes = str("notes") ?: ""
+            companyName = str("company_name", "companyName") ?: ""
+        } catch (_: Exception) {
+            return tags37004ToBill(dTag, tags)
+        }
+
+        val bill = Bill(
+            id = dTag,
+            name = name,
+            amount = cost,
+            category = BillCategory.OTHER,
+            subcategory = BillSubcategory.OTHER_SUBSCRIPTION,
+            frequency = frequency,
+            dueDay = 1,
+            accountName = companyName,
+            notes = notes,
+            updatedAt = 0L
+        )
+        return bill to preserved
     }
 
     private fun tags37004ToBill(dTag: String, tags: List<List<String>>): Pair<Bill, Map<String, List<String>>?> {

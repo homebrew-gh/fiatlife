@@ -2,7 +2,10 @@ package com.fiatlife.app.ui.navigation
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -45,6 +48,7 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
     Scaffold(
         topBar = {
             Surface(
+                modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 2.dp
             ) {
@@ -81,6 +85,13 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
                         label = { Text(screen.title) },
                         selected = selected,
                         onClick = {
+                            // If we're on Settings (or a detail screen), pop first so we're not stuck
+                            val isOnNonTabScreen = currentDestination?.route != null &&
+                                currentDestination?.route != screen.route &&
+                                !Screen.bottomNavItems.any { it.route == currentDestination?.route }
+                            if (isOnNonTabScreen) {
+                                navController.popBackStack()
+                            }
                             navController.navigate(screen.route) {
                                 popUpTo(navController.graph.findStartDestination().id) {
                                     saveState = true
