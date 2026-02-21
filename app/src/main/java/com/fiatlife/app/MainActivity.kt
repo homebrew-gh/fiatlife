@@ -281,11 +281,9 @@ class MainActivity : ComponentActivity() {
 
         if (relayUrl.isNotEmpty()) {
             nostrClient.connect(relayUrl, signer)
-            if (nostrClient.awaitReady()) {
-                syncFromRelay()
-            } else {
-                Log.w(TAG, "Relay not ready after timeout, skipping sync")
-            }
+            // Sync immediately -- if auth hasn't completed yet the REQ will
+            // be queued and sent once the relay is fully ready.
+            syncFromRelay()
         }
         if (!blossomUrl.isNullOrEmpty()) {
             blossomClient.configure(blossomUrl, signer)
@@ -293,17 +291,14 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Reconnect to the relay if needed, then one-shot sync all app data.
-     * Called on initial app open, after PIN unlock, and on every onResume.
+     * One-shot sync all app data from the relay.
+     * If auth is still pending the REQ messages will be queued and processed
+     * once the relay is fully ready, so this is safe to call immediately after
+     * [NostrClient.connect].
      */
     fun syncFromRelay() {
         if (!nostrClient.hasSigner) return
         lifecycleScope.launch {
-            val ready = nostrClient.ensureConnected()
-            if (!ready) {
-                Log.w(TAG, "Relay not ready after reconnect attempt, skipping sync")
-                return@launch
-            }
             Log.d(TAG, "Starting one-shot sync from relay")
             launch { try { salaryRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Salary sync: ${e.message}") } }
             launch { try { billRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bill sync: ${e.message}") } }

@@ -5,11 +5,16 @@ import com.fiatlife.app.data.blossom.BlossomClient
 import com.fiatlife.app.data.local.dao.BillDao
 import com.fiatlife.app.data.local.entity.BillEntity
 import com.fiatlife.app.data.nostr.NostrClient
+import com.fiatlife.app.data.nostr.NostrEvent
 import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.domain.model.BillCategory
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -89,6 +94,22 @@ class BillRepository @Inject constructor(
                 category = bill.category.name
             )
         )
+
+        if (nostrClient.hasSigner) {
+            val dTag = "$NOSTR_D_TAG_PREFIX${bill.id}"
+            try {
+                nostrClient.publishEncryptedAppData(dTag, """{"deleted":true}""")
+                Log.d(TAG, "Published delete tombstone for bill ${bill.id.take(8)}…")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to publish bill tombstone: ${e.message}")
+            }
+            try {
+                nostrClient.publishDeletion(NostrEvent.KIND_APP_SPECIFIC_DATA, dTag)
+                Log.d(TAG, "Published NIP-09 deletion for bill ${bill.id.take(8)}…")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to publish bill NIP-09 deletion: ${e.message}")
+            }
+        }
     }
 
     suspend fun uploadAttachment(
@@ -106,26 +127,35 @@ class BillRepository @Inject constructor(
     suspend fun syncFromNostr() {
         if (!nostrClient.hasSigner) return
         try {
-            var count = 0
-            nostrClient.subscribeToAppData(dTagPrefix = NOSTR_D_TAG_PREFIX).collect { (_, decrypted) ->
-                try {
-                    val bill = json.decodeFromString<Bill>(decrypted)
-                    if (bill.id.isNotEmpty()) {
-                        billDao.upsert(
-                            BillEntity(
-                                id = bill.id,
-                                jsonData = decrypted,
-                                category = bill.category.name,
-                                updatedAt = bill.updatedAt
+            withTimeout(30_000) {
+                var count = 0
+                nostrClient.subscribeToAppData(dTagPrefix = NOSTR_D_TAG_PREFIX).collect { (dTag, decrypted) ->
+                    try {
+                        val obj = json.parseToJsonElement(decrypted).jsonObject
+                        if (obj["deleted"]?.jsonPrimitive?.booleanOrNull == true) {
+                            val billId = dTag.removePrefix(NOSTR_D_TAG_PREFIX)
+                            billDao.deleteById(billId)
+                            Log.d(TAG, "Deleted tombstoned bill $billId")
+                            return@collect
+                        }
+                        val bill = json.decodeFromString<Bill>(decrypted)
+                        if (bill.id.isNotEmpty()) {
+                            billDao.upsert(
+                                BillEntity(
+                                    id = bill.id,
+                                    jsonData = decrypted,
+                                    category = bill.category.name,
+                                    updatedAt = bill.updatedAt
+                                )
                             )
-                        )
-                        count++
+                            count++
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to parse bill event: ${e.message}")
                     }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to parse bill event: ${e.message}")
                 }
+                Log.d(TAG, "Synced $count bill(s) from relay")
             }
-            Log.d(TAG, "Synced $count bill(s) from relay")
         } catch (e: Exception) {
             Log.e(TAG, "Sync failed: ${e.message}")
         }

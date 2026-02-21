@@ -217,6 +217,36 @@ class NostrClient @Inject constructor(
     }
 
     /**
+     * Publish a NIP-09 deletion event (kind 5) targeting a parameterized
+     * replaceable event identified by kind:pubkey:d-tag.
+     */
+    suspend fun publishDeletion(targetKind: Int, dTag: String): Boolean {
+        val s = signer ?: return false
+
+        val ready = ensureConnected()
+        if (!ready) {
+            Log.w(TAG, "publishDeletion: relay not ready, event will be queued")
+        }
+
+        val aTag = "$targetKind:${s.pubkeyHex}:$dTag"
+        val unsignedJson = NostrEvent.buildUnsignedJson(
+            pubkeyHex = s.pubkeyHex,
+            kind = 5,
+            content = "",
+            tags = listOf(listOf("a", aTag))
+        )
+        val signedJson = s.signEvent(unsignedJson)
+        if (signedJson == null) {
+            Log.e(TAG, "publishDeletion: event signing failed for aTag=$aTag")
+            return false
+        }
+
+        val sent = publishSignedEventJson(signedJson)
+        Log.d(TAG, "publishDeletion: aTag=$aTag, sent=$sent")
+        return sent
+    }
+
+    /**
      * Subscribe to app data events and decrypt them. Collects events until
      * the relay sends EOSE (End of Stored Events), then closes the subscription
      * and terminates the flow. Safe for one-shot sync operations.

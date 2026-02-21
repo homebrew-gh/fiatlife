@@ -24,6 +24,9 @@ interface BillDao {
     @Delete
     suspend fun delete(entity: BillEntity)
 
+    @Query("DELETE FROM bills WHERE id = :id")
+    suspend fun deleteById(id: String)
+
     @Query("DELETE FROM bills")
     suspend fun deleteAll()
 }

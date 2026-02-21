@@ -7,6 +7,7 @@ import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.domain.model.SalaryConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import java.util.UUID
 import javax.inject.Inject
@@ -62,19 +63,21 @@ class SalaryRepository @Inject constructor(
     suspend fun syncFromNostr() {
         if (!nostrClient.hasSigner) return
         try {
-            var count = 0
-            nostrClient.subscribeToAppData(dTag = NOSTR_D_TAG).collect { (_, decrypted) ->
-                val config = json.decodeFromString<SalaryConfig>(decrypted)
-                salaryDao.upsert(
-                    SalaryEntity(
-                        id = config.id,
-                        jsonData = decrypted,
-                        updatedAt = config.updatedAt
+            withTimeout(30_000) {
+                var count = 0
+                nostrClient.subscribeToAppData(dTag = NOSTR_D_TAG).collect { (_, decrypted) ->
+                    val config = json.decodeFromString<SalaryConfig>(decrypted)
+                    salaryDao.upsert(
+                        SalaryEntity(
+                            id = config.id,
+                            jsonData = decrypted,
+                            updatedAt = config.updatedAt
+                        )
                     )
-                )
-                count++
+                    count++
+                }
+                Log.d(TAG, "Synced $count salary config(s) from relay")
             }
-            Log.d(TAG, "Synced $count salary config(s) from relay")
         } catch (e: Exception) {
             Log.e(TAG, "Sync failed: ${e.message}")
         }
