@@ -208,7 +208,7 @@ class MainActivity : ComponentActivity() {
                     }
                     else -> {
                         isInMainApp = true
-                        FiatLifeNavGraph()
+                        FiatLifeNavGraph(onLogout = { mainHandler.post { refresh++ } })
                     }
                 }
             }
