@@ -10,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -27,7 +28,19 @@ fun SalaryScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val calc = state.calculation
+    val snackbarHostState = remember { SnackbarHostState() }
 
+    LaunchedEffect(state.message) {
+        if (state.message.isNotBlank()) {
+            snackbarHostState.showSnackbar(
+                message = state.message,
+                duration = SnackbarDuration.Short
+            )
+            viewModel.clearMessage()
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -82,6 +95,12 @@ fun SalaryScreen(
             onDismiss = { viewModel.dismissDepositDialog() },
             onSave = { viewModel.saveDeposit(it) }
         )
+    }
+
+    SnackbarHost(
+        hostState = snackbarHostState,
+        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp)
+    )
     }
 }
 
@@ -165,7 +184,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.paycheckContent(
                     label = { Text("Standard Hours") },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
-                    shape = MaterialTheme.shapes.medium
+                    shape = MaterialTheme.shapes.medium,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                 )
                 OutlinedTextField(
                     value = overtimeHours,
@@ -176,7 +196,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.paycheckContent(
                     label = { Text("OT Hours") },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
-                    shape = MaterialTheme.shapes.medium
+                    shape = MaterialTheme.shapes.medium,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
@@ -191,7 +212,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.paycheckContent(
                     label = { Text("OT Multiplier") },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
-                    shape = MaterialTheme.shapes.medium
+                    shape = MaterialTheme.shapes.medium,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                 )
 
                 var expanded by remember { mutableStateOf(false) }
@@ -312,6 +334,45 @@ private fun androidx.compose.foundation.lazy.LazyListScope.paycheckContent(
                     shape = MaterialTheme.shapes.medium
                 )
             }
+            Spacer(modifier = Modifier.height(8.dp))
+
+            var stateTaxRateText by remember(state.config.taxOverrides.customStateTaxRate) {
+                val current = state.config.taxOverrides.customStateTaxRate
+                mutableStateOf(if (current != null) "%.2f".format(current * 100) else "")
+            }
+            var countyTaxRateText by remember(state.config.taxOverrides.customCountyTaxRate) {
+                val current = state.config.taxOverrides.customCountyTaxRate
+                mutableStateOf(if (current != null) "%.2f".format(current * 100) else "")
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PercentageTextField(
+                    value = stateTaxRateText,
+                    onValueChange = {
+                        stateTaxRateText = it
+                        val pct = it.toDoubleOrNull()
+                        viewModel.updateCustomStateTaxRate(pct?.let { v -> v / 100.0 })
+                    },
+                    label = "State Tax %",
+                    modifier = Modifier.weight(1f)
+                )
+                PercentageTextField(
+                    value = countyTaxRateText,
+                    onValueChange = {
+                        countyTaxRateText = it
+                        val pct = it.toDoubleOrNull()
+                        viewModel.updateCustomCountyTaxRate(pct?.let { v -> v / 100.0 })
+                    },
+                    label = "County Tax %",
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            if (stateCode.isNotEmpty() && state.config.taxOverrides.customStateTaxRate == null) {
+                Text(
+                    text = "Using estimated rate for $stateCode. Enter a value to override.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
             Spacer(modifier = Modifier.height(12.dp))
             Text(
@@ -320,11 +381,13 @@ private fun androidx.compose.foundation.lazy.LazyListScope.paycheckContent(
                 fontWeight = FontWeight.SemiBold
             )
             Spacer(modifier = Modifier.height(4.dp))
-            TaxLine("Federal Income Tax", calc.federalTax)
-            TaxLine("State Income Tax", calc.stateTax)
-            if (calc.countyTax > 0) TaxLine("County/Local Tax", calc.countyTax)
-            TaxLine("Social Security", calc.socialSecurity)
-            TaxLine("Medicare", calc.medicare)
+            TaxLineWithRate("Federal Income Tax", calc.federalTax, calc.federalMarginalRate)
+            TaxLineWithRate("State Income Tax", calc.stateTax, calc.stateTaxRate)
+            if (calc.countyTax > 0 || calc.countyTaxRate > 0) {
+                TaxLineWithRate("County/Local Tax", calc.countyTax, calc.countyTaxRate)
+            }
+            TaxLineWithRate("Social Security", calc.socialSecurity, calc.socialSecurityRate)
+            TaxLineWithRate("Medicare", calc.medicare, calc.medicareRate)
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             TaxLine("Total Taxes", calc.totalTaxes, bold = true)
             Text(
@@ -578,6 +641,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.annualContent(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = MaterialTheme.shapes.medium,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 leadingIcon = { Icon(Icons.Filled.MoreTime, contentDescription = null) },
                 supportingText = {
                     val perPeriod = if (state.config.payFrequency.periodsPerYear > 0)
@@ -799,6 +863,44 @@ private fun TaxLine(
                 color = LossRed
             )
         }
+    }
+}
+
+@Composable
+private fun TaxLineWithRate(
+    label: String,
+    amount: Double,
+    rate: Double
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            if (rate > 0) {
+                Text(
+                    text = "(${(rate * 100).formatPercentage(1)})",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Text(
+            text = amount.formatCurrency(),
+            style = MaterialTheme.typography.bodyMedium,
+            color = LossRed
+        )
     }
 }
 

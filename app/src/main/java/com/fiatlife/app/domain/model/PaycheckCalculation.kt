@@ -8,10 +8,15 @@ data class PaycheckCalculation(
     val preTaxDeductionBreakdown: List<DeductionLine> = emptyList(),
     val federalTaxableIncome: Double = 0.0,
     val federalTax: Double = 0.0,
+    val federalMarginalRate: Double = 0.0,
     val stateTax: Double = 0.0,
+    val stateTaxRate: Double = 0.0,
     val countyTax: Double = 0.0,
+    val countyTaxRate: Double = 0.0,
     val socialSecurity: Double = 0.0,
+    val socialSecurityRate: Double = FicaTaxRates.SOCIAL_SECURITY_RATE,
     val medicare: Double = 0.0,
+    val medicareRate: Double = FicaTaxRates.MEDICARE_RATE,
     val totalTaxes: Double = 0.0,
     val totalPostTaxDeductions: Double = 0.0,
     val postTaxDeductionBreakdown: List<DeductionLine> = emptyList(),
@@ -82,24 +87,25 @@ object PaycheckCalculator {
         val standardDeduction = FederalTaxTables.standardDeduction(config.filingStatus)
         val federalTaxableAnnual = (annualTaxable - standardDeduction).coerceAtLeast(0.0)
 
+        val federalMarginalRate = findMarginalRate(federalTaxableAnnual, config.filingStatus)
         val federalTax = if (config.taxOverrides.isExemptFromFederal) 0.0
         else {
             val annualFederal = calculateFederalTax(federalTaxableAnnual, config.filingStatus)
             (annualFederal / periodsPerYear) + config.taxOverrides.federalAdditionalWithholding
         }
 
+        val stateTaxRate = if (config.taxOverrides.isExemptFromState) 0.0
+        else config.taxOverrides.customStateTaxRate ?: estimateStateTaxRate(config.state)
         val stateTax = if (config.taxOverrides.isExemptFromState) 0.0
         else {
-            val rate = config.taxOverrides.customStateTaxRate ?: estimateStateTaxRate(config.state)
-            val annualState = annualTaxable * rate
+            val annualState = annualTaxable * stateTaxRate
             (annualState / periodsPerYear) + config.taxOverrides.stateAdditionalWithholding
         }
 
+        val countyTaxRate = if (config.taxOverrides.isExemptFromLocal) 0.0
+        else config.taxOverrides.customCountyTaxRate ?: 0.0
         val countyTax = if (config.taxOverrides.isExemptFromLocal) 0.0
-        else {
-            val rate = config.taxOverrides.customCountyTaxRate ?: 0.0
-            (annualTaxable * rate) / periodsPerYear
-        }
+        else (annualTaxable * countyTaxRate) / periodsPerYear
 
         val annualGross = grossPay * periodsPerYear
         val socialSecurity = calculateSocialSecurity(taxableGross, annualGross, periodsPerYear)
@@ -129,10 +135,15 @@ object PaycheckCalculator {
             preTaxDeductionBreakdown = preTaxBreakdown,
             federalTaxableIncome = federalTaxableAnnual / periodsPerYear,
             federalTax = federalTax,
+            federalMarginalRate = federalMarginalRate,
             stateTax = stateTax,
+            stateTaxRate = stateTaxRate,
             countyTax = countyTax,
+            countyTaxRate = countyTaxRate,
             socialSecurity = socialSecurity,
+            socialSecurityRate = FicaTaxRates.SOCIAL_SECURITY_RATE,
             medicare = medicare,
+            medicareRate = FicaTaxRates.MEDICARE_RATE,
             totalTaxes = totalTaxes,
             totalPostTaxDeductions = totalPostTax,
             postTaxDeductionBreakdown = postTaxBreakdown,

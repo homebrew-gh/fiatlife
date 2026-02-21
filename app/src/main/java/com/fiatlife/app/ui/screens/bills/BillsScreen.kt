@@ -10,7 +10,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -160,9 +159,7 @@ fun BillsScreen(
                     BillCard(
                         bill = bill,
                         onClick = { navController.navigate(Screen.BillDetail.routeWithId(bill.id)) },
-                        onTogglePaid = { viewModel.togglePaid(bill) },
-                        onEdit = { viewModel.showEditBill(bill) },
-                        onDelete = { viewModel.deleteBill(bill) }
+                        onTogglePaid = { viewModel.togglePaid(bill) }
                     )
                 }
             }
@@ -195,9 +192,7 @@ fun BillsScreen(
 private fun BillCard(
     bill: Bill,
     onClick: () -> Unit,
-    onTogglePaid: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onTogglePaid: () -> Unit
 ) {
     Card(
         onClick = onClick,
@@ -213,73 +208,72 @@ private fun BillCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(start = 4.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Checkbox(
                 checked = bill.isPaid,
                 onCheckedChange = { onTogglePaid() },
-                colors = CheckboxDefaults.colors(
-                    checkedColor = ProfitGreen
-                )
+                colors = CheckboxDefaults.colors(checkedColor = ProfitGreen)
             )
-            Spacer(modifier = Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = bill.name,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold
                 )
+                Spacer(modifier = Modifier.height(2.dp))
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    AssistChip(
-                        onClick = {},
-                        label = {
-                            Text(
-                                bill.category.displayName,
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        },
-                        modifier = Modifier.height(24.dp)
+                    Text(
+                        text = bill.category.displayName,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "·",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
                         text = bill.frequency.displayName,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                }
-                if (bill.attachmentHashes.isNotEmpty()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (bill.statementEntries.isNotEmpty() || bill.attachmentHashes.isNotEmpty()) {
+                        Text(
+                            text = "·",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         Icon(
                             Icons.Filled.AttachFile,
                             contentDescription = null,
-                            modifier = Modifier.size(14.dp),
+                            modifier = Modifier.size(12.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        val count = bill.statementEntries.size.coerceAtLeast(bill.attachmentHashes.size)
                         Text(
-                            text = "${bill.attachmentHashes.size} attachment(s)",
+                            text = "$count",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             }
-            Column(horizontalAlignment = Alignment.End) {
-                MoneyText(
-                    amount = bill.amount,
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Row {
-                    IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Filled.Edit, "Edit", modifier = Modifier.size(18.dp))
-                    }
-                    IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Outlined.Delete, "Delete", modifier = Modifier.size(18.dp))
-                    }
-                }
-            }
+            MoneyText(
+                amount = bill.amount,
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Icon(
+                Icons.Filled.ChevronRight,
+                contentDescription = "View details",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
         }
     }
 }

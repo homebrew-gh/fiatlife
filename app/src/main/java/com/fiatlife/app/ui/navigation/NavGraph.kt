@@ -77,7 +77,7 @@ fun FiatLifeNavGraph() {
             exitTransition = { fadeOut(animationSpec = tween(200)) }
         ) {
             composable(Screen.Dashboard.route) {
-                DashboardScreen()
+                DashboardScreen(navController = navController)
             }
             composable(Screen.Salary.route) {
                 SalaryScreen()

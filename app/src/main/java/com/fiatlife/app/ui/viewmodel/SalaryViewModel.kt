@@ -202,11 +202,15 @@ class SalaryViewModel @Inject constructor(
             _state.update { it.copy(isSaving = true) }
             try {
                 repository.saveSalaryConfig(_state.value.config)
-                _state.update { it.copy(isSaving = false, message = "Saved") }
+                _state.update { it.copy(isSaving = false, message = "Configuration saved") }
             } catch (e: Exception) {
                 _state.update { it.copy(isSaving = false, message = "Error: ${e.message}") }
             }
         }
+    }
+
+    fun clearMessage() {
+        _state.update { it.copy(message = "") }
     }
 
     private fun updateConfig(update: (SalaryConfig) -> SalaryConfig) {
