@@ -201,7 +201,7 @@ class MainActivity : ComponentActivity() {
                         PinLockScreen(
                             onUnlocked = {
                                 needsPinUnlock.value = false
-                                syncFromRelay()
+                                ensureRelayReconnect()
                             },
                             onVerifyPin = { pinPrefs.verifyPin(it) }
                         )
@@ -219,6 +219,30 @@ class MainActivity : ComponentActivity() {
         super.onPause()
         if (isInMainApp && pinPrefs.isPinLockEnabled() && pinPrefs.hasPinSet()) {
             needsPinUnlock.value = true
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!isInMainApp || needsPinUnlock.value) return
+        ensureRelayReconnect()
+    }
+
+    /**
+     * When returning to the app: reconnect to the relay if disconnected, then sync data.
+     * Ensures the app is connected and up to date after being in background.
+     */
+    private fun ensureRelayReconnect() {
+        lifecycleScope.launch {
+            if (!nostrClient.hasSigner) return@launch
+            val prefs = dataStore.data.first()
+            val relayUrl = prefs[KEY_RELAY_URL] ?: ""
+            if (relayUrl.isEmpty()) return@launch
+            if (!nostrClient.connectionState.value) {
+                Log.d(TAG, "Reconnecting to relay on resume")
+                nostrClient.connect(relayUrl)
+            }
+            syncFromRelay()
         }
     }
 
