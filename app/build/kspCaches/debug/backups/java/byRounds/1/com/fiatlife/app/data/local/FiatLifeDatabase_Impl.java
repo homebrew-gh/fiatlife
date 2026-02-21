@@ -49,16 +49,16 @@ public final class FiatLifeDatabase_Impl extends FiatLifeDatabase {
   @Override
   @NonNull
   protected SupportSQLiteOpenHelper createOpenHelper(@NonNull final DatabaseConfiguration config) {
-    final SupportSQLiteOpenHelper.Callback _openCallback = new RoomOpenHelper(config, new RoomOpenHelper.Delegate(3) {
+    final SupportSQLiteOpenHelper.Callback _openCallback = new RoomOpenHelper(config, new RoomOpenHelper.Delegate(4) {
       @Override
       public void createAllTables(@NonNull final SupportSQLiteDatabase db) {
         db.execSQL("CREATE TABLE IF NOT EXISTS `salary_configs` (`id` TEXT NOT NULL, `jsonData` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))");
         db.execSQL("CREATE TABLE IF NOT EXISTS `bills` (`id` TEXT NOT NULL, `jsonData` TEXT NOT NULL, `category` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))");
         db.execSQL("CREATE TABLE IF NOT EXISTS `goals` (`id` TEXT NOT NULL, `jsonData` TEXT NOT NULL, `category` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))");
-        db.execSQL("CREATE TABLE IF NOT EXISTS `cypherlog_subscriptions` (`dTag` TEXT NOT NULL, `eventId` TEXT NOT NULL, `tagsJson` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`dTag`))");
+        db.execSQL("CREATE TABLE IF NOT EXISTS `cypherlog_subscriptions` (`dTag` TEXT NOT NULL, `eventId` TEXT NOT NULL, `tagsJson` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `contentDecryptedJson` TEXT, PRIMARY KEY(`dTag`))");
         db.execSQL("CREATE TABLE IF NOT EXISTS `credit_accounts` (`id` TEXT NOT NULL, `jsonData` TEXT NOT NULL, `type` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))");
         db.execSQL("CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)");
-        db.execSQL("INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '62d6646b3ec9fa10005ba77b494c5101')");
+        db.execSQL("INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '8b7d15ee503512740e0094feeaab811a')");
       }
 
       @Override
@@ -152,11 +152,12 @@ public final class FiatLifeDatabase_Impl extends FiatLifeDatabase {
                   + " Expected:\n" + _infoGoals + "\n"
                   + " Found:\n" + _existingGoals);
         }
-        final HashMap<String, TableInfo.Column> _columnsCypherlogSubscriptions = new HashMap<String, TableInfo.Column>(4);
+        final HashMap<String, TableInfo.Column> _columnsCypherlogSubscriptions = new HashMap<String, TableInfo.Column>(5);
         _columnsCypherlogSubscriptions.put("dTag", new TableInfo.Column("dTag", "TEXT", true, 1, null, TableInfo.CREATED_FROM_ENTITY));
         _columnsCypherlogSubscriptions.put("eventId", new TableInfo.Column("eventId", "TEXT", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
         _columnsCypherlogSubscriptions.put("tagsJson", new TableInfo.Column("tagsJson", "TEXT", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
         _columnsCypherlogSubscriptions.put("createdAt", new TableInfo.Column("createdAt", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsCypherlogSubscriptions.put("contentDecryptedJson", new TableInfo.Column("contentDecryptedJson", "TEXT", false, 0, null, TableInfo.CREATED_FROM_ENTITY));
         final HashSet<TableInfo.ForeignKey> _foreignKeysCypherlogSubscriptions = new HashSet<TableInfo.ForeignKey>(0);
         final HashSet<TableInfo.Index> _indicesCypherlogSubscriptions = new HashSet<TableInfo.Index>(0);
         final TableInfo _infoCypherlogSubscriptions = new TableInfo("cypherlog_subscriptions", _columnsCypherlogSubscriptions, _foreignKeysCypherlogSubscriptions, _indicesCypherlogSubscriptions);
@@ -182,7 +183,7 @@ public final class FiatLifeDatabase_Impl extends FiatLifeDatabase {
         }
         return new RoomOpenHelper.ValidationResult(true, null);
       }
-    }, "62d6646b3ec9fa10005ba77b494c5101", "14fd7c6449d073d3381d2641f0091635");
+    }, "8b7d15ee503512740e0094feeaab811a", "5702e172eddf782880e4b01fc1c78f1b");
     final SupportSQLiteOpenHelper.Configuration _sqliteConfig = SupportSQLiteOpenHelper.Configuration.builder(config.context).name(config.name).callback(_openCallback).build();
     final SupportSQLiteOpenHelper _helper = config.sqliteOpenHelperFactory.create(_sqliteConfig);
     return _helper;

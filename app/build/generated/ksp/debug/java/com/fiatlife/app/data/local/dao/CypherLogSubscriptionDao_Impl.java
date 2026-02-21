@@ -78,7 +78,7 @@ public final class CypherLogSubscriptionDao_Impl implements CypherLogSubscriptio
       @Override
       @NonNull
       protected String createQuery() {
-        return "INSERT INTO `cypherlog_subscriptions` (`dTag`,`eventId`,`tagsJson`,`createdAt`) VALUES (?,?,?,?)";
+        return "INSERT INTO `cypherlog_subscriptions` (`dTag`,`eventId`,`tagsJson`,`createdAt`,`contentDecryptedJson`) VALUES (?,?,?,?,?)";
       }
 
       @Override
@@ -88,12 +88,17 @@ public final class CypherLogSubscriptionDao_Impl implements CypherLogSubscriptio
         statement.bindString(2, entity.getEventId());
         statement.bindString(3, entity.getTagsJson());
         statement.bindLong(4, entity.getCreatedAt());
+        if (entity.getContentDecryptedJson() == null) {
+          statement.bindNull(5);
+        } else {
+          statement.bindString(5, entity.getContentDecryptedJson());
+        }
       }
     }, new EntityDeletionOrUpdateAdapter<CypherLogSubscriptionEntity>(__db) {
       @Override
       @NonNull
       protected String createQuery() {
-        return "UPDATE `cypherlog_subscriptions` SET `dTag` = ?,`eventId` = ?,`tagsJson` = ?,`createdAt` = ? WHERE `dTag` = ?";
+        return "UPDATE `cypherlog_subscriptions` SET `dTag` = ?,`eventId` = ?,`tagsJson` = ?,`createdAt` = ?,`contentDecryptedJson` = ? WHERE `dTag` = ?";
       }
 
       @Override
@@ -103,7 +108,12 @@ public final class CypherLogSubscriptionDao_Impl implements CypherLogSubscriptio
         statement.bindString(2, entity.getEventId());
         statement.bindString(3, entity.getTagsJson());
         statement.bindLong(4, entity.getCreatedAt());
-        statement.bindString(5, entity.getDTag());
+        if (entity.getContentDecryptedJson() == null) {
+          statement.bindNull(5);
+        } else {
+          statement.bindString(5, entity.getContentDecryptedJson());
+        }
+        statement.bindString(6, entity.getDTag());
       }
     });
   }
@@ -208,6 +218,7 @@ public final class CypherLogSubscriptionDao_Impl implements CypherLogSubscriptio
           final int _cursorIndexOfEventId = CursorUtil.getColumnIndexOrThrow(_cursor, "eventId");
           final int _cursorIndexOfTagsJson = CursorUtil.getColumnIndexOrThrow(_cursor, "tagsJson");
           final int _cursorIndexOfCreatedAt = CursorUtil.getColumnIndexOrThrow(_cursor, "createdAt");
+          final int _cursorIndexOfContentDecryptedJson = CursorUtil.getColumnIndexOrThrow(_cursor, "contentDecryptedJson");
           final List<CypherLogSubscriptionEntity> _result = new ArrayList<CypherLogSubscriptionEntity>(_cursor.getCount());
           while (_cursor.moveToNext()) {
             final CypherLogSubscriptionEntity _item;
@@ -219,7 +230,13 @@ public final class CypherLogSubscriptionDao_Impl implements CypherLogSubscriptio
             _tmpTagsJson = _cursor.getString(_cursorIndexOfTagsJson);
             final long _tmpCreatedAt;
             _tmpCreatedAt = _cursor.getLong(_cursorIndexOfCreatedAt);
-            _item = new CypherLogSubscriptionEntity(_tmpDTag,_tmpEventId,_tmpTagsJson,_tmpCreatedAt);
+            final String _tmpContentDecryptedJson;
+            if (_cursor.isNull(_cursorIndexOfContentDecryptedJson)) {
+              _tmpContentDecryptedJson = null;
+            } else {
+              _tmpContentDecryptedJson = _cursor.getString(_cursorIndexOfContentDecryptedJson);
+            }
+            _item = new CypherLogSubscriptionEntity(_tmpDTag,_tmpEventId,_tmpTagsJson,_tmpCreatedAt,_tmpContentDecryptedJson);
             _result.add(_item);
           }
           return _result;
@@ -253,6 +270,7 @@ public final class CypherLogSubscriptionDao_Impl implements CypherLogSubscriptio
           final int _cursorIndexOfEventId = CursorUtil.getColumnIndexOrThrow(_cursor, "eventId");
           final int _cursorIndexOfTagsJson = CursorUtil.getColumnIndexOrThrow(_cursor, "tagsJson");
           final int _cursorIndexOfCreatedAt = CursorUtil.getColumnIndexOrThrow(_cursor, "createdAt");
+          final int _cursorIndexOfContentDecryptedJson = CursorUtil.getColumnIndexOrThrow(_cursor, "contentDecryptedJson");
           final CypherLogSubscriptionEntity _result;
           if (_cursor.moveToFirst()) {
             final String _tmpDTag;
@@ -263,7 +281,13 @@ public final class CypherLogSubscriptionDao_Impl implements CypherLogSubscriptio
             _tmpTagsJson = _cursor.getString(_cursorIndexOfTagsJson);
             final long _tmpCreatedAt;
             _tmpCreatedAt = _cursor.getLong(_cursorIndexOfCreatedAt);
-            _result = new CypherLogSubscriptionEntity(_tmpDTag,_tmpEventId,_tmpTagsJson,_tmpCreatedAt);
+            final String _tmpContentDecryptedJson;
+            if (_cursor.isNull(_cursorIndexOfContentDecryptedJson)) {
+              _tmpContentDecryptedJson = null;
+            } else {
+              _tmpContentDecryptedJson = _cursor.getString(_cursorIndexOfContentDecryptedJson);
+            }
+            _result = new CypherLogSubscriptionEntity(_tmpDTag,_tmpEventId,_tmpTagsJson,_tmpCreatedAt,_tmpContentDecryptedJson);
           } else {
             _result = null;
           }
@@ -292,6 +316,7 @@ public final class CypherLogSubscriptionDao_Impl implements CypherLogSubscriptio
           final int _cursorIndexOfEventId = CursorUtil.getColumnIndexOrThrow(_cursor, "eventId");
           final int _cursorIndexOfTagsJson = CursorUtil.getColumnIndexOrThrow(_cursor, "tagsJson");
           final int _cursorIndexOfCreatedAt = CursorUtil.getColumnIndexOrThrow(_cursor, "createdAt");
+          final int _cursorIndexOfContentDecryptedJson = CursorUtil.getColumnIndexOrThrow(_cursor, "contentDecryptedJson");
           final CypherLogSubscriptionEntity _result;
           if (_cursor.moveToFirst()) {
             final String _tmpDTag;
@@ -302,7 +327,13 @@ public final class CypherLogSubscriptionDao_Impl implements CypherLogSubscriptio
             _tmpTagsJson = _cursor.getString(_cursorIndexOfTagsJson);
             final long _tmpCreatedAt;
             _tmpCreatedAt = _cursor.getLong(_cursorIndexOfCreatedAt);
-            _result = new CypherLogSubscriptionEntity(_tmpDTag,_tmpEventId,_tmpTagsJson,_tmpCreatedAt);
+            final String _tmpContentDecryptedJson;
+            if (_cursor.isNull(_cursorIndexOfContentDecryptedJson)) {
+              _tmpContentDecryptedJson = null;
+            } else {
+              _tmpContentDecryptedJson = _cursor.getString(_cursorIndexOfContentDecryptedJson);
+            }
+            _result = new CypherLogSubscriptionEntity(_tmpDTag,_tmpEventId,_tmpTagsJson,_tmpCreatedAt,_tmpContentDecryptedJson);
           } else {
             _result = null;
           }
