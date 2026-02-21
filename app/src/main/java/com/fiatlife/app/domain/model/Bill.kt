@@ -98,8 +98,20 @@ enum class BillSubcategory(val generalCategory: BillGeneralCategory) {
     STUDENT_LOAN(BillGeneralCategory.CREDIT_LOANS),
     OTHER_LOAN(BillGeneralCategory.CREDIT_LOANS),
     // Subscription
-    CABLE_STREAMING(BillGeneralCategory.SUBSCRIPTION),
-    PHONE(BillGeneralCategory.SUBSCRIPTION),
+    EDUCATION(BillGeneralCategory.SUBSCRIPTION),
+    FINANCE(BillGeneralCategory.SUBSCRIPTION),
+    FOOD(BillGeneralCategory.SUBSCRIPTION),
+    GAMING(BillGeneralCategory.SUBSCRIPTION),
+    HEALTH_WELLNESS(BillGeneralCategory.SUBSCRIPTION),
+    SUB_HOME(BillGeneralCategory.SUBSCRIPTION),
+    MUSIC(BillGeneralCategory.SUBSCRIPTION),
+    NEWS_MEDIA(BillGeneralCategory.SUBSCRIPTION),
+    PET_CARE(BillGeneralCategory.SUBSCRIPTION),
+    TRAVEL(BillGeneralCategory.SUBSCRIPTION),
+    SHOPPING(BillGeneralCategory.SUBSCRIPTION),
+    SOFTWARE(BillGeneralCategory.SUBSCRIPTION),
+    STREAMING(BillGeneralCategory.SUBSCRIPTION),
+    VEHICLE(BillGeneralCategory.SUBSCRIPTION),
     OTHER_SUBSCRIPTION(BillGeneralCategory.SUBSCRIPTION),
     // Health
     GYM_FITNESS(BillGeneralCategory.HEALTH),
@@ -128,8 +140,20 @@ enum class BillSubcategory(val generalCategory: BillGeneralCategory) {
             CREDIT_CARD -> "Credit Card"
             STUDENT_LOAN -> "Student Loan"
             OTHER_LOAN -> "Other Loan"
-            CABLE_STREAMING -> "Cable/Streaming"
-            PHONE -> "Phone"
+            EDUCATION -> "Education"
+            FINANCE -> "Finance"
+            FOOD -> "Food"
+            GAMING -> "Gaming"
+            HEALTH_WELLNESS -> "Health/Wellness"
+            SUB_HOME -> "Home"
+            MUSIC -> "Music"
+            NEWS_MEDIA -> "News/Media"
+            PET_CARE -> "Pet Care"
+            TRAVEL -> "Travel"
+            SHOPPING -> "Shopping"
+            SOFTWARE -> "Software"
+            STREAMING -> "Streaming"
+            VEHICLE -> "Vehicle"
             OTHER_SUBSCRIPTION -> "Other Subscription"
             GYM_FITNESS -> "Gym/Fitness"
             MEDICAL -> "Medical"
@@ -156,8 +180,20 @@ enum class BillSubcategory(val generalCategory: BillGeneralCategory) {
             CREDIT_CARD -> "credit_card"
             STUDENT_LOAN -> "school"
             OTHER_LOAN -> "account_balance"
-            CABLE_STREAMING -> "tv"
-            PHONE -> "phone_android"
+            EDUCATION -> "school"
+            FINANCE -> "account_balance"
+            FOOD -> "restaurant"
+            GAMING -> "sports_esports"
+            HEALTH_WELLNESS -> "fitness_center"
+            SUB_HOME -> "home"
+            MUSIC -> "music_note"
+            NEWS_MEDIA -> "newspaper"
+            PET_CARE -> "pets"
+            TRAVEL -> "flight"
+            SHOPPING -> "shopping_cart"
+            SOFTWARE -> "computer"
+            STREAMING -> "tv"
+            VEHICLE -> "directions_car"
             OTHER_SUBSCRIPTION -> "subscriptions"
             GYM_FITNESS -> "fitness_center"
             MEDICAL -> "medical_services"
@@ -285,8 +321,8 @@ private fun fromLegacyCategory(category: BillCategory): BillSubcategory = when (
     BillCategory.WATER_SEWER -> BillSubcategory.WATER_SEWER
     BillCategory.TRASH -> BillSubcategory.TRASH
     BillCategory.INTERNET -> BillSubcategory.INTERNET
-    BillCategory.PHONE -> BillSubcategory.PHONE
-    BillCategory.CABLE_STREAMING -> BillSubcategory.CABLE_STREAMING
+    BillCategory.PHONE -> BillSubcategory.OTHER_SUBSCRIPTION
+    BillCategory.CABLE_STREAMING -> BillSubcategory.STREAMING
     BillCategory.CAR_PAYMENT -> BillSubcategory.CAR_PAYMENT
     BillCategory.CAR_INSURANCE -> BillSubcategory.CAR_INSURANCE
     BillCategory.HOME_INSURANCE -> BillSubcategory.HOME_INSURANCE
