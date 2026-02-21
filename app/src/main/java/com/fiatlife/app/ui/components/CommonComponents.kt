@@ -22,6 +22,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.fiatlife.app.ui.theme.MoneyGreen
 import com.fiatlife.app.ui.theme.ProfitGreen
+import com.fiatlife.app.ui.theme.WarningAmber
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -232,6 +233,64 @@ fun EmptyState(
         if (action != null) {
             Spacer(modifier = Modifier.height(16.dp))
             action()
+        }
+    }
+}
+
+/**
+ * Shared top banner: app/screen title, subtitle, and sync status badge.
+ * Shown on all main screens.
+ */
+@Composable
+fun AppBanner(
+    title: String,
+    subtitle: String,
+    isConnected: Boolean,
+    hasData: Boolean,
+    modifier: Modifier = Modifier,
+    actions: (@Composable RowScope.() -> Unit)? = null
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.headlineLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Badge(
+                containerColor = when {
+                    isConnected && hasData -> ProfitGreen
+                    isConnected -> WarningAmber
+                    else -> MaterialTheme.colorScheme.error
+                }
+            ) {
+                Text(
+                    text = when {
+                        isConnected && hasData -> "Synced"
+                        isConnected -> "Syncing…"
+                        else -> "Offline"
+                    },
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                )
+            }
+            if (actions != null) {
+                Spacer(modifier = Modifier.width(8.dp))
+                actions()
+            }
         }
     }
 }

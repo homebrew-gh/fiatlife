@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.repository.BillRepository
+import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
 import com.fiatlife.app.data.repository.GoalRepository
 import com.fiatlife.app.data.repository.SalaryRepository
 import com.fiatlife.app.domain.model.*
@@ -21,6 +22,7 @@ data class DashboardState(
     val monthlyBills: Double = 0.0,
     val billCount: Int = 0,
     val unpaidBillCount: Int = 0,
+    val billCategoryTotals: Map<BillGeneralCategory, Double> = emptyMap(),
     val goalCount: Int = 0,
     val goalsProgress: Double = 0.0,
     val totalSaved: Double = 0.0,
@@ -36,6 +38,7 @@ data class DashboardState(
 class DashboardViewModel @Inject constructor(
     private val salaryRepository: SalaryRepository,
     private val billRepository: BillRepository,
+    private val cypherLogSubscriptionRepository: CypherLogSubscriptionRepository,
     private val goalRepository: GoalRepository,
     private val nostrClient: NostrClient
 ) : ViewModel() {
@@ -48,13 +51,19 @@ class DashboardViewModel @Inject constructor(
             combine(
                 salaryRepository.getSalaryConfig(),
                 billRepository.getAllBills(),
+                cypherLogSubscriptionRepository.getAllAsBills(),
                 goalRepository.getAllGoals(),
                 nostrClient.connectionState
-            ) { salary, bills, goals, connected ->
+            ) { salary, nativeBills, cypherLogBills, goals, connected ->
+                val bills = nativeBills + cypherLogBills.map { it.bill }
                 val calculation = salary?.let { PaycheckCalculator.calculate(it) }
                 val monthlyBills = bills.sumOf { b ->
-                    b.amount * b.frequency.timesPerYear / 12.0
+                    b.effectiveAmountDue() * b.frequency.timesPerYear / 12.0
                 }
+                val billCategoryTotals = bills.groupBy { it.effectiveGeneralCategory }
+                    .mapValues { (_, list) ->
+                        list.sumOf { b -> b.effectiveAmountDue() * b.frequency.timesPerYear / 12.0 }
+                    }
                 val unpaidCount = bills.count { !it.isPaid }
                 val totalSaved = goals.sumOf { it.currentAmount }
                 val totalTarget = goals.sumOf { it.targetAmount }
@@ -73,13 +82,14 @@ class DashboardViewModel @Inject constructor(
                     monthlyBills = monthlyBills,
                     billCount = bills.size,
                     unpaidBillCount = unpaidCount,
+                    billCategoryTotals = billCategoryTotals,
                     goalCount = goals.size,
                     goalsProgress = goalsProgress,
                     totalSaved = totalSaved,
                     totalGoalTarget = totalTarget,
                     monthlyDisposable = monthlyDisposable,
                     isConnected = connected,
-                    hasData = salary != null || bills.isNotEmpty() || goals.isNotEmpty(),
+                    hasData = salary != null || nativeBills.isNotEmpty() || cypherLogBills.isNotEmpty() || goals.isNotEmpty(),
                     topGoals = goals.sortedByDescending { it.progressPercent }.take(3),
                     upcomingBills = bills.filter { !it.isPaid }.take(5)
                 )

@@ -67,7 +67,7 @@ class BillRepository @Inject constructor(
             BillEntity(
                 id = billWithId.id,
                 jsonData = jsonStr,
-                category = billWithId.category.name,
+                category = billWithId.effectiveSubcategory.name,
                 updatedAt = billWithId.updatedAt
             )
         )
@@ -91,7 +91,7 @@ class BillRepository @Inject constructor(
             BillEntity(
                 id = bill.id,
                 jsonData = "",
-                category = bill.category.name
+                category = bill.effectiveSubcategory.name
             )
         )
 
@@ -144,7 +144,7 @@ class BillRepository @Inject constructor(
                                 BillEntity(
                                     id = bill.id,
                                     jsonData = decrypted,
-                                    category = bill.category.name,
+                                    category = bill.effectiveSubcategory.name,
                                     updatedAt = bill.updatedAt
                                 )
                             )

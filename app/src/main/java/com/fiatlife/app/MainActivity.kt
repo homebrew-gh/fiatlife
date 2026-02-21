@@ -26,6 +26,7 @@ import androidx.lifecycle.lifecycleScope
 import com.fiatlife.app.data.blossom.BlossomClient
 import com.fiatlife.app.data.nostr.*
 import com.fiatlife.app.data.repository.BillRepository
+import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.data.repository.GoalRepository
 import com.fiatlife.app.data.repository.SalaryRepository
 import com.fiatlife.app.data.security.PinPrefs
@@ -53,6 +54,7 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var salaryRepository: SalaryRepository
     @Inject lateinit var billRepository: BillRepository
     @Inject lateinit var goalRepository: GoalRepository
+    @Inject lateinit var creditAccountRepository: CreditAccountRepository
 
     val amberSignerRef = AtomicReference<AmberSigner?>(null)
     lateinit var decryptLauncher: ActivityResultLauncher<Intent>
@@ -186,7 +188,7 @@ class MainActivity : ComponentActivity() {
                                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:"))
                                 intent.putExtra("type", "get_public_key")
                                 intent.putExtra("permissions",
-                                    """[{"type":"nip44_decrypt"},{"type":"nip44_encrypt"},{"type":"sign_event","kind":22242},{"type":"sign_event","kind":24242},{"type":"sign_event","kind":30078}]"""
+                                    """[{"type":"nip44_decrypt"},{"type":"nip44_encrypt"},{"type":"sign_event","kind":22242},{"type":"sign_event","kind":24242},{"type":"sign_event","kind":30078},{"type":"sign_event","kind":37004}]"""
                                 )
                                 resolvedSignerPackage = packageManager
                                     .queryIntentActivities(intent, 0)
@@ -327,6 +329,7 @@ class MainActivity : ComponentActivity() {
             launch { try { salaryRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Salary sync: ${e.message}") } }
             launch { try { billRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bill sync: ${e.message}") } }
             launch { try { goalRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Goal sync: ${e.message}") } }
+            launch { try { creditAccountRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Credit account sync: ${e.message}") } }
         }
     }
 }

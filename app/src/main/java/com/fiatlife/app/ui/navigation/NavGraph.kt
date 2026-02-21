@@ -3,10 +3,15 @@ package com.fiatlife.app.ui.navigation
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -15,13 +20,17 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
+import com.fiatlife.app.ui.components.AppBanner
 import com.fiatlife.app.ui.navigation.Screen
 import com.fiatlife.app.ui.screens.bills.BillDetailScreen
 import com.fiatlife.app.ui.screens.bills.BillsScreen
 import com.fiatlife.app.ui.screens.dashboard.DashboardScreen
+import com.fiatlife.app.ui.screens.debt.DebtDetailScreen
+import com.fiatlife.app.ui.screens.debt.DebtScreen
 import com.fiatlife.app.ui.screens.goals.GoalsScreen
 import com.fiatlife.app.ui.screens.salary.SalaryScreen
 import com.fiatlife.app.ui.screens.settings.SettingsScreen
+import com.fiatlife.app.ui.viewmodel.MainAppViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -29,8 +38,29 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
+    val mainViewModel: MainAppViewModel = hiltViewModel()
+    val mainState by mainViewModel.state.collectAsStateWithLifecycle()
+    val currentScreen = Screen.fromRoute(currentDestination?.route)
 
     Scaffold(
+        topBar = {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 2.dp
+            ) {
+                AppBanner(
+                    title = currentScreen?.title ?: "FiatLife",
+                    subtitle = currentScreen?.subtitle?.takeIf { it.isNotBlank() } ?: "Your financial dashboard",
+                    isConnected = mainState.isConnected,
+                    hasData = mainState.hasData,
+                    actions = {
+                        IconButton(onClick = { navController.navigate(Screen.Settings.route) }) {
+                            Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                        }
+                    }
+                )
+            }
+        },
         bottomBar = {
             NavigationBar(
                 containerColor = MaterialTheme.colorScheme.surface,
@@ -85,6 +115,9 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
             composable(Screen.Bills.route) {
                 BillsScreen(navController = navController)
             }
+            composable(Screen.Debt.route) {
+                DebtScreen(navController = navController)
+            }
             composable(Screen.Goals.route) {
                 GoalsScreen()
             }
@@ -96,6 +129,12 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
                 arguments = listOf(navArgument("billId") { type = NavType.StringType })
             ) {
                 BillDetailScreen(navController = navController)
+            }
+            composable(
+                route = Screen.DebtDetail.route,
+                arguments = listOf(navArgument("accountId") { type = NavType.StringType })
+            ) {
+                DebtDetailScreen(navController = navController)
             }
         }
     }

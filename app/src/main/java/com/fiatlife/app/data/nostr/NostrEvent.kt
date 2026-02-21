@@ -17,6 +17,8 @@ data class NostrEvent(
 ) {
     companion object {
         const val KIND_APP_SPECIFIC_DATA = 30078
+        /** CypherLog subscription (replaceable, tag-based); see CypherLog NIP.md */
+        const val KIND_CYPHERLOG_SUBSCRIPTION = 37004
 
         fun create(
             privateKey: ByteArray,

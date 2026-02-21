@@ -247,6 +247,63 @@ class NostrClient @Inject constructor(
     }
 
     /**
+     * Subscribe to CypherLog subscription events (kind 37004). Collects events until
+     * the relay sends EOSE, then closes the subscription. Plaintext tags only.
+     */
+    fun subscribeToKind37004(): Flow<NostrEvent> = flow {
+        val s = signer ?: throw IllegalStateException("No signer configured")
+        val filter = NostrFilter(
+            authors = listOf(s.pubkeyHex),
+            kinds = listOf(NostrEvent.KIND_CYPHERLOG_SUBSCRIPTION)
+        )
+        val subId = subscribe(filter)
+        Log.d(TAG, "Subscribed for kind 37004: subId=$subId")
+        try {
+            messages.collect { msg ->
+                when (msg) {
+                    is NostrMessage.Eose -> {
+                        if (msg.subscriptionId == subId) throw EoseSignal()
+                    }
+                    is NostrMessage.EventReceived -> {
+                        if (msg.subscriptionId == subId) emit(msg.event)
+                    }
+                    else -> {}
+                }
+            }
+        } catch (_: EoseSignal) {
+        } finally {
+            closeSubscription(subId)
+        }
+    }
+
+    /**
+     * Publish a replaceable CypherLog subscription event (kind 37004).
+     * Tags must include "d" (unique id). Content is empty (tags-only per CypherLog).
+     */
+    suspend fun publishReplaceable37004(dTag: String, tags: List<List<String>>): Boolean {
+        val s = signer ?: return false
+        val ready = ensureConnected()
+        if (!ready) Log.w(TAG, "publishReplaceable37004: relay not ready")
+        val tagsWithD = tags.toMutableList()
+        if (!tagsWithD.any { it.isNotEmpty() && it[0] == "d" }) {
+            tagsWithD.add(0, listOf("d", dTag))
+        }
+        val unsignedJson = NostrEvent.buildUnsignedJson(
+            pubkeyHex = s.pubkeyHex,
+            kind = NostrEvent.KIND_CYPHERLOG_SUBSCRIPTION,
+            content = "",
+            tags = tagsWithD
+        )
+        val signedJson = s.signEvent(unsignedJson) ?: run {
+            Log.e(TAG, "publishReplaceable37004: event signing failed for d=$dTag")
+            return false
+        }
+        val sent = publishSignedEventJson(signedJson)
+        Log.d(TAG, "publishReplaceable37004: d=$dTag sent=$sent")
+        return sent
+    }
+
+    /**
      * Subscribe to app data events and decrypt them. Collects events until
      * the relay sends EOSE (End of Stored Events), then closes the subscription
      * and terminates the flow. Safe for one-shot sync operations.

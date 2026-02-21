@@ -22,6 +22,7 @@ import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.domain.model.StatementEntry
 import com.fiatlife.app.ui.components.MoneyText
 import com.fiatlife.app.ui.components.SectionCard
+import com.fiatlife.app.ui.components.formatCurrency
 import com.fiatlife.app.ui.theme.LossRed
 import com.fiatlife.app.ui.theme.ProfitGreen
 import com.fiatlife.app.ui.viewmodel.BillDetailViewModel
@@ -37,6 +38,7 @@ fun BillDetailScreen(
     viewModel: BillDetailViewModel = hiltViewModel()
 ) {
     val bill by viewModel.bill.collectAsStateWithLifecycle()
+    val billWithSource by viewModel.billWithSource.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -96,19 +98,82 @@ fun BillDetailScreen(
                         Spacer(modifier = Modifier.height(4.dp))
                         AssistChip(
                             onClick = {},
-                            label = { Text(b.category.displayName, style = MaterialTheme.typography.labelMedium) }
+                            label = { Text(b.effectiveSubcategory.displayName, style = MaterialTheme.typography.labelMedium) }
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         MoneyText(
-                            amount = b.amount,
+                            amount = b.effectiveAmountDue(),
                             style = MaterialTheme.typography.headlineMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                         Text(
-                            text = "${b.frequency.displayName} · Due day ${b.dueDay}",
+                            text = if (b.isCreditCard()) "Minimum due · Due day ${b.dueDay}"
+                            else "${b.frequency.displayName} · Due day ${b.dueDay}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                         )
+                    }
+                }
+            }
+
+            if (b.isCreditCard() && b.creditCardDetails != null) {
+                item {
+                    val cc = b.creditCardDetails!!
+                    SectionCard(title = "Credit card", icon = Icons.Filled.CreditCard) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Current balance", style = MaterialTheme.typography.bodyMedium)
+                            MoneyText(
+                                amount = cc.currentBalance,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = LossRed
+                            )
+                        }
+                        if (cc.apr > 0) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("APR", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    text = "%.2f%%".format(cc.apr * 100),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            val estInterest = cc.estimatedMonthlyInterest(cc.currentBalance)
+                            if (estInterest > 0) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Est. interest next month", style = MaterialTheme.typography.bodySmall)
+                                    Text(
+                                        text = estInterest.formatCurrency(),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                        if (cc.interestChargedLastPeriod > 0) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Interest last period", style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    text = cc.interestChargedLastPeriod.formatCurrency(),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -147,7 +212,7 @@ fun BillDetailScreen(
                             )
                         }
                     }
-                    if (!b.isPaid) {
+                    if (!b.isPaid && billWithSource?.isCypherLog != true) {
                         Spacer(modifier = Modifier.height(12.dp))
                         Button(
                             onClick = { viewModel.recordPayment(b) },
@@ -230,7 +295,7 @@ fun BillDetailScreen(
         }
     }
 
-    if (showDeleteConfirm && bill != null) {
+    if (showDeleteConfirm && billWithSource != null) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
             title = { Text("Delete bill?") },
@@ -238,7 +303,7 @@ fun BillDetailScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.deleteBill(bill!!)
+                        viewModel.deleteBill(billWithSource!!)
                         showDeleteConfirm = false
                         navController.popBackStack()
                     }
@@ -255,10 +320,11 @@ fun BillDetailScreen(
         if (editingBill != null) {
             BillDialog(
                 bill = editingBill,
+                isEditingCypherLog = billWithSource?.isCypherLog == true,
                 statementCount = editingBill.statementEntries.size,
                 onDismiss = { showEditDialog = false },
-                onSave = {
-                    viewModel.saveBill(it)
+                onSave = { b, _ ->
+                    viewModel.saveBill(b)
                     showEditDialog = false
                 },
                 onUploadAttachment = { _, _, _ -> }

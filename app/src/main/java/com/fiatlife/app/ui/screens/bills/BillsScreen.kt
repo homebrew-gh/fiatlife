@@ -20,7 +20,15 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
-import com.fiatlife.app.domain.model.*
+import com.fiatlife.app.domain.model.BillCategory
+import com.fiatlife.app.domain.model.BillGeneralCategory
+import com.fiatlife.app.domain.model.BillFrequency
+import com.fiatlife.app.domain.model.CreditCardDetails
+import com.fiatlife.app.domain.model.CreditCardMinPaymentType
+import com.fiatlife.app.domain.model.StatementEntry
+import com.fiatlife.app.domain.model.Bill
+import com.fiatlife.app.domain.model.BillSubcategory
+import com.fiatlife.app.domain.model.BillWithSource
 import com.fiatlife.app.ui.navigation.Screen
 import com.fiatlife.app.ui.components.*
 import com.fiatlife.app.ui.theme.*
@@ -51,16 +59,7 @@ fun BillsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item {
-                Text(
-                    text = "Bills",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-
-            // Monthly total card
+            // Monthly total card with category totals in header
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -86,15 +85,46 @@ fun BillsScreen(
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                         Text(
-                            text = "${state.bills.size} bills tracked",
+                            text = "${state.bills.size} bill(s) tracked",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                         )
+                        // Category totals in header (under monthly total)
+                        if (state.categoryTotals.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                state.categoryTotals.entries
+                                    .sortedBy { it.key.displayName }
+                                    .forEach { (generalCategory, total) ->
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            modifier = Modifier.padding(vertical = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = generalCategory.displayName,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
+                                            )
+                                            Text(
+                                                text = total.formatCurrency(),
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                        }
+                                    }
+                            }
+                        }
                     }
                 }
             }
 
-            // Category filter chips
+            // General category filter chips
             item {
                 Row(
                     modifier = Modifier
@@ -103,44 +133,16 @@ fun BillsScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     FilterChip(
-                        selected = state.selectedCategory == null,
-                        onClick = { viewModel.filterByCategory(null) },
+                        selected = state.selectedGeneralCategory == null,
+                        onClick = { viewModel.filterByGeneralCategory(null) },
                         label = { Text("All") }
                     )
-                    state.categoryTotals.keys.sortedBy { it.displayName }.forEach { category ->
+                    state.categoryTotals.keys.sortedBy { it.displayName }.forEach { generalCategory ->
                         FilterChip(
-                            selected = state.selectedCategory == category,
-                            onClick = { viewModel.filterByCategory(category) },
-                            label = { Text(category.displayName) }
+                            selected = state.selectedGeneralCategory == generalCategory,
+                            onClick = { viewModel.filterByGeneralCategory(generalCategory) },
+                            label = { Text(generalCategory.displayName) }
                         )
-                    }
-                }
-            }
-
-            // Category breakdown
-            if (state.categoryTotals.isNotEmpty()) {
-                item {
-                    SectionCard(title = "By Category", icon = Icons.Filled.PieChart) {
-                        state.categoryTotals.entries
-                            .sortedByDescending { it.value }
-                            .forEach { (category, total) ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 4.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = category.displayName,
-                                        style = MaterialTheme.typography.bodyMedium
-                                    )
-                                    Text(
-                                        text = total.formatCurrency(),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                            }
                     }
                 }
             }
@@ -155,11 +157,11 @@ fun BillsScreen(
                     )
                 }
             } else {
-                items(state.filteredBills, key = { it.id }) { bill ->
+                items(state.filteredBills, key = { it.id }) { item ->
                     BillCard(
-                        bill = bill,
-                        onClick = { navController.navigate(Screen.BillDetail.routeWithId(bill.id)) },
-                        onTogglePaid = { viewModel.togglePaid(bill) }
+                        item = item,
+                        onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
+                        onTogglePaid = { viewModel.togglePaid(item) }
                     )
                 }
             }
@@ -171,9 +173,10 @@ fun BillsScreen(
     if (state.showAddDialog) {
         BillDialog(
             bill = state.editingBill,
+            isEditingCypherLog = state.editingIsCypherLog,
             statementCount = state.dialogStatementEntries.size,
             onDismiss = { viewModel.dismissDialog() },
-            onSave = { viewModel.saveBill(it) },
+            onSave = { b, showInCypherLog -> viewModel.saveBill(b, showInCypherLog) },
             onUploadAttachment = { data, type, name ->
                 viewModel.uploadAttachment(data, type, name)
             }
@@ -190,10 +193,11 @@ fun BillsScreen(
 
 @Composable
 private fun BillCard(
-    bill: Bill,
+    item: BillWithSource,
     onClick: () -> Unit,
     onTogglePaid: () -> Unit
 ) {
+    val bill = item.bill
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -211,24 +215,46 @@ private fun BillCard(
                 .padding(start = 4.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Checkbox(
-                checked = bill.isPaid,
-                onCheckedChange = { onTogglePaid() },
-                colors = CheckboxDefaults.colors(checkedColor = ProfitGreen)
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = bill.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
+            if (!item.isCypherLog) {
+                Checkbox(
+                    checked = bill.isPaid,
+                    onCheckedChange = { onTogglePaid() },
+                    colors = CheckboxDefaults.colors(checkedColor = ProfitGreen)
                 )
+            } else {
+                Spacer(modifier = Modifier.width(12.dp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = bill.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (item.isCypherLog) {
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.tertiaryContainer
+                        ) {
+                            Text(
+                                text = "CypherLog",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(2.dp))
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = bill.category.displayName,
+                        text = bill.effectiveSubcategory.displayName,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -264,7 +290,7 @@ private fun BillCard(
                 }
             }
             MoneyText(
-                amount = bill.amount,
+                amount = bill.effectiveAmountDue(),
                 style = MaterialTheme.typography.titleMedium
             )
             Spacer(modifier = Modifier.width(4.dp))
@@ -282,22 +308,52 @@ private fun BillCard(
 @Composable
 internal fun BillDialog(
     bill: Bill?,
+    isEditingCypherLog: Boolean = false,
     statementCount: Int = 0,
     onDismiss: () -> Unit,
-    onSave: (Bill) -> Unit,
+    onSave: (Bill, showInCypherLog: Boolean?) -> Unit,
     onUploadAttachment: (ByteArray, String, String) -> Unit
 ) {
     val context = LocalContext.current
     var name by remember { mutableStateOf(bill?.name ?: "") }
     var amount by remember { mutableStateOf(bill?.amount?.toString() ?: "") }
-    var category by remember { mutableStateOf(bill?.category ?: BillCategory.OTHER) }
+    var generalCategory by remember { mutableStateOf(bill?.effectiveGeneralCategory ?: BillGeneralCategory.OTHER) }
+    var subcategory by remember { mutableStateOf(bill?.effectiveSubcategory ?: BillSubcategory.OTHER) }
+    val showInCypherLogVisible = bill == null && generalCategory == BillGeneralCategory.SUBSCRIPTION
+    var showInCypherLog by remember { mutableStateOf(false) }
     var frequency by remember { mutableStateOf(bill?.frequency ?: BillFrequency.MONTHLY) }
     var dueDay by remember { mutableStateOf(bill?.dueDay?.toString() ?: "1") }
     var autoPay by remember { mutableStateOf(bill?.autoPay ?: false) }
     var accountName by remember { mutableStateOf(bill?.accountName ?: "") }
     var notes by remember { mutableStateOf(bill?.notes ?: "") }
-    var categoryExpanded by remember { mutableStateOf(false) }
+    var generalCategoryExpanded by remember { mutableStateOf(false) }
+    var subcategoryExpanded by remember { mutableStateOf(false) }
     var frequencyExpanded by remember { mutableStateOf(false) }
+
+    val subcategoriesForGeneral = remember(generalCategory) {
+        BillSubcategory.entries.filter { it.generalCategory == generalCategory }
+    }
+
+    val cc = bill?.creditCardDetails
+    var currentBalance by remember(bill, subcategory) {
+        mutableStateOf(if (subcategory == BillSubcategory.CREDIT_CARD) (cc?.currentBalance ?: 0.0).toString() else "0")
+    }
+    var aprPercent by remember(bill, subcategory) {
+        mutableStateOf(if (subcategory == BillSubcategory.CREDIT_CARD) "%.2f".format((cc?.apr ?: 0.0) * 100.0) else "0")
+    }
+    var minPaymentType by remember(bill, subcategory) {
+        mutableStateOf(cc?.minimumPaymentType ?: CreditCardMinPaymentType.PERCENT_OF_BALANCE)
+    }
+    var minPaymentValue by remember(bill, subcategory) {
+        mutableStateOf(
+            when (cc?.minimumPaymentType) {
+                CreditCardMinPaymentType.FIXED -> "%.2f".format(cc?.minimumPaymentValue ?: 25.0)
+                CreditCardMinPaymentType.PERCENT_OF_BALANCE -> "%.1f".format(cc?.minimumPaymentValue ?: 2.0)
+                else -> "25"
+            }
+        )
+    }
+    var minPaymentTypeExpanded by remember { mutableStateOf(false) }
 
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -327,42 +383,177 @@ internal fun BillDialog(
                         shape = MaterialTheme.shapes.medium
                     )
                 }
-                item {
-                    CurrencyTextField(
-                        value = amount,
-                        onValueChange = { amount = it },
-                        label = "Amount"
-                    )
+                if (subcategory != BillSubcategory.CREDIT_CARD) {
+                    item {
+                        CurrencyTextField(
+                            value = amount,
+                            onValueChange = { amount = it },
+                            label = "Amount"
+                        )
+                    }
+                }
+                if (subcategory == BillSubcategory.CREDIT_CARD) {
+                    item {
+                        CurrencyTextField(
+                            value = currentBalance,
+                            onValueChange = { currentBalance = it },
+                            label = "Current balance"
+                        )
+                    }
+                    item {
+                        PercentageTextField(
+                            value = aprPercent,
+                            onValueChange = { aprPercent = it },
+                            label = "APR %",
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    item {
+                        ExposedDropdownMenuBox(
+                            expanded = minPaymentTypeExpanded,
+                            onExpandedChange = { minPaymentTypeExpanded = it }
+                        ) {
+                            OutlinedTextField(
+                                value = when (minPaymentType) {
+                                    CreditCardMinPaymentType.FIXED -> "Fixed amount"
+                                    CreditCardMinPaymentType.PERCENT_OF_BALANCE -> "% of balance"
+                                    CreditCardMinPaymentType.FULL_BALANCE -> "Pay in full"
+                                },
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Minimum payment") },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(minPaymentTypeExpanded) },
+                                modifier = Modifier.fillMaxWidth().menuAnchor(),
+                                shape = MaterialTheme.shapes.medium
+                            )
+                            ExposedDropdownMenu(
+                                expanded = minPaymentTypeExpanded,
+                                onDismissRequest = { minPaymentTypeExpanded = false }
+                            ) {
+                                CreditCardMinPaymentType.entries.forEach { type ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                when (type) {
+                                                    CreditCardMinPaymentType.FIXED -> "Fixed amount"
+                                                    CreditCardMinPaymentType.PERCENT_OF_BALANCE -> "% of balance"
+                                                    CreditCardMinPaymentType.FULL_BALANCE -> "Pay in full"
+                                                }
+                                            )
+                                        },
+                                        onClick = {
+                                            minPaymentType = type
+                                            minPaymentValue = when (type) {
+                                                CreditCardMinPaymentType.FIXED -> "25"
+                                                CreditCardMinPaymentType.PERCENT_OF_BALANCE -> "2.0"
+                                                CreditCardMinPaymentType.FULL_BALANCE -> minPaymentValue
+                                            }
+                                            minPaymentTypeExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    item {
+                        OutlinedTextField(
+                            value = minPaymentValue,
+                            onValueChange = { minPaymentValue = it.filter { c -> c.isDigit() || c == '.' } },
+                            label = {
+                                Text(
+                                    when (minPaymentType) {
+                                        CreditCardMinPaymentType.FIXED -> "Minimum $ amount"
+                                        CreditCardMinPaymentType.PERCENT_OF_BALANCE -> "Percent (e.g. 2)"
+                                        CreditCardMinPaymentType.FULL_BALANCE -> "—"
+                                    }
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            shape = MaterialTheme.shapes.medium,
+                            enabled = minPaymentType != CreditCardMinPaymentType.FULL_BALANCE
+                        )
+                    }
                 }
                 item {
                     ExposedDropdownMenuBox(
-                        expanded = categoryExpanded,
-                        onExpandedChange = { categoryExpanded = it }
+                        expanded = generalCategoryExpanded,
+                        onExpandedChange = { generalCategoryExpanded = it }
                     ) {
                         OutlinedTextField(
-                            value = category.displayName,
+                            value = generalCategory.displayName,
                             onValueChange = {},
                             readOnly = true,
-                            label = { Text("Category") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(categoryExpanded) },
+                            label = { Text("General Category") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(generalCategoryExpanded) },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .menuAnchor(),
                             shape = MaterialTheme.shapes.medium
                         )
                         ExposedDropdownMenu(
-                            expanded = categoryExpanded,
-                            onDismissRequest = { categoryExpanded = false }
+                            expanded = generalCategoryExpanded,
+                            onDismissRequest = { generalCategoryExpanded = false }
                         ) {
-                            BillCategory.entries.forEach { cat ->
+                            BillGeneralCategory.entries.forEach { gen ->
                                 DropdownMenuItem(
-                                    text = { Text(cat.displayName) },
+                                    text = { Text(gen.displayName) },
                                     onClick = {
-                                        category = cat
-                                        categoryExpanded = false
+                                        generalCategory = gen
+                                        subcategory = BillSubcategory.entries.first { it.generalCategory == gen }
+                                        generalCategoryExpanded = false
                                     }
                                 )
                             }
+                        }
+                    }
+                }
+                item {
+                    ExposedDropdownMenuBox(
+                        expanded = subcategoryExpanded,
+                        onExpandedChange = { subcategoryExpanded = it }
+                    ) {
+                        OutlinedTextField(
+                            value = subcategory.displayName,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Subcategory") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(subcategoryExpanded) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor(),
+                            shape = MaterialTheme.shapes.medium
+                        )
+                        ExposedDropdownMenu(
+                            expanded = subcategoryExpanded,
+                            onDismissRequest = { subcategoryExpanded = false }
+                        ) {
+                            subcategoriesForGeneral.forEach { sub ->
+                                DropdownMenuItem(
+                                    text = { Text(sub.displayName) },
+                                    onClick = {
+                                        subcategory = sub
+                                        subcategoryExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                if (showInCypherLogVisible) {
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = showInCypherLog,
+                                onCheckedChange = { showInCypherLog = it }
+                            )
+                            Text(
+                                text = "Show in CypherLog (home-related)",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
                         }
                     }
                 }
@@ -460,28 +651,52 @@ internal fun BillDialog(
         confirmButton = {
             TextButton(
                 onClick = {
+                    val balance = currentBalance.toDoubleOrNull() ?: 0.0
+                    val apr = (aprPercent.toDoubleOrNull() ?: 0.0) / 100.0
+                    val minVal = minPaymentValue.toDoubleOrNull() ?: when (minPaymentType) {
+                        CreditCardMinPaymentType.FIXED -> 25.0
+                        CreditCardMinPaymentType.PERCENT_OF_BALANCE -> 2.0
+                        else -> 0.0
+                    }
+                    val ccDetails = if (subcategory == BillSubcategory.CREDIT_CARD) {
+                        CreditCardDetails(
+                            currentBalance = balance.coerceAtLeast(0.0),
+                            apr = apr.coerceAtLeast(0.0),
+                            minimumPaymentType = minPaymentType,
+                            minimumPaymentValue = minVal.coerceAtLeast(0.0),
+                            interestChargedLastPeriod = bill?.creditCardDetails?.interestChargedLastPeriod ?: 0.0
+                        )
+                    } else null
+                    val effectiveAmount = ccDetails?.minimumDue(ccDetails.currentBalance) ?: (amount.toDoubleOrNull() ?: 0.0)
+                    val showInCypherLogArg = if (showInCypherLogVisible) showInCypherLog else null
                     onSave(
                         Bill(
                             id = bill?.id ?: "",
                             name = name,
-                            amount = amount.toDoubleOrNull() ?: 0.0,
-                            category = category,
+                            amount = effectiveAmount,
+                            category = BillCategory.OTHER,
+                            subcategory = subcategory,
                             frequency = frequency,
                             dueDay = dueDay.toIntOrNull() ?: 1,
                             autoPay = autoPay,
                             accountName = accountName,
                             notes = notes,
-                            attachmentHashes = emptyList(),
-                            statementEntries = emptyList(),
+                            attachmentHashes = bill?.attachmentHashes ?: emptyList(),
+                            statementEntries = bill?.statementEntries ?: emptyList(),
                             paymentHistory = bill?.paymentHistory ?: emptyList(),
                             isPaid = bill?.isPaid ?: false,
                             lastPaidDate = bill?.lastPaidDate,
                             createdAt = bill?.createdAt ?: 0L,
-                            updatedAt = 0L
-                        )
+                            updatedAt = 0L,
+                            creditCardDetails = ccDetails
+                        ),
+                        showInCypherLogArg
                     )
                 },
-                enabled = name.isNotBlank() && (amount.toDoubleOrNull() ?: 0.0) > 0
+                enabled = name.isNotBlank() && (
+                    if (subcategory == BillSubcategory.CREDIT_CARD) true
+                    else (amount.toDoubleOrNull() ?: 0.0) > 0
+                )
             ) {
                 Text("Save")
             }

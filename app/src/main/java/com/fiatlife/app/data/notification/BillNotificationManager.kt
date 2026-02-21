@@ -66,8 +66,8 @@ class BillNotificationManager @Inject constructor(
                 1 -> "due tomorrow"
                 else -> "due in $daysUntilDue days"
             }
-            val amountStr = "$%.2f".format(bill.amount)
-            "${bill.name} — $amountStr" to "${bill.category.displayName} $dueText"
+            val amountStr = "$%.2f".format(bill.effectiveAmountDue())
+            "${bill.name} — $amountStr" to "${bill.effectiveSubcategory.displayName} $dueText"
         } else {
             val dueText = when (daysUntilDue) {
                 0 -> "You have a bill due today"

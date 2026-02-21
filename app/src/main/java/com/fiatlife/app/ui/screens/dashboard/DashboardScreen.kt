@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
+import com.fiatlife.app.domain.model.BillGeneralCategory
 import com.fiatlife.app.ui.components.*
 import com.fiatlife.app.ui.navigation.Screen
 import com.fiatlife.app.ui.theme.*
@@ -34,44 +35,6 @@ fun DashboardScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "FiatLife",
-                        style = MaterialTheme.typography.headlineLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = "Your financial dashboard",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Badge(
-                    containerColor = when {
-                        state.isConnected && state.hasData -> ProfitGreen
-                        state.isConnected -> WarningAmber
-                        else -> MaterialTheme.colorScheme.error
-                    }
-                ) {
-                    Text(
-                        text = when {
-                            state.isConnected && state.hasData -> "Synced"
-                            state.isConnected -> "Syncing\u2026"
-                            else -> "Offline"
-                        },
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                    )
-                }
-            }
-        }
-
         item {
             TakeHomeCard(
                 takeHome = state.takeHomePay,
@@ -120,6 +83,36 @@ fun DashboardScreen(
                         value = state.monthlyDisposable.formatCurrency(),
                         valueColor = if (state.monthlyDisposable >= 0) ProfitGreen else LossRed
                     )
+                }
+                if (state.billCategoryTotals.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "Bills by category",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        state.billCategoryTotals.entries
+                            .sortedBy { it.key.displayName }
+                            .forEach { (generalCategory, total) ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = generalCategory.displayName,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = total.formatCurrency(),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                    }
                 }
                 if (state.unpaidBillCount > 0) {
                     Spacer(modifier = Modifier.height(8.dp))
@@ -236,13 +229,13 @@ fun DashboardScreen(
                                     fontWeight = FontWeight.Medium
                                 )
                                 Text(
-                                    text = bill.category.displayName,
+                                    text = bill.effectiveSubcategory.displayName,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                             MoneyText(
-                                amount = bill.amount,
+                                amount = bill.effectiveAmountDue(),
                                 style = MaterialTheme.typography.bodyLarge
                             )
                         }
