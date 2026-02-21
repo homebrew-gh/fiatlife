@@ -15,6 +15,9 @@ interface BillDao {
     @Query("SELECT * FROM bills WHERE id = :id")
     suspend fun getById(id: String): BillEntity?
 
+    @Query("SELECT * FROM bills WHERE id = :id")
+    fun getByIdAsFlow(id: String): Flow<BillEntity?>
+
     @Upsert
     suspend fun upsert(entity: BillEntity)
 

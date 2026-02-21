@@ -39,7 +39,13 @@ class BillRepository @Inject constructor(
         }
     }
 
-    suspend fun saveBill(bill: Bill) {
+    fun getBillById(id: String): Flow<Bill?> {
+        return billDao.getByIdAsFlow(id).map { entity ->
+            entity?.let { json.decodeFromString<Bill>(it.jsonData) }
+        }
+    }
+
+    suspend fun saveBill(bill: Bill): Bill {
         val billWithId = if (bill.id.isEmpty()) {
             bill.copy(
                 id = UUID.randomUUID().toString(),
@@ -72,6 +78,7 @@ class BillRepository @Inject constructor(
                 Log.e(TAG, "Failed to publish bill: ${e.message}")
             }
         }
+        return billWithId
     }
 
     suspend fun deleteBill(bill: Bill) {

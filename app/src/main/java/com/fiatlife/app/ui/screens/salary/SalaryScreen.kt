@@ -10,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -767,24 +768,37 @@ private fun StatItem(label: String, value: String) {
 }
 
 @Composable
-private fun TaxLine(label: String, amount: Double, bold: Boolean = false) {
+private fun TaxLine(
+    label: String,
+    amount: Double,
+    bold: Boolean = false,
+    grossForPercentage: Double? = null
+) {
+    val percentageText = when {
+        grossForPercentage != null && grossForPercentage > 0 && amount >= 0 ->
+            " (${(amount / grossForPercentage * 100).formatPercentage()})"
+        else -> ""
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal
         )
-        Text(
-            text = amount.formatCurrency(),
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal,
-            color = LossRed
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = amount.formatCurrency() + percentageText,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal,
+                color = LossRed
+            )
+        }
     }
 }
 

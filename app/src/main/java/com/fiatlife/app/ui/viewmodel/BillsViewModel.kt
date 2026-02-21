@@ -2,9 +2,11 @@ package com.fiatlife.app.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.repository.BillRepository
 import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.domain.model.BillCategory
+import com.fiatlife.app.domain.model.StatementEntry
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -16,6 +18,8 @@ data class BillsState(
     val selectedCategory: BillCategory? = null,
     val showAddDialog: Boolean = false,
     val editingBill: Bill? = null,
+    val dialogStatementEntries: List<StatementEntry> = emptyList(),
+    val navigateToBillId: String? = null,
     val totalMonthly: Double = 0.0,
     val categoryTotals: Map<BillCategory, Double> = emptyMap(),
     val isSaving: Boolean = false,
@@ -24,7 +28,8 @@ data class BillsState(
 
 @HiltViewModel
 class BillsViewModel @Inject constructor(
-    private val repository: BillRepository
+    private val repository: BillRepository,
+    private val nostrClient: NostrClient
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(BillsState())
@@ -51,6 +56,20 @@ class BillsViewModel @Inject constructor(
                 }
             }
         }
+        syncOnConnect()
+    }
+
+    private fun syncOnConnect() {
+        viewModelScope.launch {
+            nostrClient.connectionState
+                .filter { it }
+                .distinctUntilChanged()
+                .collect {
+                    try {
+                        repository.syncFromNostr()
+                    } catch (_: Exception) { }
+                }
+        }
     }
 
     fun filterByCategory(category: BillCategory?) {
@@ -63,23 +82,37 @@ class BillsViewModel @Inject constructor(
     }
 
     fun showAddBill() {
-        _state.update { it.copy(showAddDialog = true, editingBill = null) }
+        _state.update { it.copy(showAddDialog = true, editingBill = null, dialogStatementEntries = emptyList()) }
     }
 
     fun showEditBill(bill: Bill) {
-        _state.update { it.copy(showAddDialog = true, editingBill = bill) }
+        _state.update { it.copy(showAddDialog = true, editingBill = bill, dialogStatementEntries = bill.statementEntries) }
     }
 
     fun dismissDialog() {
-        _state.update { it.copy(showAddDialog = false, editingBill = null) }
+        _state.update { it.copy(showAddDialog = false, editingBill = null, dialogStatementEntries = emptyList()) }
+    }
+
+    fun clearNavigateToBillId() {
+        _state.update { it.copy(navigateToBillId = null) }
     }
 
     fun saveBill(bill: Bill) {
         viewModelScope.launch {
+            val current = _state.value
             _state.update { it.copy(isSaving = true) }
             try {
-                repository.saveBill(bill)
-                _state.update { it.copy(isSaving = false, showAddDialog = false, editingBill = null) }
+                val merged = bill.copy(statementEntries = bill.statementEntries + current.dialogStatementEntries)
+                val saved = repository.saveBill(merged)
+                _state.update {
+                    it.copy(
+                        isSaving = false,
+                        showAddDialog = false,
+                        editingBill = null,
+                        dialogStatementEntries = emptyList(),
+                        navigateToBillId = saved.id
+                    )
+                }
             } catch (e: Exception) {
                 _state.update { it.copy(isSaving = false, message = "Error: ${e.message}") }
             }
@@ -106,7 +139,8 @@ class BillsViewModel @Inject constructor(
         viewModelScope.launch {
             repository.uploadAttachment(data, contentType, filename)
                 .onSuccess { hash ->
-                    _state.update { it.copy(message = "Attachment uploaded: $hash") }
+                    val entry = StatementEntry(hash = hash, addedAt = System.currentTimeMillis(), label = filename)
+                    _state.update { it.copy(dialogStatementEntries = it.dialogStatementEntries + entry) }
                 }
                 .onFailure { e ->
                     _state.update { it.copy(message = "Upload failed: ${e.message}") }

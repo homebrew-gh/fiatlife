@@ -46,6 +46,15 @@ sealed class Screen(
         unselectedIcon = Icons.Outlined.Settings
     )
 
+    data object BillDetail : Screen(
+        route = "bill_detail/{billId}",
+        title = "Bill",
+        selectedIcon = Icons.Filled.Receipt,
+        unselectedIcon = Icons.Outlined.Receipt
+    ) {
+        fun routeWithId(billId: String) = "bill_detail/$billId"
+    }
+
     companion object {
         val bottomNavItems = listOf(Dashboard, Salary, Bills, Goals, Settings)
     }

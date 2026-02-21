@@ -20,7 +20,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavController
 import com.fiatlife.app.domain.model.*
+import com.fiatlife.app.ui.navigation.Screen
 import com.fiatlife.app.ui.components.*
 import com.fiatlife.app.ui.theme.*
 import com.fiatlife.app.ui.viewmodel.BillsViewModel
@@ -28,6 +30,7 @@ import com.fiatlife.app.ui.viewmodel.BillsViewModel
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BillsScreen(
+    navController: NavController,
     viewModel: BillsViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -156,6 +159,7 @@ fun BillsScreen(
                 items(state.filteredBills, key = { it.id }) { bill ->
                     BillCard(
                         bill = bill,
+                        onClick = { navController.navigate(Screen.BillDetail.routeWithId(bill.id)) },
                         onTogglePaid = { viewModel.togglePaid(bill) },
                         onEdit = { viewModel.showEditBill(bill) },
                         onDelete = { viewModel.deleteBill(bill) }
@@ -170,6 +174,7 @@ fun BillsScreen(
     if (state.showAddDialog) {
         BillDialog(
             bill = state.editingBill,
+            statementCount = state.dialogStatementEntries.size,
             onDismiss = { viewModel.dismissDialog() },
             onSave = { viewModel.saveBill(it) },
             onUploadAttachment = { data, type, name ->
@@ -177,16 +182,25 @@ fun BillsScreen(
             }
         )
     }
+
+    LaunchedEffect(state.navigateToBillId) {
+        state.navigateToBillId?.let { id ->
+            navController.navigate(Screen.BillDetail.routeWithId(id))
+            viewModel.clearNavigateToBillId()
+        }
+    }
 }
 
 @Composable
 private fun BillCard(
     bill: Bill,
+    onClick: () -> Unit,
     onTogglePaid: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
     Card(
+        onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
@@ -272,8 +286,9 @@ private fun BillCard(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BillDialog(
+internal fun BillDialog(
     bill: Bill?,
+    statementCount: Int = 0,
     onDismiss: () -> Unit,
     onSave: (Bill) -> Unit,
     onUploadAttachment: (ByteArray, String, String) -> Unit
@@ -289,7 +304,6 @@ private fun BillDialog(
     var notes by remember { mutableStateOf(bill?.notes ?: "") }
     var categoryExpanded by remember { mutableStateOf(false) }
     var frequencyExpanded by remember { mutableStateOf(false) }
-    var attachmentHashes by remember { mutableStateOf(bill?.attachmentHashes ?: emptyList()) }
 
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -439,9 +453,9 @@ private fun BillDialog(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Attach Statement (PDF/Image)")
                     }
-                    if (attachmentHashes.isNotEmpty()) {
+                    if (statementCount > 0) {
                         Text(
-                            text = "${attachmentHashes.size} file(s) attached",
+                            text = "$statementCount file(s) attached",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -463,7 +477,9 @@ private fun BillDialog(
                             autoPay = autoPay,
                             accountName = accountName,
                             notes = notes,
-                            attachmentHashes = attachmentHashes,
+                            attachmentHashes = emptyList(),
+                            statementEntries = emptyList(),
+                            paymentHistory = bill?.paymentHistory ?: emptyList(),
                             isPaid = bill?.isPaid ?: false,
                             lastPaidDate = bill?.lastPaidDate,
                             createdAt = bill?.createdAt ?: 0L,

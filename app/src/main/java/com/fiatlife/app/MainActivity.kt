@@ -61,6 +61,7 @@ class MainActivity : ComponentActivity() {
 
     private var needsPinUnlock = mutableStateOf(false)
     private var isInMainApp = false
+    private var hasRestoredSession = false
 
     companion object {
         val KEY_AUTH_TYPE = stringPreferencesKey("auth_type")
@@ -292,12 +293,17 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * One-shot sync of all app data from the relay. Called once on app open
-     * and again after PIN unlock when returning from background.
+     * Reconnect to the relay if needed, then one-shot sync all app data.
+     * Called on initial app open, after PIN unlock, and on every onResume.
      */
     fun syncFromRelay() {
         if (!nostrClient.hasSigner) return
         lifecycleScope.launch {
+            val ready = nostrClient.ensureConnected()
+            if (!ready) {
+                Log.w(TAG, "Relay not ready after reconnect attempt, skipping sync")
+                return@launch
+            }
             Log.d(TAG, "Starting one-shot sync from relay")
             launch { try { salaryRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Salary sync: ${e.message}") } }
             launch { try { billRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bill sync: ${e.message}") } }

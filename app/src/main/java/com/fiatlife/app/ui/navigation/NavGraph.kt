@@ -13,6 +13,10 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
+import com.fiatlife.app.ui.navigation.Screen
+import com.fiatlife.app.ui.screens.bills.BillDetailScreen
 import com.fiatlife.app.ui.screens.bills.BillsScreen
 import com.fiatlife.app.ui.screens.dashboard.DashboardScreen
 import com.fiatlife.app.ui.screens.goals.GoalsScreen
@@ -79,13 +83,19 @@ fun FiatLifeNavGraph() {
                 SalaryScreen()
             }
             composable(Screen.Bills.route) {
-                BillsScreen()
+                BillsScreen(navController = navController)
             }
             composable(Screen.Goals.route) {
                 GoalsScreen()
             }
             composable(Screen.Settings.route) {
                 SettingsScreen()
+            }
+            composable(
+                route = Screen.BillDetail.route,
+                arguments = listOf(navArgument("billId") { type = NavType.StringType })
+            ) {
+                BillDetailScreen(navController = navController)
             }
         }
     }
