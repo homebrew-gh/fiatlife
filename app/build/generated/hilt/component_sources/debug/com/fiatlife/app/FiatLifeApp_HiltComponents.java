@@ -8,7 +8,10 @@ import com.fiatlife.app.di.NetworkModule;
 import com.fiatlife.app.ui.viewmodel.BillDetailViewModel_HiltModules;
 import com.fiatlife.app.ui.viewmodel.BillsViewModel_HiltModules;
 import com.fiatlife.app.ui.viewmodel.DashboardViewModel_HiltModules;
+import com.fiatlife.app.ui.viewmodel.DebtDetailViewModel_HiltModules;
+import com.fiatlife.app.ui.viewmodel.DebtViewModel_HiltModules;
 import com.fiatlife.app.ui.viewmodel.GoalsViewModel_HiltModules;
+import com.fiatlife.app.ui.viewmodel.MainAppViewModel_HiltModules;
 import com.fiatlife.app.ui.viewmodel.SalaryViewModel_HiltModules;
 import com.fiatlife.app.ui.viewmodel.SettingsViewModel_HiltModules;
 import dagger.Binds;
@@ -169,11 +172,14 @@ public final class FiatLifeApp_HiltComponents {
           BillDetailViewModel_HiltModules.KeyModule.class,
           BillsViewModel_HiltModules.KeyModule.class,
           DashboardViewModel_HiltModules.KeyModule.class,
+          DebtDetailViewModel_HiltModules.KeyModule.class,
+          DebtViewModel_HiltModules.KeyModule.class,
           ActivityCBuilderModule.class,
           ViewModelCBuilderModule.class,
           GoalsViewModel_HiltModules.KeyModule.class,
           HiltWrapper_ActivityRetainedComponentManager_LifecycleModule.class,
           HiltWrapper_SavedStateHandleModule.class,
+          MainAppViewModel_HiltModules.KeyModule.class,
           SalaryViewModel_HiltModules.KeyModule.class,
           SettingsViewModel_HiltModules.KeyModule.class
       }
@@ -214,8 +220,11 @@ public final class FiatLifeApp_HiltComponents {
           BillDetailViewModel_HiltModules.BindsModule.class,
           BillsViewModel_HiltModules.BindsModule.class,
           DashboardViewModel_HiltModules.BindsModule.class,
+          DebtDetailViewModel_HiltModules.BindsModule.class,
+          DebtViewModel_HiltModules.BindsModule.class,
           GoalsViewModel_HiltModules.BindsModule.class,
           HiltWrapper_HiltViewModelFactory_ViewModelModule.class,
+          MainAppViewModel_HiltModules.BindsModule.class,
           SalaryViewModel_HiltModules.BindsModule.class,
           SettingsViewModel_HiltModules.BindsModule.class
       }

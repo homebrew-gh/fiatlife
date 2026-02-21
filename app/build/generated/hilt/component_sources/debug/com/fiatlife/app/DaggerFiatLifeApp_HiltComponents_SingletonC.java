@@ -17,6 +17,8 @@ import androidx.work.WorkerParameters;
 import com.fiatlife.app.data.blossom.BlossomClient;
 import com.fiatlife.app.data.local.FiatLifeDatabase;
 import com.fiatlife.app.data.local.dao.BillDao;
+import com.fiatlife.app.data.local.dao.CreditAccountDao;
+import com.fiatlife.app.data.local.dao.CypherLogSubscriptionDao;
 import com.fiatlife.app.data.local.dao.GoalDao;
 import com.fiatlife.app.data.local.dao.SalaryDao;
 import com.fiatlife.app.data.nostr.NostrClient;
@@ -24,6 +26,8 @@ import com.fiatlife.app.data.notification.BillNotificationManager;
 import com.fiatlife.app.data.notification.BillReminderWorker;
 import com.fiatlife.app.data.notification.BillReminderWorker_AssistedFactory;
 import com.fiatlife.app.data.repository.BillRepository;
+import com.fiatlife.app.data.repository.CreditAccountRepository;
+import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository;
 import com.fiatlife.app.data.repository.GoalRepository;
 import com.fiatlife.app.data.repository.SalaryRepository;
 import com.fiatlife.app.data.security.PinPrefs;
@@ -32,6 +36,8 @@ import com.fiatlife.app.di.AppModule_ProvideDataStoreFactory;
 import com.fiatlife.app.di.AppModule_ProvideJsonFactory;
 import com.fiatlife.app.di.AppModule_ProvidePinPrefsFactory;
 import com.fiatlife.app.di.DatabaseModule_ProvideBillDaoFactory;
+import com.fiatlife.app.di.DatabaseModule_ProvideCreditAccountDaoFactory;
+import com.fiatlife.app.di.DatabaseModule_ProvideCypherLogSubscriptionDaoFactory;
 import com.fiatlife.app.di.DatabaseModule_ProvideDatabaseFactory;
 import com.fiatlife.app.di.DatabaseModule_ProvideGoalDaoFactory;
 import com.fiatlife.app.di.DatabaseModule_ProvideSalaryDaoFactory;
@@ -42,8 +48,14 @@ import com.fiatlife.app.ui.viewmodel.BillsViewModel;
 import com.fiatlife.app.ui.viewmodel.BillsViewModel_HiltModules;
 import com.fiatlife.app.ui.viewmodel.DashboardViewModel;
 import com.fiatlife.app.ui.viewmodel.DashboardViewModel_HiltModules;
+import com.fiatlife.app.ui.viewmodel.DebtDetailViewModel;
+import com.fiatlife.app.ui.viewmodel.DebtDetailViewModel_HiltModules;
+import com.fiatlife.app.ui.viewmodel.DebtViewModel;
+import com.fiatlife.app.ui.viewmodel.DebtViewModel_HiltModules;
 import com.fiatlife.app.ui.viewmodel.GoalsViewModel;
 import com.fiatlife.app.ui.viewmodel.GoalsViewModel_HiltModules;
+import com.fiatlife.app.ui.viewmodel.MainAppViewModel;
+import com.fiatlife.app.ui.viewmodel.MainAppViewModel_HiltModules;
 import com.fiatlife.app.ui.viewmodel.SalaryViewModel;
 import com.fiatlife.app.ui.viewmodel.SalaryViewModel_HiltModules;
 import com.fiatlife.app.ui.viewmodel.SettingsViewModel;
@@ -412,7 +424,7 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
 
     @Override
     public Map<Class<?>, Boolean> getViewModelKeys() {
-      return LazyClassKeyMap.<Boolean>of(MapBuilder.<String, Boolean>newMapBuilder(6).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_BillDetailViewModel, BillDetailViewModel_HiltModules.KeyModule.provide()).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_BillsViewModel, BillsViewModel_HiltModules.KeyModule.provide()).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_DashboardViewModel, DashboardViewModel_HiltModules.KeyModule.provide()).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_GoalsViewModel, GoalsViewModel_HiltModules.KeyModule.provide()).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_SalaryViewModel, SalaryViewModel_HiltModules.KeyModule.provide()).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_SettingsViewModel, SettingsViewModel_HiltModules.KeyModule.provide()).build());
+      return LazyClassKeyMap.<Boolean>of(MapBuilder.<String, Boolean>newMapBuilder(9).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_BillDetailViewModel, BillDetailViewModel_HiltModules.KeyModule.provide()).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_BillsViewModel, BillsViewModel_HiltModules.KeyModule.provide()).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_DashboardViewModel, DashboardViewModel_HiltModules.KeyModule.provide()).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_DebtDetailViewModel, DebtDetailViewModel_HiltModules.KeyModule.provide()).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_DebtViewModel, DebtViewModel_HiltModules.KeyModule.provide()).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_GoalsViewModel, GoalsViewModel_HiltModules.KeyModule.provide()).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_MainAppViewModel, MainAppViewModel_HiltModules.KeyModule.provide()).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_SalaryViewModel, SalaryViewModel_HiltModules.KeyModule.provide()).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_SettingsViewModel, SettingsViewModel_HiltModules.KeyModule.provide()).build());
     }
 
     @Override
@@ -438,22 +450,47 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
       MainActivity_MembersInjector.injectSalaryRepository(instance, singletonCImpl.salaryRepositoryProvider.get());
       MainActivity_MembersInjector.injectBillRepository(instance, singletonCImpl.billRepositoryProvider.get());
       MainActivity_MembersInjector.injectGoalRepository(instance, singletonCImpl.goalRepositoryProvider.get());
+      MainActivity_MembersInjector.injectCreditAccountRepository(instance, singletonCImpl.creditAccountRepositoryProvider.get());
       return instance;
     }
 
     @IdentifierNameString
     private static final class LazyClassKeyProvider {
+      static String com_fiatlife_app_ui_viewmodel_BillDetailViewModel = "com.fiatlife.app.ui.viewmodel.BillDetailViewModel";
+
+      static String com_fiatlife_app_ui_viewmodel_SalaryViewModel = "com.fiatlife.app.ui.viewmodel.SalaryViewModel";
+
+      static String com_fiatlife_app_ui_viewmodel_GoalsViewModel = "com.fiatlife.app.ui.viewmodel.GoalsViewModel";
+
+      static String com_fiatlife_app_ui_viewmodel_SettingsViewModel = "com.fiatlife.app.ui.viewmodel.SettingsViewModel";
+
+      static String com_fiatlife_app_ui_viewmodel_DebtViewModel = "com.fiatlife.app.ui.viewmodel.DebtViewModel";
+
+      static String com_fiatlife_app_ui_viewmodel_DebtDetailViewModel = "com.fiatlife.app.ui.viewmodel.DebtDetailViewModel";
+
       static String com_fiatlife_app_ui_viewmodel_BillsViewModel = "com.fiatlife.app.ui.viewmodel.BillsViewModel";
 
       static String com_fiatlife_app_ui_viewmodel_DashboardViewModel = "com.fiatlife.app.ui.viewmodel.DashboardViewModel";
 
-      static String com_fiatlife_app_ui_viewmodel_SettingsViewModel = "com.fiatlife.app.ui.viewmodel.SettingsViewModel";
+      static String com_fiatlife_app_ui_viewmodel_MainAppViewModel = "com.fiatlife.app.ui.viewmodel.MainAppViewModel";
 
-      static String com_fiatlife_app_ui_viewmodel_BillDetailViewModel = "com.fiatlife.app.ui.viewmodel.BillDetailViewModel";
+      @KeepFieldType
+      BillDetailViewModel com_fiatlife_app_ui_viewmodel_BillDetailViewModel2;
 
-      static String com_fiatlife_app_ui_viewmodel_GoalsViewModel = "com.fiatlife.app.ui.viewmodel.GoalsViewModel";
+      @KeepFieldType
+      SalaryViewModel com_fiatlife_app_ui_viewmodel_SalaryViewModel2;
 
-      static String com_fiatlife_app_ui_viewmodel_SalaryViewModel = "com.fiatlife.app.ui.viewmodel.SalaryViewModel";
+      @KeepFieldType
+      GoalsViewModel com_fiatlife_app_ui_viewmodel_GoalsViewModel2;
+
+      @KeepFieldType
+      SettingsViewModel com_fiatlife_app_ui_viewmodel_SettingsViewModel2;
+
+      @KeepFieldType
+      DebtViewModel com_fiatlife_app_ui_viewmodel_DebtViewModel2;
+
+      @KeepFieldType
+      DebtDetailViewModel com_fiatlife_app_ui_viewmodel_DebtDetailViewModel2;
 
       @KeepFieldType
       BillsViewModel com_fiatlife_app_ui_viewmodel_BillsViewModel2;
@@ -462,16 +499,7 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
       DashboardViewModel com_fiatlife_app_ui_viewmodel_DashboardViewModel2;
 
       @KeepFieldType
-      SettingsViewModel com_fiatlife_app_ui_viewmodel_SettingsViewModel2;
-
-      @KeepFieldType
-      BillDetailViewModel com_fiatlife_app_ui_viewmodel_BillDetailViewModel2;
-
-      @KeepFieldType
-      GoalsViewModel com_fiatlife_app_ui_viewmodel_GoalsViewModel2;
-
-      @KeepFieldType
-      SalaryViewModel com_fiatlife_app_ui_viewmodel_SalaryViewModel2;
+      MainAppViewModel com_fiatlife_app_ui_viewmodel_MainAppViewModel2;
     }
   }
 
@@ -490,7 +518,13 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
 
     private Provider<DashboardViewModel> dashboardViewModelProvider;
 
+    private Provider<DebtDetailViewModel> debtDetailViewModelProvider;
+
+    private Provider<DebtViewModel> debtViewModelProvider;
+
     private Provider<GoalsViewModel> goalsViewModelProvider;
+
+    private Provider<MainAppViewModel> mainAppViewModelProvider;
 
     private Provider<SalaryViewModel> salaryViewModelProvider;
 
@@ -512,14 +546,17 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
       this.billDetailViewModelProvider = new SwitchingProvider<>(singletonCImpl, activityRetainedCImpl, viewModelCImpl, 0);
       this.billsViewModelProvider = new SwitchingProvider<>(singletonCImpl, activityRetainedCImpl, viewModelCImpl, 1);
       this.dashboardViewModelProvider = new SwitchingProvider<>(singletonCImpl, activityRetainedCImpl, viewModelCImpl, 2);
-      this.goalsViewModelProvider = new SwitchingProvider<>(singletonCImpl, activityRetainedCImpl, viewModelCImpl, 3);
-      this.salaryViewModelProvider = new SwitchingProvider<>(singletonCImpl, activityRetainedCImpl, viewModelCImpl, 4);
-      this.settingsViewModelProvider = new SwitchingProvider<>(singletonCImpl, activityRetainedCImpl, viewModelCImpl, 5);
+      this.debtDetailViewModelProvider = new SwitchingProvider<>(singletonCImpl, activityRetainedCImpl, viewModelCImpl, 3);
+      this.debtViewModelProvider = new SwitchingProvider<>(singletonCImpl, activityRetainedCImpl, viewModelCImpl, 4);
+      this.goalsViewModelProvider = new SwitchingProvider<>(singletonCImpl, activityRetainedCImpl, viewModelCImpl, 5);
+      this.mainAppViewModelProvider = new SwitchingProvider<>(singletonCImpl, activityRetainedCImpl, viewModelCImpl, 6);
+      this.salaryViewModelProvider = new SwitchingProvider<>(singletonCImpl, activityRetainedCImpl, viewModelCImpl, 7);
+      this.settingsViewModelProvider = new SwitchingProvider<>(singletonCImpl, activityRetainedCImpl, viewModelCImpl, 8);
     }
 
     @Override
     public Map<Class<?>, javax.inject.Provider<ViewModel>> getHiltViewModelMap() {
-      return LazyClassKeyMap.<javax.inject.Provider<ViewModel>>of(MapBuilder.<String, javax.inject.Provider<ViewModel>>newMapBuilder(6).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_BillDetailViewModel, ((Provider) billDetailViewModelProvider)).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_BillsViewModel, ((Provider) billsViewModelProvider)).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_DashboardViewModel, ((Provider) dashboardViewModelProvider)).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_GoalsViewModel, ((Provider) goalsViewModelProvider)).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_SalaryViewModel, ((Provider) salaryViewModelProvider)).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_SettingsViewModel, ((Provider) settingsViewModelProvider)).build());
+      return LazyClassKeyMap.<javax.inject.Provider<ViewModel>>of(MapBuilder.<String, javax.inject.Provider<ViewModel>>newMapBuilder(9).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_BillDetailViewModel, ((Provider) billDetailViewModelProvider)).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_BillsViewModel, ((Provider) billsViewModelProvider)).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_DashboardViewModel, ((Provider) dashboardViewModelProvider)).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_DebtDetailViewModel, ((Provider) debtDetailViewModelProvider)).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_DebtViewModel, ((Provider) debtViewModelProvider)).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_GoalsViewModel, ((Provider) goalsViewModelProvider)).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_MainAppViewModel, ((Provider) mainAppViewModelProvider)).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_SalaryViewModel, ((Provider) salaryViewModelProvider)).put(LazyClassKeyProvider.com_fiatlife_app_ui_viewmodel_SettingsViewModel, ((Provider) settingsViewModelProvider)).build());
     }
 
     @Override
@@ -529,23 +566,29 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
 
     @IdentifierNameString
     private static final class LazyClassKeyProvider {
-      static String com_fiatlife_app_ui_viewmodel_BillsViewModel = "com.fiatlife.app.ui.viewmodel.BillsViewModel";
+      static String com_fiatlife_app_ui_viewmodel_DebtDetailViewModel = "com.fiatlife.app.ui.viewmodel.DebtDetailViewModel";
 
-      static String com_fiatlife_app_ui_viewmodel_DashboardViewModel = "com.fiatlife.app.ui.viewmodel.DashboardViewModel";
+      static String com_fiatlife_app_ui_viewmodel_DebtViewModel = "com.fiatlife.app.ui.viewmodel.DebtViewModel";
 
       static String com_fiatlife_app_ui_viewmodel_GoalsViewModel = "com.fiatlife.app.ui.viewmodel.GoalsViewModel";
 
       static String com_fiatlife_app_ui_viewmodel_SettingsViewModel = "com.fiatlife.app.ui.viewmodel.SettingsViewModel";
 
-      static String com_fiatlife_app_ui_viewmodel_SalaryViewModel = "com.fiatlife.app.ui.viewmodel.SalaryViewModel";
+      static String com_fiatlife_app_ui_viewmodel_MainAppViewModel = "com.fiatlife.app.ui.viewmodel.MainAppViewModel";
+
+      static String com_fiatlife_app_ui_viewmodel_DashboardViewModel = "com.fiatlife.app.ui.viewmodel.DashboardViewModel";
 
       static String com_fiatlife_app_ui_viewmodel_BillDetailViewModel = "com.fiatlife.app.ui.viewmodel.BillDetailViewModel";
 
-      @KeepFieldType
-      BillsViewModel com_fiatlife_app_ui_viewmodel_BillsViewModel2;
+      static String com_fiatlife_app_ui_viewmodel_BillsViewModel = "com.fiatlife.app.ui.viewmodel.BillsViewModel";
+
+      static String com_fiatlife_app_ui_viewmodel_SalaryViewModel = "com.fiatlife.app.ui.viewmodel.SalaryViewModel";
 
       @KeepFieldType
-      DashboardViewModel com_fiatlife_app_ui_viewmodel_DashboardViewModel2;
+      DebtDetailViewModel com_fiatlife_app_ui_viewmodel_DebtDetailViewModel2;
+
+      @KeepFieldType
+      DebtViewModel com_fiatlife_app_ui_viewmodel_DebtViewModel2;
 
       @KeepFieldType
       GoalsViewModel com_fiatlife_app_ui_viewmodel_GoalsViewModel2;
@@ -554,10 +597,19 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
       SettingsViewModel com_fiatlife_app_ui_viewmodel_SettingsViewModel2;
 
       @KeepFieldType
-      SalaryViewModel com_fiatlife_app_ui_viewmodel_SalaryViewModel2;
+      MainAppViewModel com_fiatlife_app_ui_viewmodel_MainAppViewModel2;
+
+      @KeepFieldType
+      DashboardViewModel com_fiatlife_app_ui_viewmodel_DashboardViewModel2;
 
       @KeepFieldType
       BillDetailViewModel com_fiatlife_app_ui_viewmodel_BillDetailViewModel2;
+
+      @KeepFieldType
+      BillsViewModel com_fiatlife_app_ui_viewmodel_BillsViewModel2;
+
+      @KeepFieldType
+      SalaryViewModel com_fiatlife_app_ui_viewmodel_SalaryViewModel2;
     }
 
     private static final class SwitchingProvider<T> implements Provider<T> {
@@ -582,21 +634,30 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
       public T get() {
         switch (id) {
           case 0: // com.fiatlife.app.ui.viewmodel.BillDetailViewModel 
-          return (T) new BillDetailViewModel(viewModelCImpl.savedStateHandle, singletonCImpl.billRepositoryProvider.get());
+          return (T) new BillDetailViewModel(viewModelCImpl.savedStateHandle, singletonCImpl.billRepositoryProvider.get(), singletonCImpl.cypherLogSubscriptionRepositoryProvider.get());
 
           case 1: // com.fiatlife.app.ui.viewmodel.BillsViewModel 
-          return (T) new BillsViewModel(singletonCImpl.billRepositoryProvider.get(), singletonCImpl.nostrClientProvider.get());
+          return (T) new BillsViewModel(singletonCImpl.billRepositoryProvider.get(), singletonCImpl.cypherLogSubscriptionRepositoryProvider.get(), singletonCImpl.nostrClientProvider.get());
 
           case 2: // com.fiatlife.app.ui.viewmodel.DashboardViewModel 
-          return (T) new DashboardViewModel(singletonCImpl.salaryRepositoryProvider.get(), singletonCImpl.billRepositoryProvider.get(), singletonCImpl.goalRepositoryProvider.get(), singletonCImpl.nostrClientProvider.get());
+          return (T) new DashboardViewModel(singletonCImpl.salaryRepositoryProvider.get(), singletonCImpl.billRepositoryProvider.get(), singletonCImpl.cypherLogSubscriptionRepositoryProvider.get(), singletonCImpl.goalRepositoryProvider.get(), singletonCImpl.nostrClientProvider.get());
 
-          case 3: // com.fiatlife.app.ui.viewmodel.GoalsViewModel 
+          case 3: // com.fiatlife.app.ui.viewmodel.DebtDetailViewModel 
+          return (T) new DebtDetailViewModel(viewModelCImpl.savedStateHandle, singletonCImpl.creditAccountRepositoryProvider.get());
+
+          case 4: // com.fiatlife.app.ui.viewmodel.DebtViewModel 
+          return (T) new DebtViewModel(singletonCImpl.creditAccountRepositoryProvider.get(), singletonCImpl.nostrClientProvider.get());
+
+          case 5: // com.fiatlife.app.ui.viewmodel.GoalsViewModel 
           return (T) new GoalsViewModel(singletonCImpl.goalRepositoryProvider.get());
 
-          case 4: // com.fiatlife.app.ui.viewmodel.SalaryViewModel 
+          case 6: // com.fiatlife.app.ui.viewmodel.MainAppViewModel 
+          return (T) new MainAppViewModel(singletonCImpl.nostrClientProvider.get(), singletonCImpl.salaryRepositoryProvider.get(), singletonCImpl.billRepositoryProvider.get(), singletonCImpl.cypherLogSubscriptionRepositoryProvider.get(), singletonCImpl.goalRepositoryProvider.get());
+
+          case 7: // com.fiatlife.app.ui.viewmodel.SalaryViewModel 
           return (T) new SalaryViewModel(singletonCImpl.salaryRepositoryProvider.get(), singletonCImpl.nostrClientProvider.get());
 
-          case 5: // com.fiatlife.app.ui.viewmodel.SettingsViewModel 
+          case 8: // com.fiatlife.app.ui.viewmodel.SettingsViewModel 
           return (T) new SettingsViewModel(ApplicationContextModule_ProvideContextFactory.provideContext(singletonCImpl.applicationContextModule), singletonCImpl.provideDataStoreProvider.get(), singletonCImpl.nostrClientProvider.get(), singletonCImpl.blossomClientProvider.get(), singletonCImpl.salaryRepositoryProvider.get(), singletonCImpl.billRepositoryProvider.get(), singletonCImpl.goalRepositoryProvider.get(), singletonCImpl.providePinPrefsProvider.get());
 
           default: throw new AssertionError(id);
@@ -703,6 +764,10 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
 
     private Provider<GoalRepository> goalRepositoryProvider;
 
+    private Provider<CreditAccountRepository> creditAccountRepositoryProvider;
+
+    private Provider<CypherLogSubscriptionRepository> cypherLogSubscriptionRepositoryProvider;
+
     private SingletonCImpl(ApplicationContextModule applicationContextModuleParam) {
       this.applicationContextModule = applicationContextModuleParam;
       initialize(applicationContextModuleParam);
@@ -730,6 +795,14 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
       return DatabaseModule_ProvideGoalDaoFactory.provideGoalDao(provideDatabaseProvider.get());
     }
 
+    private CreditAccountDao creditAccountDao() {
+      return DatabaseModule_ProvideCreditAccountDaoFactory.provideCreditAccountDao(provideDatabaseProvider.get());
+    }
+
+    private CypherLogSubscriptionDao cypherLogSubscriptionDao() {
+      return DatabaseModule_ProvideCypherLogSubscriptionDaoFactory.provideCypherLogSubscriptionDao(provideDatabaseProvider.get());
+    }
+
     @SuppressWarnings("unchecked")
     private void initialize(final ApplicationContextModule applicationContextModuleParam) {
       this.provideDatabaseProvider = DoubleCheck.provider(new SwitchingProvider<FiatLifeDatabase>(singletonCImpl, 1));
@@ -744,6 +817,8 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
       this.salaryRepositoryProvider = DoubleCheck.provider(new SwitchingProvider<SalaryRepository>(singletonCImpl, 9));
       this.billRepositoryProvider = DoubleCheck.provider(new SwitchingProvider<BillRepository>(singletonCImpl, 10));
       this.goalRepositoryProvider = DoubleCheck.provider(new SwitchingProvider<GoalRepository>(singletonCImpl, 11));
+      this.creditAccountRepositoryProvider = DoubleCheck.provider(new SwitchingProvider<CreditAccountRepository>(singletonCImpl, 12));
+      this.cypherLogSubscriptionRepositoryProvider = DoubleCheck.provider(new SwitchingProvider<CypherLogSubscriptionRepository>(singletonCImpl, 13));
     }
 
     @Override
@@ -826,6 +901,12 @@ public final class DaggerFiatLifeApp_HiltComponents_SingletonC {
 
           case 11: // com.fiatlife.app.data.repository.GoalRepository 
           return (T) new GoalRepository(singletonCImpl.goalDao(), singletonCImpl.nostrClientProvider.get(), singletonCImpl.provideJsonProvider.get());
+
+          case 12: // com.fiatlife.app.data.repository.CreditAccountRepository 
+          return (T) new CreditAccountRepository(singletonCImpl.creditAccountDao(), singletonCImpl.nostrClientProvider.get(), singletonCImpl.provideJsonProvider.get());
+
+          case 13: // com.fiatlife.app.data.repository.CypherLogSubscriptionRepository 
+          return (T) new CypherLogSubscriptionRepository(singletonCImpl.cypherLogSubscriptionDao(), singletonCImpl.nostrClientProvider.get(), singletonCImpl.provideJsonProvider.get());
 
           default: throw new AssertionError(id);
         }

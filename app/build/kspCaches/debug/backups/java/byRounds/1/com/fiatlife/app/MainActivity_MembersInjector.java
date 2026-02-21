@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences;
 import com.fiatlife.app.data.blossom.BlossomClient;
 import com.fiatlife.app.data.nostr.NostrClient;
 import com.fiatlife.app.data.repository.BillRepository;
+import com.fiatlife.app.data.repository.CreditAccountRepository;
 import com.fiatlife.app.data.repository.GoalRepository;
 import com.fiatlife.app.data.repository.SalaryRepository;
 import com.fiatlife.app.data.security.PinPrefs;
@@ -43,11 +44,14 @@ public final class MainActivity_MembersInjector implements MembersInjector<MainA
 
   private final Provider<GoalRepository> goalRepositoryProvider;
 
+  private final Provider<CreditAccountRepository> creditAccountRepositoryProvider;
+
   public MainActivity_MembersInjector(Provider<DataStore<Preferences>> dataStoreProvider,
       Provider<NostrClient> nostrClientProvider, Provider<BlossomClient> blossomClientProvider,
       Provider<PinPrefs> pinPrefsProvider, Provider<SalaryRepository> salaryRepositoryProvider,
       Provider<BillRepository> billRepositoryProvider,
-      Provider<GoalRepository> goalRepositoryProvider) {
+      Provider<GoalRepository> goalRepositoryProvider,
+      Provider<CreditAccountRepository> creditAccountRepositoryProvider) {
     this.dataStoreProvider = dataStoreProvider;
     this.nostrClientProvider = nostrClientProvider;
     this.blossomClientProvider = blossomClientProvider;
@@ -55,6 +59,7 @@ public final class MainActivity_MembersInjector implements MembersInjector<MainA
     this.salaryRepositoryProvider = salaryRepositoryProvider;
     this.billRepositoryProvider = billRepositoryProvider;
     this.goalRepositoryProvider = goalRepositoryProvider;
+    this.creditAccountRepositoryProvider = creditAccountRepositoryProvider;
   }
 
   public static MembersInjector<MainActivity> create(
@@ -62,8 +67,9 @@ public final class MainActivity_MembersInjector implements MembersInjector<MainA
       Provider<BlossomClient> blossomClientProvider, Provider<PinPrefs> pinPrefsProvider,
       Provider<SalaryRepository> salaryRepositoryProvider,
       Provider<BillRepository> billRepositoryProvider,
-      Provider<GoalRepository> goalRepositoryProvider) {
-    return new MainActivity_MembersInjector(dataStoreProvider, nostrClientProvider, blossomClientProvider, pinPrefsProvider, salaryRepositoryProvider, billRepositoryProvider, goalRepositoryProvider);
+      Provider<GoalRepository> goalRepositoryProvider,
+      Provider<CreditAccountRepository> creditAccountRepositoryProvider) {
+    return new MainActivity_MembersInjector(dataStoreProvider, nostrClientProvider, blossomClientProvider, pinPrefsProvider, salaryRepositoryProvider, billRepositoryProvider, goalRepositoryProvider, creditAccountRepositoryProvider);
   }
 
   @Override
@@ -75,6 +81,7 @@ public final class MainActivity_MembersInjector implements MembersInjector<MainA
     injectSalaryRepository(instance, salaryRepositoryProvider.get());
     injectBillRepository(instance, billRepositoryProvider.get());
     injectGoalRepository(instance, goalRepositoryProvider.get());
+    injectCreditAccountRepository(instance, creditAccountRepositoryProvider.get());
   }
 
   @InjectedFieldSignature("com.fiatlife.app.MainActivity.dataStore")
@@ -111,5 +118,11 @@ public final class MainActivity_MembersInjector implements MembersInjector<MainA
   @InjectedFieldSignature("com.fiatlife.app.MainActivity.goalRepository")
   public static void injectGoalRepository(MainActivity instance, GoalRepository goalRepository) {
     instance.goalRepository = goalRepository;
+  }
+
+  @InjectedFieldSignature("com.fiatlife.app.MainActivity.creditAccountRepository")
+  public static void injectCreditAccountRepository(MainActivity instance,
+      CreditAccountRepository creditAccountRepository) {
+    instance.creditAccountRepository = creditAccountRepository;
   }
 }
