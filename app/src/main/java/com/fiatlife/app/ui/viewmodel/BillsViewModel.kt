@@ -13,6 +13,7 @@ import com.fiatlife.app.domain.model.BillPayment
 import com.fiatlife.app.domain.model.BillWithSource
 import com.fiatlife.app.domain.model.StatementEntry
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -31,7 +32,16 @@ data class BillsState(
     val totalMonthly: Double = 0.0,
     val categoryTotals: Map<BillGeneralCategory, Double> = emptyMap(),
     val isSaving: Boolean = false,
-    val message: String = ""
+    val message: String = "",
+    /** Bills due in the next 7 days: non-autopay, or credit/loan (always show if due in 7 days). Credit/loan first. */
+    val billsDueInNext7Days: List<BillWithSource> = emptyList(),
+    /** Other bills grouped by general category (excluding those in billsDueInNext7Days for the "by category" list). */
+    val otherBillsByCategory: Map<BillGeneralCategory, List<BillWithSource>> = emptyMap(),
+    /** Autopay bills whose due date has passed (for "were these paid?" prompt). */
+    val pastDueAutopayBills: List<BillWithSource> = emptyList(),
+    val showPastDueAutopayDialog: Boolean = false,
+    /** Credit/loan payment dialog: item to record payment for, then amount + optional new balance. */
+    val showCreditLoanPaymentDialog: BillWithSource? = null
 )
 
 @HiltViewModel
@@ -69,12 +79,39 @@ class BillsViewModel @Inject constructor(
                         list.sumOf { b -> b.effectiveAmountDue() * b.frequency.timesPerYear / 12.0 }
                     }
 
+                val now = System.currentTimeMillis()
+                val sevenDaysMs = 7L * 24 * 60 * 60 * 1000
+                val dueIn7Days = bills.filter { item ->
+                    if (item.isCypherLog || item.bill.isPaid) return@filter false
+                    if (!item.bill.autoPay || item.bill.isCreditOrLoan()) {
+                        val nextDue = item.bill.nextDueDateMillis()
+                        val inWindow = nextDue != null && nextDue <= now + sevenDaysMs
+                        val overdue = item.bill.lastDueDateMillis()?.let { it in (now - sevenDaysMs)..now } == true
+                        inWindow || overdue
+                    } else false
+                }.sortedWith(
+                    compareBy<BillWithSource> { !it.bill.isCreditOrLoan() }
+                        .thenBy { it.bill.nextDueDateMillis() ?: Long.MAX_VALUE }
+                )
+                val dueIn7Ids = dueIn7Days.map { it.id }.toSet()
+                val otherByCategory = bills
+                    .filter { it.id !in dueIn7Ids }
+                    .groupBy { it.bill.effectiveGeneralCategory }
+                    .mapValues { (_, list) -> list.sortedBy { it.bill.name.lowercase() } }
+
+                val pastDueAutopay = bills.filter { item ->
+                    !item.isCypherLog && item.bill.autoPay && item.bill.isPastDue()
+                }
+
                 _state.update { state ->
                     state.copy(
                         bills = bills,
                         filteredBills = filterBills(bills, state.selectedGeneralCategory),
                         totalMonthly = monthlyTotal,
-                        categoryTotals = categoryTotals
+                        categoryTotals = categoryTotals,
+                        billsDueInNext7Days = dueIn7Days,
+                        otherBillsByCategory = otherByCategory,
+                        pastDueAutopayBills = pastDueAutopay
                     )
                 }
             }
@@ -218,26 +255,66 @@ class BillsViewModel @Inject constructor(
     /** Record a payment: add to history with amount and date, mark paid, and for credit cards reduce balance. */
     fun recordPayment(item: BillWithSource) {
         if (item.isCypherLog) return
-        viewModelScope.launch {
-            val bill = item.bill
-            val paymentAmount = bill.effectiveAmountDue()
-            val payment = BillPayment(
-                date = System.currentTimeMillis(),
-                amount = paymentAmount
-            )
-            val updatedCcDetails = bill.creditCardDetails?.let { cc ->
-                cc.copy(
-                    currentBalance = (cc.currentBalance - paymentAmount).coerceAtLeast(0.0)
-                )
-            }
-            val updated = bill.copy(
-                paymentHistory = bill.paymentHistory + payment,
-                isPaid = true,
-                lastPaidDate = payment.date,
-                creditCardDetails = updatedCcDetails
-            )
-            repository.saveBill(updated)
+        if (item.bill.isCreditOrLoan()) {
+            _state.update { it.copy(showCreditLoanPaymentDialog = item) }
+            return
         }
+        viewModelScope.launch {
+            recordPaymentInternal(item.bill, item.bill.effectiveAmountDue(), null)
+        }
+    }
+
+    /** Record payment for credit/loan with optional amount and new balance. If newBalance is null, amount is subtracted from current balance. */
+    fun recordCreditLoanPayment(item: BillWithSource, amount: Double, newBalance: Double?) {
+        viewModelScope.launch {
+            recordPaymentInternal(item.bill, amount, newBalance)
+            _state.update { it.copy(showCreditLoanPaymentDialog = null) }
+        }
+    }
+
+    fun dismissCreditLoanPaymentDialog() {
+        _state.update { it.copy(showCreditLoanPaymentDialog = null) }
+    }
+
+    private suspend fun recordPaymentInternal(bill: Bill, amount: Double, newBalance: Double?) {
+        val payment = BillPayment(date = System.currentTimeMillis(), amount = amount)
+        val updatedCcDetails = bill.creditCardDetails?.let { cc ->
+            val balance = newBalance ?: (cc.currentBalance - amount).coerceAtLeast(0.0)
+            cc.copy(currentBalance = balance)
+        }
+        val updatedBill = bill.copy(
+            paymentHistory = bill.paymentHistory + payment,
+            isPaid = true,
+            lastPaidDate = payment.date,
+            creditCardDetails = updatedCcDetails
+        )
+        repository.saveBill(updatedBill)
+        bill.linkedCreditAccountId?.let { accountId ->
+            creditAccountRepository.getCreditAccountById(accountId).first()?.let { acc ->
+                val balance = newBalance ?: (acc.currentBalance - amount).coerceAtLeast(0.0)
+                creditAccountRepository.saveCreditAccount(acc.copy(currentBalance = balance))
+            }
+        }
+    }
+
+    /** Mark selected past-due autopay bills as paid (logs payment, updates next due via isPaid/lastPaidDate). */
+    fun markPastDueAsPaid(selected: List<BillWithSource>) {
+        viewModelScope.launch {
+            selected.forEach { item ->
+                if (item.isCypherLog) return@forEach
+                recordPaymentInternal(item.bill, item.bill.effectiveAmountDue(), null)
+            }
+            _state.update { it.copy(showPastDueAutopayDialog = false) }
+        }
+    }
+
+    fun showPastDueAutopayDialogIfNeeded() {
+        val pastDue = _state.value.pastDueAutopayBills
+        if (pastDue.isNotEmpty()) _state.update { it.copy(showPastDueAutopayDialog = true) }
+    }
+
+    fun dismissPastDueAutopayDialog() {
+        _state.update { it.copy(showPastDueAutopayDialog = false) }
     }
 
     fun uploadAttachment(data: ByteArray, contentType: String, filename: String) {

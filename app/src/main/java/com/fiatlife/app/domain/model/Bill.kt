@@ -238,6 +238,9 @@ data class Bill(
     /** True if this bill is tracked as a credit card (has credit card–specific fields). */
     fun isCreditCard(): Boolean = creditCardDetails != null
 
+    /** True if this bill is a credit card or linked to a credit/loan account (Debt tab). */
+    fun isCreditOrLoan(): Boolean = isCreditCard() || linkedCreditAccountId != null
+
     /** Amount due this period: for credit cards, computed minimum due; otherwise bill.amount. */
     fun effectiveAmountDue(): Double = creditCardDetails?.let { cc ->
         cc.minimumDue(cc.currentBalance)
@@ -313,6 +316,32 @@ data class Bill(
                 return cal.timeInMillis
             }
         }
+    }
+
+    /** Most recent due date (start of day) that is <= now; null if none. Used to detect past due. */
+    fun lastDueDateMillis(): Long? {
+        val next = nextDueDateMillis() ?: return null
+        val cal = java.util.Calendar.getInstance()
+        cal.timeInMillis = next
+        when (frequency) {
+            BillFrequency.MONTHLY -> cal.add(java.util.Calendar.MONTH, -1)
+            BillFrequency.WEEKLY -> cal.add(java.util.Calendar.WEEK_OF_YEAR, -1)
+            BillFrequency.BIWEEKLY -> cal.add(java.util.Calendar.WEEK_OF_YEAR, -2)
+            BillFrequency.BIMONTHLY -> cal.add(java.util.Calendar.MONTH, -2)
+            BillFrequency.QUARTERLY -> cal.add(java.util.Calendar.MONTH, -3)
+            BillFrequency.SEMIANNUALLY -> cal.add(java.util.Calendar.MONTH, -6)
+            BillFrequency.ANNUALLY -> cal.add(java.util.Calendar.YEAR, -1)
+        }
+        val lastDue = cal.timeInMillis
+        return if (lastDue <= System.currentTimeMillis()) lastDue else null
+    }
+
+    /** True if this bill is not paid and the due date (end of due day) has passed. */
+    fun isPastDue(): Boolean {
+        if (isPaid) return false
+        val lastDue = lastDueDateMillis() ?: return false
+        val endOfDueDay = lastDue + 86400_000L - 1
+        return System.currentTimeMillis() > endOfDueDay
     }
 }
 

@@ -32,8 +32,11 @@ import com.fiatlife.app.domain.model.BillSubcategory
 import com.fiatlife.app.domain.model.BillWithSource
 import com.fiatlife.app.ui.navigation.Screen
 import androidx.compose.foundation.clickable
-import com.fiatlife.app.ui.components.*
-import com.fiatlife.app.ui.theme.*
+import com.fiatlife.app.ui.components.CurrencyTextField
+import com.fiatlife.app.ui.components.MoneyText
+import com.fiatlife.app.ui.components.EmptyState
+import com.fiatlife.app.ui.components.formatCurrency
+import com.fiatlife.app.ui.theme.ProfitGreen
 import com.fiatlife.app.ui.viewmodel.BillsViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -43,6 +46,10 @@ fun BillsScreen(
     viewModel: BillsViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) {
+        viewModel.showPastDueAutopayDialogIfNeeded()
+    }
 
     Scaffold(
         floatingActionButton = {
@@ -126,40 +133,17 @@ fun BillsScreen(
                 }
             }
 
-            // General category filter chips
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterChip(
-                        selected = state.selectedGeneralCategory == null,
-                        onClick = { viewModel.filterByGeneralCategory(null) },
-                        label = { Text("All") }
-                    )
-                    state.categoryTotals.keys.sortedBy { it.displayName }.forEach { generalCategory ->
-                        FilterChip(
-                            selected = state.selectedGeneralCategory == generalCategory,
-                            onClick = { viewModel.filterByGeneralCategory(generalCategory) },
-                            label = { Text(generalCategory.displayName) }
-                        )
-                    }
-                }
-            }
-
-            // Bill list
-            if (state.filteredBills.isEmpty()) {
+            // Due in next 7 days (non-autopay, or credit/loan even if autopay)
+            if (state.billsDueInNext7Days.isNotEmpty()) {
                 item {
-                    EmptyState(
-                        icon = Icons.Filled.Receipt,
-                        title = "No bills yet",
-                        subtitle = "Tap + to add your first bill"
+                    Text(
+                        text = "Due in next 7 days",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
-            } else {
-                items(state.filteredBills, key = { it.id }) { item ->
+                items(state.billsDueInNext7Days, key = { it.id }) { item ->
                     val linkedId = item.bill.linkedCreditAccountId
                     val linkedAccount = state.creditAccounts.find { it.id == linkedId }
                     BillCard(
@@ -171,6 +155,47 @@ fun BillsScreen(
                         onCreditClick = if (linkedId != null) {
                             { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
                         } else null
+                    )
+                }
+                item { Spacer(modifier = Modifier.height(8.dp)) }
+            }
+
+            // By category
+            state.otherBillsByCategory.entries
+                .sortedBy { it.key.displayName }
+                .forEach { (generalCategory, categoryBills) ->
+                    if (categoryBills.isEmpty()) return@forEach
+                    item(key = "cat_${generalCategory.name}") {
+                        Text(
+                            text = generalCategory.displayName,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    items(categoryBills, key = { it.id }) { item ->
+                        val linkedId = item.bill.linkedCreditAccountId
+                        val linkedAccount = state.creditAccounts.find { it.id == linkedId }
+                        BillCard(
+                            item = item,
+                            linkedAccountName = linkedAccount?.name,
+                            linkedAccountId = linkedId,
+                            onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
+                            onMarkPaid = { viewModel.recordPayment(item) },
+                            onCreditClick = if (linkedId != null) {
+                                { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
+                            } else null
+                        )
+                    }
+                    item(key = "spacer_${generalCategory.name}") { Spacer(modifier = Modifier.height(4.dp)) }
+                }
+
+            if (state.bills.isEmpty()) {
+                item {
+                    EmptyState(
+                        icon = Icons.Filled.Receipt,
+                        title = "No bills yet",
+                        subtitle = "Tap + to add your first bill"
                     )
                 }
             }
@@ -199,6 +224,118 @@ fun BillsScreen(
             viewModel.clearNavigateToBillId()
         }
     }
+
+    state.showCreditLoanPaymentDialog?.let { item ->
+        CreditLoanPaymentDialog(
+            item = item,
+            currentBalance = item.bill.creditCardDetails?.currentBalance
+                ?: state.creditAccounts.find { it.id == item.bill.linkedCreditAccountId }?.currentBalance ?: 0.0,
+            defaultAmount = item.bill.effectiveAmountDue(),
+            onDismiss = { viewModel.dismissCreditLoanPaymentDialog() },
+            onConfirm = { amount, newBalance ->
+                viewModel.recordCreditLoanPayment(item, amount, newBalance)
+            }
+        )
+    }
+
+    if (state.showPastDueAutopayDialog && state.pastDueAutopayBills.isNotEmpty()) {
+        var selectedIds by remember { mutableStateOf(state.pastDueAutopayBills.map { it.id }.toSet()) }
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissPastDueAutopayDialog() },
+            title = { Text("Mark autopay bills as paid?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "These autopay bills are past due. Were they paid?",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    state.pastDueAutopayBills.forEach { item ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = selectedIds.contains(item.id),
+                                onCheckedChange = { checked ->
+                                    selectedIds = if (checked) selectedIds + item.id else selectedIds - item.id
+                                }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "${item.bill.name} — ${item.bill.effectiveAmountDue().formatCurrency()}",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val selected = state.pastDueAutopayBills.filter { it.id in selectedIds }
+                        viewModel.markPastDueAsPaid(selected)
+                    }
+                ) { Text("Mark selected as paid") }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissPastDueAutopayDialog() }) { Text("Dismiss") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun CreditLoanPaymentDialog(
+    item: BillWithSource,
+    currentBalance: Double,
+    defaultAmount: Double,
+    onDismiss: () -> Unit,
+    onConfirm: (amount: Double, newBalance: Double?) -> Unit
+) {
+    var amountStr by remember { mutableStateOf("%.2f".format(defaultAmount)) }
+    var newBalanceStr by remember { mutableStateOf("") }
+    val amount = amountStr.toDoubleOrNull() ?: 0.0
+    val newBalance = newBalanceStr.toDoubleOrNull()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Record payment — ${item.bill.name}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "Enter the amount paid. You can optionally set the new balance (e.g. from a statement); otherwise the balance will be reduced by the amount paid.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                CurrencyTextField(
+                    value = amountStr,
+                    onValueChange = { amountStr = it },
+                    label = "Amount paid"
+                )
+                OutlinedTextField(
+                    value = newBalanceStr,
+                    onValueChange = { newBalanceStr = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("New balance (optional)") },
+                    placeholder = { Text("Leave blank to subtract amount from current (${currentBalance.formatCurrency()})") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    if (amount > 0) {
+                        val balance = if (newBalance != null && newBalance >= 0) newBalance else null
+                        onConfirm(amount, balance)
+                    }
+                }
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable

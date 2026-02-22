@@ -73,24 +73,34 @@ class BillDetailViewModel @Inject constructor(
     fun recordPayment(bill: Bill) {
         val item = billWithSource.value ?: return
         if (item.isCypherLog) return
+        if (bill.isCreditOrLoan()) return
         viewModelScope.launch {
-            val paymentAmount = bill.effectiveAmountDue()
-            val payment = BillPayment(
-                date = System.currentTimeMillis(),
-                amount = paymentAmount
-            )
+            recordPaymentWithAmount(bill, bill.effectiveAmountDue(), null)
+        }
+    }
+
+    fun recordPaymentWithAmount(bill: Bill, amount: Double, newBalance: Double?) {
+        val item = billWithSource.value ?: return
+        if (item.isCypherLog) return
+        viewModelScope.launch {
+            val payment = BillPayment(date = System.currentTimeMillis(), amount = amount)
             val updatedCcDetails = bill.creditCardDetails?.let { cc ->
-                cc.copy(
-                    currentBalance = (cc.currentBalance - paymentAmount).coerceAtLeast(0.0)
-                )
+                val balance = newBalance ?: (cc.currentBalance - amount).coerceAtLeast(0.0)
+                cc.copy(currentBalance = balance)
             }
-            val updated = bill.copy(
+            val updatedBill = bill.copy(
                 paymentHistory = bill.paymentHistory + payment,
                 isPaid = true,
                 lastPaidDate = payment.date,
                 creditCardDetails = updatedCcDetails
             )
-            repository.saveBill(updated)
+            repository.saveBill(updatedBill)
+            bill.linkedCreditAccountId?.let { accountId ->
+                creditAccountRepository.getCreditAccountById(accountId).first()?.let { acc ->
+                    val balance = newBalance ?: (acc.currentBalance - amount).coerceAtLeast(0.0)
+                    creditAccountRepository.saveCreditAccount(acc.copy(currentBalance = balance))
+                }
+            }
         }
     }
 

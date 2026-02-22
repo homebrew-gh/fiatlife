@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import com.fiatlife.app.domain.model.BillGeneralCategory
 import com.fiatlife.app.ui.components.*
 import com.fiatlife.app.ui.navigation.Screen
@@ -117,7 +118,15 @@ fun DashboardScreen(
                 if (state.unpaidBillCount > 0) {
                     Spacer(modifier = Modifier.height(8.dp))
                     AssistChip(
-                        onClick = {},
+                        onClick = {
+                            navController.navigate(Screen.Bills.route) {
+                                popUpTo(navController.graph.findStartDestination().id) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
                         label = {
                             Text("${state.unpaidBillCount} unpaid bill(s)")
                         },
@@ -137,10 +146,61 @@ fun DashboardScreen(
             }
         }
 
+        if (state.upcomingBills.isNotEmpty()) {
+            item {
+                SectionCard(
+                    title = "Upcoming Bills",
+                    icon = Icons.Filled.Receipt
+                ) {
+                    state.upcomingBills.forEach { bill ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    navController.navigate(Screen.BillDetail.routeWithId(bill.id))
+                                }
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = bill.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = bill.effectiveSubcategory.displayName,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            MoneyText(
+                                amount = bill.effectiveAmountDue(),
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                        if (bill != state.upcomingBills.last()) {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                        }
+                    }
+                }
+            }
+        }
+
         item {
             SectionCard(
                 title = "Financial Goals",
-                icon = Icons.Filled.Flag
+                icon = Icons.Filled.Flag,
+                modifier = Modifier.clickable {
+                    navController.navigate(Screen.Goals.route) {
+                        popUpTo(navController.graph.findStartDestination().id) {
+                            saveState = true
+                        }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                }
             ) {
                 if (state.goalCount == 0) {
                     Text(
@@ -199,48 +259,6 @@ fun DashboardScreen(
                                     fontWeight = FontWeight.Bold
                                 )
                             }
-                        }
-                    }
-                }
-            }
-        }
-
-        if (state.upcomingBills.isNotEmpty()) {
-            item {
-                SectionCard(
-                    title = "Upcoming Bills",
-                    icon = Icons.Filled.Receipt
-                ) {
-                    state.upcomingBills.forEach { bill ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    navController.navigate(Screen.BillDetail.routeWithId(bill.id))
-                                }
-                                .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(
-                                    text = bill.name,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    text = bill.effectiveSubcategory.displayName,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            MoneyText(
-                                amount = bill.effectiveAmountDue(),
-                                style = MaterialTheme.typography.bodyLarge
-                            )
-                        }
-                        if (bill != state.upcomingBills.last()) {
-                            HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
                         }
                     }
                 }
@@ -340,7 +358,8 @@ private fun QuickStatCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(
-            modifier = Modifier.padding(16.dp)
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Icon(
                 imageVector = icon,

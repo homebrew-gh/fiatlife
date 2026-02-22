@@ -23,6 +23,7 @@ import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.ui.navigation.Screen
 import com.fiatlife.app.domain.model.BillPayment
 import com.fiatlife.app.domain.model.StatementEntry
+import com.fiatlife.app.ui.components.CurrencyTextField
 import com.fiatlife.app.ui.components.MoneyText
 import com.fiatlife.app.ui.components.SectionCard
 import com.fiatlife.app.ui.components.formatCurrency
@@ -48,6 +49,7 @@ fun BillDetailScreen(
     val scope = rememberCoroutineScope()
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
+    var showCreditLoanPaymentDialog by remember { mutableStateOf(false) }
     var hasLoadedBill by remember { mutableStateOf(false) }
 
     LaunchedEffect(bill) {
@@ -92,7 +94,7 @@ fun BillDetailScreen(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                 ) {
                     Column(
-                        modifier = Modifier.padding(20.dp),
+                        modifier = Modifier.fillMaxWidth().padding(20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
@@ -249,7 +251,10 @@ fun BillDetailScreen(
                     if (!b.isPaid && billWithSource?.isCypherLog != true) {
                         Spacer(modifier = Modifier.height(12.dp))
                         Button(
-                            onClick = { viewModel.recordPayment(b) },
+                            onClick = {
+                                if (b.isCreditOrLoan()) showCreditLoanPaymentDialog = true
+                                else viewModel.recordPayment(b)
+                            },
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(containerColor = ProfitGreen)
                         ) {
@@ -419,6 +424,55 @@ fun BillDetailScreen(
                 onUploadAttachment = { _, _, _ -> }
             )
         }
+    }
+
+    if (showCreditLoanPaymentDialog && bill != null) {
+        val b = bill!!
+        val currentBalance = b.creditCardDetails?.currentBalance ?: linkedCreditAccount?.currentBalance ?: 0.0
+        var amountStr by remember(b) { mutableStateOf("%.2f".format(b.effectiveAmountDue())) }
+        var newBalanceStr by remember { mutableStateOf("") }
+        val amount = amountStr.toDoubleOrNull() ?: 0.0
+        val newBalance = newBalanceStr.toDoubleOrNull()
+        AlertDialog(
+            onDismissRequest = { showCreditLoanPaymentDialog = false },
+            title = { Text("Record payment — ${b.name}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "Enter the amount paid. Optionally set the new balance (e.g. from a statement); otherwise the balance will be reduced by the amount paid.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    CurrencyTextField(
+                        value = amountStr,
+                        onValueChange = { amountStr = it },
+                        label = "Amount paid"
+                    )
+                    OutlinedTextField(
+                        value = newBalanceStr,
+                        onValueChange = { newBalanceStr = it.filter { c -> c.isDigit() || c == '.' } },
+                        label = { Text("New balance (optional)") },
+                        placeholder = { Text("Leave blank to subtract from current (${currentBalance.formatCurrency()})") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = MaterialTheme.shapes.medium
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (amount > 0) {
+                            viewModel.recordPaymentWithAmount(b, amount, if (newBalance != null && newBalance >= 0) newBalance else null)
+                            showCreditLoanPaymentDialog = false
+                        }
+                    }
+                ) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreditLoanPaymentDialog = false }) { Text("Cancel") }
+            }
+        )
     }
 }
 

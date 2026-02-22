@@ -35,6 +35,8 @@ private val MAPPED_TAG_KEYS = setOf(
 /** When name is empty, try to derive from CypherLog "alt" tag (e.g. "Subscription: Netflix"). */
 private fun nameFromAltTag(tagMap: Map<String, List<String>>): String {
     val alt = tagMap["alt"]?.firstOrNull() ?: return ""
+    val lower = alt.lowercase()
+    if (lower.contains("encrypted") && lower.contains("subscription data")) return ""
     return alt.removePrefix("Subscription:").removePrefix("subscription:").trim()
 }
 
@@ -67,9 +69,10 @@ class CypherLogSubscriptionRepository @Inject constructor(
         if (event.content.isNotBlank()) {
             val signer = nostrClient.currentSigner
             if (signer != null) {
-                contentDecryptedJson = signer.nip44Decrypt(event.content, signer.pubkeyHex)
+                contentDecryptedJson = signer.nip44Decrypt(event.content, event.pubkey)
+                    ?: signer.nip44Decrypt(event.content, signer.pubkeyHex)
                 if (contentDecryptedJson == null) {
-                    Log.w(TAG, "Failed to decrypt 37004 content for d=$dTag")
+                    Log.w(TAG, "Failed to decrypt 37004 content for d=$dTag (author=${event.pubkey.take(8)}…)")
                 }
             }
         }
@@ -176,7 +179,12 @@ class CypherLogSubscriptionRepository @Inject constructor(
         val notes: String
         val companyName: String
         try {
-            val obj = json.parseToJsonElement(contentJson).jsonObject
+            val root = json.parseToJsonElement(contentJson)
+            val obj = when {
+                root.jsonObject.containsKey("name") || root.jsonObject.containsKey("cost") || root.jsonObject.containsKey("billing_frequency") -> root.jsonObject
+                root.jsonObject.containsKey("data") -> root.jsonObject["data"]?.jsonObject ?: root.jsonObject
+                else -> root.jsonObject
+            }
             fun str(vararg keys: String): String? = keys.mapNotNull { obj[it]?.jsonPrimitive?.content }.firstOrNull()
             fun doubleVal(vararg keys: String): Double? = keys.mapNotNull { key ->
                 obj[key]?.jsonPrimitive?.content?.toDoubleOrNull()
@@ -187,11 +195,11 @@ class CypherLogSubscriptionRepository @Inject constructor(
             notes = str("notes") ?: ""
             companyName = str("company_name", "companyName") ?: ""
             if (nameFromContent.isBlank()) {
-                val altName = nameFromAltTag(tagMap)
-                nameFromContent = altName
+                nameFromContent = nameFromAltTag(tagMap)
             }
             name = nameFromContent
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse 37004 content for d=$dTag: ${e.message}; content snippet: ${contentJson.take(120)}…")
             return tags37004ToBill(dTag, tags)
         }
 
