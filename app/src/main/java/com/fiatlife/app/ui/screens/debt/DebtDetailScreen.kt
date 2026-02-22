@@ -368,7 +368,7 @@ fun DebtDetailScreen(
         CreditAccountDialog(
             account = accountForDialog,
             onDismiss = { showEditDialog = false },
-            onSave = { acc, _ ->
+            onSave = { acc ->
                 viewModel.saveAccount(acc)
                 showEditDialog = false
                 navController.popBackStack()
