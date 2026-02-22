@@ -514,6 +514,11 @@ internal fun BillDialog(
     var subcategoryExpanded by remember { mutableStateOf(false) }
     var frequencyExpanded by remember { mutableStateOf(false) }
 
+    /** When adding a new bill, hide Credit/Loans (those bills are created from the Debt tab). */
+    val generalCategoriesForForm = remember(bill) {
+        if (bill == null) BillGeneralCategory.entries.filter { it != BillGeneralCategory.CREDIT_LOANS }
+        else BillGeneralCategory.entries
+    }
     val subcategoriesForGeneral = remember(generalCategory) {
         BillSubcategory.entries.filter { it.generalCategory == generalCategory }
     }
@@ -681,7 +686,7 @@ internal fun BillDialog(
                             expanded = generalCategoryExpanded,
                             onDismissRequest = { generalCategoryExpanded = false }
                         ) {
-                            BillGeneralCategory.entries.forEach { gen ->
+                            generalCategoriesForForm.forEach { gen ->
                                 DropdownMenuItem(
                                     text = { Text(gen.displayName) },
                                     onClick = {

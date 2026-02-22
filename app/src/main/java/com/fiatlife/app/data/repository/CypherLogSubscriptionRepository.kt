@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -29,7 +31,7 @@ private const val TAG = "CypherLogSubRepo"
 /** CypherLog 37004 tag keys we map to Bill; all others are preserved for round-trip */
 private val MAPPED_TAG_KEYS = setOf(
     "d", "name", "cost", "currency", "billing_frequency", "subscription_type",
-    "company_name", "company_id", "notes", "alt"
+    "company_name", "company_id", "notes", "alt", "due_day"
 )
 
 /** When name is empty, try to derive from CypherLog "alt" tag (e.g. "Subscription: Netflix"). */
@@ -178,28 +180,42 @@ class CypherLogSubscriptionRepository @Inject constructor(
         val frequency: BillFrequency
         val notes: String
         val companyName: String
+        val dueDay: Int
         try {
             val root = json.parseToJsonElement(contentJson)
-            val obj = when {
-                root.jsonObject.containsKey("name") || root.jsonObject.containsKey("cost") || root.jsonObject.containsKey("billing_frequency") -> root.jsonObject
-                root.jsonObject.containsKey("data") -> root.jsonObject["data"]?.jsonObject ?: root.jsonObject
-                else -> root.jsonObject
+            val obj: JsonObject = when {
+                root is JsonObject && (root.containsKey("name") || root.containsKey("cost") || root.containsKey("billing_frequency")) -> root
+                root is JsonObject && root.containsKey("data") -> (root["data"]?.jsonObject ?: root)
+                root is JsonObject -> root
+                root is JsonArray && root.isNotEmpty() -> root.first().jsonObject
+                else -> {
+                    Log.w(TAG, "37004 content for d=$dTag: root is not object or array; snippet: ${contentJson.take(80)}…")
+                    return tags37004ToBill(dTag, tags)
+                }
             }
-            fun str(vararg keys: String): String? = keys.mapNotNull { obj[it]?.jsonPrimitive?.content }.firstOrNull()
-            fun doubleVal(vararg keys: String): Double? = keys.mapNotNull { key ->
-                obj[key]?.jsonPrimitive?.content?.toDoubleOrNull()
+            fun str(vararg keys: String): String? = keys.mapNotNull { key ->
+                obj[key]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
             }.firstOrNull()
-            var nameFromContent = str("name") ?: ""
-            cost = doubleVal("cost", "amount", "price") ?: str("cost", "amount", "price")?.toDoubleOrNull() ?: 0.0
+            fun numFromElement(e: kotlinx.serialization.json.JsonElement?): Double? = when {
+                e == null -> null
+                e is JsonPrimitive -> e.content.toDoubleOrNull()
+                else -> null
+            }
+            fun doubleVal(vararg keys: String): Double? = keys.mapNotNull { key -> numFromElement(obj[key]) }.firstOrNull()
+                ?: keys.mapNotNull { key -> str(key)?.toDoubleOrNull() }.firstOrNull()
+            var nameFromContent = str("name", "subscriptionName", "subscription_name", "title", "description") ?: ""
+            cost = doubleVal("cost", "amount", "price", "costAmount", "subscriptionCost") ?: 0.0
             frequency = billingFrequencyToBillFrequency(str("billing_frequency", "billingFrequency"))
             notes = str("notes") ?: ""
             companyName = str("company_name", "companyName") ?: ""
+            dueDay = str("due_day")?.toIntOrNull()?.coerceIn(1, 31)
+                ?: preserved?.get("due_day")?.firstOrNull()?.toIntOrNull()?.coerceIn(1, 31) ?: 1
             if (nameFromContent.isBlank()) {
                 nameFromContent = nameFromAltTag(tagMap)
             }
             name = nameFromContent
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to parse 37004 content for d=$dTag: ${e.message}; content snippet: ${contentJson.take(120)}…")
+            Log.w(TAG, "Failed to parse 37004 content for d=$dTag: ${e.message}; content snippet: ${contentJson.take(200)}…")
             return tags37004ToBill(dTag, tags)
         }
 
@@ -210,7 +226,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
             category = BillCategory.OTHER,
             subcategory = BillSubcategory.OTHER_SUBSCRIPTION,
             frequency = frequency,
-            dueDay = 1,
+            dueDay = dueDay,
             accountName = companyName,
             notes = notes,
             updatedAt = 0L
@@ -229,10 +245,11 @@ class CypherLogSubscriptionRepository @Inject constructor(
 
         var name = first("name") ?: ""
         if (name.isBlank()) name = nameFromAltTag(tagMap)
-        val cost = first("cost")?.toDoubleOrNull() ?: 0.0
+        val cost = first("cost")?.toDoubleOrNull() ?: first("amount")?.toDoubleOrNull() ?: 0.0
         val frequency = billingFrequencyToBillFrequency(first("billing_frequency"))
         val notes = first("notes") ?: ""
         val companyName = first("company_name") ?: ""
+        val dueDay = first("due_day")?.toIntOrNull()?.coerceIn(1, 31) ?: 1
 
         val preserved = tagMap.filter { (k, _) -> k !in MAPPED_TAG_KEYS }
             .mapValues { (_, v) -> v.toList() }
@@ -245,7 +262,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
             category = BillCategory.OTHER,
             subcategory = BillSubcategory.OTHER_SUBSCRIPTION,
             frequency = frequency,
-            dueDay = 1,
+            dueDay = dueDay,
             accountName = companyName,
             notes = notes,
             updatedAt = 0L
@@ -263,6 +280,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
         list.add(listOf("name", bill.name))
         list.add(listOf("cost", bill.amount.toString()))
         list.add(listOf("billing_frequency", billFrequencyToCypherLog(bill.frequency)))
+        list.add(listOf("due_day", bill.dueDay.toString()))
         if (bill.notes.isNotBlank()) list.add(listOf("notes", bill.notes))
         if (bill.accountName.isNotBlank()) list.add(listOf("company_name", bill.accountName))
         preservedTags?.forEach { (key, values) ->

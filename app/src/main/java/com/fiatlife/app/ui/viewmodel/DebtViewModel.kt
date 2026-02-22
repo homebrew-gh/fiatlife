@@ -11,7 +11,13 @@ import com.fiatlife.app.domain.model.BillSubcategory
 import com.fiatlife.app.domain.model.CreditAccount
 import com.fiatlife.app.domain.model.CreditAccountType
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
 import javax.inject.Inject
@@ -96,27 +102,46 @@ class DebtViewModel @Inject constructor(
         _state.update { it.copy(navigateToAccountId = null) }
     }
 
-    fun saveAccount(account: CreditAccount, createBillForPayment: Boolean = false) {
+    fun saveAccount(account: CreditAccount) {
         viewModelScope.launch {
             _state.update { it.copy(isSaving = true) }
             try {
                 var saved = repository.saveCreditAccount(account)
-                if (account.id.isBlank() && createBillForPayment) {
-                    val billId = UUID.randomUUID().toString()
-                    val bill = Bill(
-                        id = billId,
-                        name = saved.name,
-                        amount = saved.effectiveMonthlyPayment(),
-                        subcategory = BillSubcategory.OTHER_LOAN,
-                        frequency = BillFrequency.MONTHLY,
-                        dueDay = saved.dueDay,
-                        linkedCreditAccountId = saved.id,
-                        createdAt = System.currentTimeMillis(),
-                        updatedAt = System.currentTimeMillis()
-                    )
-                    billRepository.saveBill(bill)
-                    saved = saved.copy(linkedBillId = billId)
-                    repository.saveCreditAccount(saved)
+                val billSubcategory = when (saved.type) {
+                    CreditAccountType.CREDIT_CARD -> BillSubcategory.CREDIT_CARD
+                    CreditAccountType.STUDENT_LOAN -> BillSubcategory.STUDENT_LOAN
+                    else -> BillSubcategory.OTHER_LOAN
+                }
+                if (saved.currentBalance > 0) {
+                    if (saved.linkedBillId != null) {
+                        val existing = billRepository.getBillById(saved.linkedBillId).first()
+                        if (existing != null) {
+                            billRepository.saveBill(
+                                existing.copy(
+                                    name = saved.name,
+                                    amount = saved.effectiveMonthlyPayment(),
+                                    dueDay = saved.dueDay,
+                                    subcategory = billSubcategory,
+                                    updatedAt = System.currentTimeMillis()
+                                )
+                            )
+                        } else {
+                            createAndLinkBill(saved, billSubcategory)
+                        }
+                    } else {
+                        createAndLinkBill(saved, billSubcategory)
+                    }
+                } else {
+                    saved.linkedBillId?.let { billId ->
+                        billRepository.getBillById(billId).first()?.let { existing ->
+                            billRepository.saveBill(
+                                existing.copy(
+                                    amount = 0.0,
+                                    updatedAt = System.currentTimeMillis()
+                                )
+                            )
+                        }
+                    }
                 }
                 _state.update {
                     it.copy(
@@ -130,6 +155,23 @@ class DebtViewModel @Inject constructor(
                 _state.update { it.copy(isSaving = false, message = "Error: ${e.message}") }
             }
         }
+    }
+
+    private suspend fun createAndLinkBill(account: CreditAccount, billSubcategory: BillSubcategory) {
+        val billId = UUID.randomUUID().toString()
+        val bill = Bill(
+            id = billId,
+            name = account.name,
+            amount = account.effectiveMonthlyPayment(),
+            subcategory = billSubcategory,
+            frequency = BillFrequency.MONTHLY,
+            dueDay = account.dueDay,
+            linkedCreditAccountId = account.id,
+            createdAt = System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis()
+        )
+        billRepository.saveBill(bill)
+        repository.saveCreditAccount(account.copy(linkedBillId = billId))
     }
 
     fun deleteAccount(account: CreditAccount) {

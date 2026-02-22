@@ -170,7 +170,7 @@ fun DebtScreen(
         CreditAccountDialog(
             account = state.editingAccount,
             onDismiss = { viewModel.dismissDialog() },
-            onSave = { acc, createBill -> viewModel.saveAccount(acc, createBill) },
+            onSave = { acc -> viewModel.saveAccount(acc) },
             isSaving = state.isSaving
         )
     }
@@ -246,7 +246,7 @@ private fun DebtAccountCard(
 internal fun CreditAccountDialog(
     account: CreditAccount?,
     onDismiss: () -> Unit,
-    onSave: (CreditAccount, createBillForPayment: Boolean) -> Unit,
+    onSave: (CreditAccount) -> Unit,
     isSaving: Boolean
 ) {
     var name by remember { mutableStateOf(account?.name ?: "") }
@@ -273,7 +273,6 @@ internal fun CreditAccountDialog(
     var originalPrincipal by remember { mutableStateOf(account?.originalPrincipal?.toString()?.takeIf { it != "0.0" } ?: "") }
     var termMonths by remember { mutableStateOf(account?.termMonths?.toString() ?: "") }
     var monthlyPaymentAmount by remember { mutableStateOf(account?.monthlyPaymentAmount?.toString() ?: "") }
-    var createBillForPayment by remember { mutableStateOf(false) }
 
     val isRevolving = type.isRevolving
     val isAmortizing = type.isAmortizing
@@ -472,16 +471,6 @@ internal fun CreditAccountDialog(
                     minLines = 2,
                     shape = MaterialTheme.shapes.medium
                 )
-                if (account == null) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Create a bill for this payment")
-                        Switch(checked = createBillForPayment, onCheckedChange = { createBillForPayment = it })
-                    }
-                }
             }
         },
         confirmButton = {
@@ -517,8 +506,7 @@ internal fun CreditAccountDialog(
                             monthlyPaymentAmount = monthlyPaymentAmount.toDoubleOrNull()?.takeIf { it >= 0 },
                             startDate = account?.startDate,
                             endDate = account?.endDate
-                        ),
-                        account == null && createBillForPayment
+                        )
                     )
                 },
                 enabled = name.isNotBlank() && !isSaving
