@@ -35,6 +35,7 @@ import androidx.compose.foundation.clickable
 import com.fiatlife.app.ui.components.CurrencyTextField
 import com.fiatlife.app.ui.components.MoneyText
 import com.fiatlife.app.ui.components.EmptyState
+import com.fiatlife.app.ui.components.PercentageTextField
 import com.fiatlife.app.ui.components.formatCurrency
 import com.fiatlife.app.ui.theme.ProfitGreen
 import com.fiatlife.app.ui.viewmodel.BillsViewModel
