@@ -215,7 +215,7 @@ class BillsViewModel @Inject constructor(
                         _state.update {
                             it.copy(
                                 isSaving = false,
-                                message = "Could not publish to relay/Amber. Please confirm signing and try again."
+                                message = "Could not publish CypherLog update. Amber may be missing sign permission for kind 37004. Reconnect Amber and try again."
                             )
                         }
                     }
