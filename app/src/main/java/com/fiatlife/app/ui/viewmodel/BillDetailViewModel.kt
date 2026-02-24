@@ -19,7 +19,10 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -30,6 +33,8 @@ class BillDetailViewModel @Inject constructor(
     private val creditAccountRepository: CreditAccountRepository,
     private val cypherLogSubscriptionRepository: CypherLogSubscriptionRepository
 ) : ViewModel() {
+    private val _message = MutableStateFlow("")
+    val message: StateFlow<String> = _message.asStateFlow()
 
     val billId: String = checkNotNull(savedStateHandle["billId"]) { "billId required" }
 
@@ -72,7 +77,6 @@ class BillDetailViewModel @Inject constructor(
 
     fun recordPayment(bill: Bill) {
         val item = billWithSource.value ?: return
-        if (item.isCypherLog) return
         if (bill.isCreditOrLoan()) return
         viewModelScope.launch {
             recordPaymentWithAmount(bill, bill.effectiveAmountDue(), null)
@@ -81,7 +85,6 @@ class BillDetailViewModel @Inject constructor(
 
     fun recordPaymentWithAmount(bill: Bill, amount: Double, newBalance: Double?) {
         val item = billWithSource.value ?: return
-        if (item.isCypherLog) return
         viewModelScope.launch {
             val payment = BillPayment(date = System.currentTimeMillis(), amount = amount)
             val updatedCcDetails = bill.creditCardDetails?.let { cc ->
@@ -94,11 +97,19 @@ class BillDetailViewModel @Inject constructor(
                 lastPaidDate = payment.date,
                 creditCardDetails = updatedCcDetails
             )
-            repository.saveBill(updatedBill)
-            bill.linkedCreditAccountId?.let { accountId ->
-                creditAccountRepository.getCreditAccountById(accountId).first()?.let { acc ->
-                    val balance = newBalance ?: (acc.currentBalance - amount).coerceAtLeast(0.0)
-                    creditAccountRepository.saveCreditAccount(acc.copy(currentBalance = balance))
+            if (item.isCypherLog) {
+                val result = cypherLogSubscriptionRepository.saveSubscriptionDetailed(updatedBill, item.preservedTags)
+                _message.update {
+                    if (result.success) "CypherLog subscription saved."
+                    else "CypherLog payment log failed: ${result.reason}"
+                }
+            } else {
+                repository.saveBill(updatedBill)
+                bill.linkedCreditAccountId?.let { accountId ->
+                    creditAccountRepository.getCreditAccountById(accountId).first()?.let { acc ->
+                        val balance = newBalance ?: (acc.currentBalance - amount).coerceAtLeast(0.0)
+                        creditAccountRepository.saveCreditAccount(acc.copy(currentBalance = balance))
+                    }
                 }
             }
         }
@@ -118,7 +129,11 @@ class BillDetailViewModel @Inject constructor(
         val item = billWithSource.value ?: return
         viewModelScope.launch {
             if (item.isCypherLog) {
-                cypherLogSubscriptionRepository.saveSubscription(bill, item.preservedTags)
+                val result = cypherLogSubscriptionRepository.saveSubscriptionDetailed(bill, item.preservedTags)
+                _message.update {
+                    if (result.success) "CypherLog subscription saved."
+                    else "CypherLog update failed: ${result.reason}"
+                }
             } else {
                 val previousBill = item.bill
                 val saved = repository.saveBill(bill)
@@ -136,6 +151,10 @@ class BillDetailViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    fun clearMessage() {
+        _message.update { "" }
     }
 
     suspend fun getStatementBytes(hash: String): Result<ByteArray> =

@@ -409,7 +409,7 @@ private fun BillCard(
                 .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (!item.isCypherLog && !bill.isPaid) {
+            if (!bill.isPaid) {
                 Button(
                     onClick = { onMarkPaid() },
                     modifier = Modifier.height(32.dp),
@@ -420,7 +420,7 @@ private fun BillCard(
                     Text("Paid", style = MaterialTheme.typography.labelLarge)
                 }
                 Spacer(modifier = Modifier.width(12.dp))
-            } else if (!item.isCypherLog && bill.isPaid) {
+            } else if (bill.isPaid) {
                 Surface(
                     shape = MaterialTheme.shapes.small,
                     color = ProfitGreen.copy(alpha = 0.15f)
@@ -432,8 +432,6 @@ private fun BillCard(
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                     )
                 }
-                Spacer(modifier = Modifier.width(12.dp))
-            } else if (item.isCypherLog) {
                 Spacer(modifier = Modifier.width(12.dp))
             }
             Column(modifier = Modifier.weight(1f)) {
@@ -506,19 +504,6 @@ private fun BillCard(
                             style = MaterialTheme.typography.bodySmall,
                             color = if (bill.isPastDue()) MaterialTheme.colorScheme.error
                             else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    if (linkedAccountId != null && onCreditClick != null) {
-                        Text(
-                            text = "·",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = "Credit: ${linkedAccountName ?: "…"}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.clickable { onCreditClick() }
                         )
                     }
                     if (bill.statementEntries.isNotEmpty() || bill.attachmentHashes.isNotEmpty()) {

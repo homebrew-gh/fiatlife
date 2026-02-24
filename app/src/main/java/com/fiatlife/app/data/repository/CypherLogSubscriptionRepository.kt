@@ -12,6 +12,7 @@ import com.fiatlife.app.domain.model.BillRecurrenceUnit
 import com.fiatlife.app.domain.model.BillSource
 import com.fiatlife.app.domain.model.BillSubcategory
 import com.fiatlife.app.domain.model.BillWithSource
+import com.fiatlife.app.domain.model.BillPayment
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withTimeout
@@ -35,7 +36,8 @@ private val MAPPED_TAG_KEYS = setOf(
     "company_name", "company_id", "notes", "alt", "due_day",
     "renewal_date", "next_due_date", "due_date",
     "initial_purchase_date", "purchase_date", "anchor_date", "start_date",
-    "interval_unit", "interval_count", "timezone"
+    "interval_unit", "interval_count", "timezone",
+    "fiatlife_is_paid", "fiatlife_last_paid_date", "fiatlife_payment"
 )
 
 /** Build a tag map with lowercase keys so lookup is case-insensitive (Nostr/CypherLog may use varying case). */
@@ -129,6 +131,13 @@ private fun formatUsDate(millis: Long): String {
     return String.format(java.util.Locale.US, "%02d/%02d/%04d", m, d, y)
 }
 
+private fun dayOfMonthFromMillis(millis: Long?): Int? {
+    if (millis == null) return null
+    val cal = java.util.Calendar.getInstance()
+    cal.timeInMillis = millis
+    return cal.get(java.util.Calendar.DAY_OF_MONTH).coerceIn(1, 31)
+}
+
 private fun intervalUnitFromCypherLog(value: String?): BillRecurrenceUnit? = when (value?.trim()?.lowercase()) {
     "day", "days" -> BillRecurrenceUnit.DAY
     "week", "weeks" -> BillRecurrenceUnit.WEEK
@@ -143,6 +152,14 @@ private fun intervalUnitToCypherLog(unit: BillRecurrenceUnit?): String? = when (
     BillRecurrenceUnit.MONTH -> "month"
     BillRecurrenceUnit.YEAR -> "year"
     null -> null
+}
+
+private fun parseFiatLifePayment(value: String): BillPayment? {
+    val parts = value.split("|")
+    if (parts.size != 2) return null
+    val date = parts[0].toLongOrNull() ?: return null
+    val amount = parts[1].toDoubleOrNull() ?: return null
+    return BillPayment(date = date, amount = amount)
 }
 
 @Singleton
@@ -368,6 +385,9 @@ class CypherLogSubscriptionRepository @Inject constructor(
         val recurrenceUnit: BillRecurrenceUnit?
         val recurrenceIntervalCount: Int
         val recurrenceTimezone: String?
+        val isPaid: Boolean
+        val lastPaidDate: Long?
+        val paymentHistory: List<BillPayment>
         try {
             val root = json.parseToJsonElement(contentJson)
             val obj: JsonObject = when {
@@ -395,8 +415,8 @@ class CypherLogSubscriptionRepository @Inject constructor(
             frequency = billingFrequencyToBillFrequency(str("billing_frequency", "billingFrequency"))
             notes = str("notes") ?: ""
             companyName = str("company_name", "companyName") ?: ""
-            dueDay = str("due_day")?.toIntOrNull()?.coerceIn(1, 31)
-                ?: preserved?.get("due_day")?.firstOrNull()?.toIntOrNull()?.coerceIn(1, 31) ?: 1
+            val parsedDueDay = str("due_day")?.toIntOrNull()?.coerceIn(1, 31)
+                ?: preserved?.get("due_day")?.firstOrNull()?.toIntOrNull()?.coerceIn(1, 31)
             renewalDateMillis = parseIsoDateToMillis(
                 str("renewal_date", "next_due_date", "due_date")
                     ?: tagMap["renewal_date"]?.firstOrNull()
@@ -416,6 +436,16 @@ class CypherLogSubscriptionRepository @Inject constructor(
             recurrenceIntervalCount = (str("interval_count") ?: tagMap["interval_count"]?.firstOrNull())
                 ?.toIntOrNull()?.coerceAtLeast(1) ?: 1
             recurrenceTimezone = str("timezone") ?: tagMap["timezone"]?.firstOrNull()
+            isPaid = (str("fiatlife_is_paid") ?: tagMap["fiatlife_is_paid"]?.firstOrNull())
+                ?.equals("true", ignoreCase = true) == true
+            lastPaidDate = (str("fiatlife_last_paid_date") ?: tagMap["fiatlife_last_paid_date"]?.firstOrNull())
+                ?.toLongOrNull()
+            paymentHistory = (tagMap["fiatlife_payment"] ?: emptyList())
+                .mapNotNull { parseFiatLifePayment(it) }
+            dueDay = parsedDueDay
+                ?: dayOfMonthFromMillis(renewalDateMillis)
+                ?: dayOfMonthFromMillis(initialPurchaseDateMillis)
+                ?: 1
             if (nameFromContent.isBlank()) {
                 nameFromContent = nameFromAltTag(tagMap)
             }
@@ -440,6 +470,9 @@ class CypherLogSubscriptionRepository @Inject constructor(
             recurrenceUnit = recurrenceUnit,
             recurrenceIntervalCount = recurrenceIntervalCount,
             recurrenceTimezone = recurrenceTimezone,
+            paymentHistory = paymentHistory,
+            isPaid = isPaid,
+            lastPaidDate = lastPaidDate,
             accountName = companyName,
             notes = notes,
             updatedAt = 0L
@@ -457,15 +490,23 @@ class CypherLogSubscriptionRepository @Inject constructor(
         val frequency = billingFrequencyToBillFrequency(first("billing_frequency"))
         val notes = first("notes") ?: ""
         val companyName = first("company_name") ?: ""
-        val dueDay = first("due_day")?.toIntOrNull()?.coerceIn(1, 31) ?: 1
+        val parsedDueDay = first("due_day")?.toIntOrNull()?.coerceIn(1, 31)
         val subcategory = subscriptionTypeToSubcategory(first("subscription_type"))
         val renewalDateMillis = parseIsoDateToMillis(first("renewal_date") ?: first("next_due_date") ?: first("due_date"))
         val initialPurchaseDateMillis = parseIsoDateToMillis(
             first("initial_purchase_date") ?: first("purchase_date") ?: first("anchor_date") ?: first("start_date")
         )
+        val dueDay = parsedDueDay
+            ?: dayOfMonthFromMillis(renewalDateMillis)
+            ?: dayOfMonthFromMillis(initialPurchaseDateMillis)
+            ?: 1
         val recurrenceUnit = intervalUnitFromCypherLog(first("interval_unit"))
         val recurrenceIntervalCount = first("interval_count")?.toIntOrNull()?.coerceAtLeast(1) ?: 1
         val recurrenceTimezone = first("timezone")
+        val isPaid = first("fiatlife_is_paid")?.equals("true", ignoreCase = true) == true
+        val lastPaidDate = first("fiatlife_last_paid_date")?.toLongOrNull()
+        val paymentHistory = (tagMap["fiatlife_payment"] ?: emptyList())
+            .mapNotNull { parseFiatLifePayment(it) }
 
         val preserved = tagMap.filter { (k, _) -> k !in MAPPED_TAG_KEYS }
             .mapValues { (_, v) -> v.toList() }
@@ -484,6 +525,9 @@ class CypherLogSubscriptionRepository @Inject constructor(
             recurrenceUnit = recurrenceUnit,
             recurrenceIntervalCount = recurrenceIntervalCount,
             recurrenceTimezone = recurrenceTimezone,
+            paymentHistory = paymentHistory,
+            isPaid = isPaid,
+            lastPaidDate = lastPaidDate,
             accountName = companyName,
             notes = notes,
             updatedAt = 0L
@@ -528,6 +572,11 @@ class CypherLogSubscriptionRepository @Inject constructor(
         intervalUnitToCypherLog(bill.recurrenceUnit)?.let { list.add(listOf("interval_unit", it)) }
         if (bill.recurrenceIntervalCount > 1) list.add(listOf("interval_count", bill.recurrenceIntervalCount.toString()))
         if (!bill.recurrenceTimezone.isNullOrBlank()) list.add(listOf("timezone", bill.recurrenceTimezone))
+        if (bill.isPaid) list.add(listOf("fiatlife_is_paid", "true"))
+        bill.lastPaidDate?.let { list.add(listOf("fiatlife_last_paid_date", it.toString())) }
+        bill.paymentHistory.forEach { p ->
+            list.add(listOf("fiatlife_payment", "${p.date}|${p.amount}"))
+        }
         if (bill.notes.isNotBlank()) list.add(listOf("notes", bill.notes))
         if (bill.accountName.isNotBlank()) list.add(listOf("company_name", bill.accountName))
         preservedTags?.forEach { (key, values) ->

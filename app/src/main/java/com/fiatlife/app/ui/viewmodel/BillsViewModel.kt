@@ -81,13 +81,23 @@ class BillsViewModel @Inject constructor(
 
                 val now = System.currentTimeMillis()
                 val sevenDaysMs = 7L * 24 * 60 * 60 * 1000
+                val cal = java.util.Calendar.getInstance().apply {
+                    set(java.util.Calendar.HOUR_OF_DAY, 0)
+                    set(java.util.Calendar.MINUTE, 0)
+                    set(java.util.Calendar.SECOND, 0)
+                    set(java.util.Calendar.MILLISECOND, 0)
+                }
+                val todayStart = cal.timeInMillis
+                val todayEnd = todayStart + 86_400_000L - 1
                 val dueIn7Days = bills.filter { item ->
                     if (item.isCypherLog || item.bill.isPaid) return@filter false
                     if (!item.bill.autoPay || item.bill.isCreditOrLoan()) {
                         val nextDue = item.bill.nextDueDateMillis()
                         val inWindow = nextDue != null && nextDue <= now + sevenDaysMs
-                        val overdue = item.bill.lastDueDateMillis()?.let { it in (now - sevenDaysMs)..now } == true
-                        inWindow || overdue
+                        // Due today can appear as "lastDueDate" depending on recurrence calculations.
+                        val dueToday = !item.bill.isPastDue() &&
+                            (item.bill.lastDueDateMillis()?.let { it in todayStart..todayEnd } == true)
+                        inWindow || dueToday
                     } else false
                 }.sortedWith(
                     compareBy<BillWithSource> { !it.bill.isCreditOrLoan() }
@@ -264,20 +274,19 @@ class BillsViewModel @Inject constructor(
 
     /** Record a payment: add to history with amount and date, mark paid, and for credit cards reduce balance. */
     fun recordPayment(item: BillWithSource) {
-        if (item.isCypherLog) return
         if (item.bill.isCreditOrLoan()) {
             _state.update { it.copy(showCreditLoanPaymentDialog = item) }
             return
         }
         viewModelScope.launch {
-            recordPaymentInternal(item.bill, item.bill.effectiveAmountDue(), null)
+            recordPaymentInternal(item, item.bill.effectiveAmountDue(), null)
         }
     }
 
     /** Record payment for credit/loan with optional amount and new balance. If newBalance is null, amount is subtracted from current balance. */
     fun recordCreditLoanPayment(item: BillWithSource, amount: Double, newBalance: Double?) {
         viewModelScope.launch {
-            recordPaymentInternal(item.bill, amount, newBalance)
+            recordPaymentInternal(item, amount, newBalance)
             _state.update { it.copy(showCreditLoanPaymentDialog = null) }
         }
     }
@@ -286,7 +295,8 @@ class BillsViewModel @Inject constructor(
         _state.update { it.copy(showCreditLoanPaymentDialog = null) }
     }
 
-    private suspend fun recordPaymentInternal(bill: Bill, amount: Double, newBalance: Double?) {
+    private suspend fun recordPaymentInternal(item: BillWithSource, amount: Double, newBalance: Double?) {
+        val bill = item.bill
         val payment = BillPayment(date = System.currentTimeMillis(), amount = amount)
         val updatedCcDetails = bill.creditCardDetails?.let { cc ->
             val balance = newBalance ?: (cc.currentBalance - amount).coerceAtLeast(0.0)
@@ -298,11 +308,18 @@ class BillsViewModel @Inject constructor(
             lastPaidDate = payment.date,
             creditCardDetails = updatedCcDetails
         )
-        repository.saveBill(updatedBill)
-        bill.linkedCreditAccountId?.let { accountId ->
-            creditAccountRepository.getCreditAccountById(accountId).first()?.let { acc ->
-                val balance = newBalance ?: (acc.currentBalance - amount).coerceAtLeast(0.0)
-                creditAccountRepository.saveCreditAccount(acc.copy(currentBalance = balance))
+        if (item.isCypherLog) {
+            val result = cypherLogSubscriptionRepository.saveSubscriptionDetailed(updatedBill, item.preservedTags)
+            if (!result.success) {
+                _state.update { it.copy(message = "CypherLog payment log failed: ${result.reason}") }
+            }
+        } else {
+            repository.saveBill(updatedBill)
+            bill.linkedCreditAccountId?.let { accountId ->
+                creditAccountRepository.getCreditAccountById(accountId).first()?.let { acc ->
+                    val balance = newBalance ?: (acc.currentBalance - amount).coerceAtLeast(0.0)
+                    creditAccountRepository.saveCreditAccount(acc.copy(currentBalance = balance))
+                }
             }
         }
     }
@@ -312,7 +329,7 @@ class BillsViewModel @Inject constructor(
         viewModelScope.launch {
             selected.forEach { item ->
                 if (item.isCypherLog) return@forEach
-                recordPaymentInternal(item.bill, item.bill.effectiveAmountDue(), null)
+                recordPaymentInternal(item, item.bill.effectiveAmountDue(), null)
             }
             _state.update { it.copy(showPastDueAutopayDialog = false) }
         }

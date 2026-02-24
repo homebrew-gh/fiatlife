@@ -2,6 +2,7 @@ package com.fiatlife.app.ui.screens.bills
 
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -45,6 +46,7 @@ fun BillDetailScreen(
     val billWithSource by viewModel.billWithSource.collectAsStateWithLifecycle()
     val linkedCreditAccount by viewModel.linkedCreditAccount.collectAsStateWithLifecycle()
     val creditAccounts by viewModel.creditAccounts.collectAsStateWithLifecycle()
+    val message by viewModel.message.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -57,6 +59,12 @@ fun BillDetailScreen(
             hasLoadedBill = true
         } else if (hasLoadedBill) {
             navController.popBackStack()
+        }
+    }
+    LaunchedEffect(message) {
+        if (message.isNotBlank()) {
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            viewModel.clearMessage()
         }
     }
 
@@ -258,7 +266,7 @@ fun BillDetailScreen(
                             )
                         }
                     }
-                    if (!b.isPaid && billWithSource?.isCypherLog != true) {
+                    if (!b.isPaid) {
                         Spacer(modifier = Modifier.height(12.dp))
                         Button(
                             onClick = {
@@ -276,8 +284,7 @@ fun BillDetailScreen(
                 }
             }
 
-            if (billWithSource?.isCypherLog != true) {
-                item {
+            item {
                     var showFullPaymentHistory by remember { mutableStateOf(false) }
                     val paymentsReversed = b.paymentHistory.reversed()
                     val displayPayments = if (showFullPaymentHistory) paymentsReversed else paymentsReversed.take(10)
@@ -327,7 +334,6 @@ fun BillDetailScreen(
                         }
                     }
                 }
-            }
 
             item {
                 SectionCard(title = "Statements", icon = Icons.Filled.AttachFile) {
