@@ -126,10 +126,33 @@ class CypherLogSubscriptionRepository @Inject constructor(
         if (event.content.isNotBlank()) {
             val signer = nostrClient.currentSigner
             if (signer != null) {
-                contentDecryptedJson = signer.nip44Decrypt(event.content, event.pubkey)
-                    ?: signer.nip44Decrypt(event.content, signer.pubkeyHex)
+                val pTagPubkeys = event.tags
+                    .filter { it.size >= 2 && it[0] == "p" }
+                    .map { it[1] }
+                val candidates = (listOf(event.pubkey, signer.pubkeyHex) + pTagPubkeys)
+                    .filter { it.isNotBlank() }
+                    .distinct()
+                for (candidate in candidates) {
+                    val raw = signer.nip44Decrypt(event.content, candidate)?.trim()
+                    if (raw.isNullOrBlank()) continue
+                    val lower = raw.lowercase()
+                    if (lower.contains("could not decrypt")) continue
+                    val isJson = try {
+                        json.parseToJsonElement(raw)
+                        true
+                    } catch (_: Exception) {
+                        false
+                    }
+                    if (isJson) {
+                        contentDecryptedJson = raw
+                        break
+                    }
+                }
                 if (contentDecryptedJson == null) {
-                    Log.w(TAG, "Failed to decrypt 37004 content for d=$dTag (author=${event.pubkey.take(8)}…)")
+                    Log.w(
+                        TAG,
+                        "Failed to decrypt 37004 content for d=$dTag (author=${event.pubkey.take(8)}…, pTags=${pTagPubkeys.size})"
+                    )
                 }
             }
         }
