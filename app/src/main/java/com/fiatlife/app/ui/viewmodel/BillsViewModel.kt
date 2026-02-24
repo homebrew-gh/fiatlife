@@ -197,8 +197,8 @@ class BillsViewModel @Inject constructor(
             try {
                 if (isCypherLog) {
                     val billWithId = if (merged.id.isEmpty()) merged.copy(id = java.util.UUID.randomUUID().toString()) else merged
-                    val sent = cypherLogSubscriptionRepository.saveSubscription(billWithId, preservedTags)
-                    if (sent) {
+                    val result = cypherLogSubscriptionRepository.saveSubscriptionDetailed(billWithId, preservedTags)
+                    if (result.success) {
                         _state.update {
                             it.copy(
                                 isSaving = false,
@@ -215,7 +215,7 @@ class BillsViewModel @Inject constructor(
                         _state.update {
                             it.copy(
                                 isSaving = false,
-                                message = "Could not publish CypherLog update. Amber may be missing sign permission for kind 37004. Reconnect Amber and try again."
+                                message = "CypherLog update failed: ${result.reason}"
                             )
                         }
                     }

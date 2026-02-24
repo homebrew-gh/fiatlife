@@ -23,6 +23,12 @@ sealed class NostrMessage {
     data object Disconnected : NostrMessage()
 }
 
+data class PublishStatus(
+    val success: Boolean,
+    val stage: String,
+    val detail: String = ""
+)
+
 @Singleton
 class NostrClient @Inject constructor(
     private val okHttpClient: OkHttpClient
@@ -110,7 +116,11 @@ class NostrClient @Inject constructor(
      */
     suspend fun ensureConnected(): Boolean {
         if (_connectionState.value && isAuthenticated) return true
-        val s = signer ?: return false
+        val s = signer ?: return PublishStatus(
+            success = false,
+            stage = "no_signer",
+            detail = "No signer configured."
+        )
         if (relayUrl.isEmpty()) return false
         if (!_connectionState.value) {
             connect(relayUrl, s)
@@ -186,7 +196,11 @@ class NostrClient @Inject constructor(
         dTag: String,
         jsonContent: String
     ): Boolean {
-        val s = signer ?: return false
+        val s = signer ?: return PublishStatus(
+            success = false,
+            stage = "no_signer",
+            detail = "No signer configured."
+        )
 
         val ready = ensureConnected()
         if (!ready) {
@@ -281,7 +295,16 @@ class NostrClient @Inject constructor(
      * Tags must include "d" (unique id). Content is empty (tags-only per CypherLog).
      */
     suspend fun publishReplaceable37004(dTag: String, tags: List<List<String>>): Boolean {
-        val s = signer ?: return false
+        return publishReplaceable37004Detailed(dTag, tags).success
+    }
+
+    /** Like [publishReplaceable37004] but returns stage/detail for user-facing diagnostics. */
+    suspend fun publishReplaceable37004Detailed(dTag: String, tags: List<List<String>>): PublishStatus {
+        val s = signer ?: return PublishStatus(
+            success = false,
+            stage = "no_signer",
+            detail = "No signer configured."
+        )
         val ready = ensureConnected()
         if (!ready) Log.w(TAG, "publishReplaceable37004: relay not ready")
         val tagsWithD = tags.toMutableList()
@@ -296,11 +319,24 @@ class NostrClient @Inject constructor(
         )
         val signedJson = s.signEvent(unsignedJson) ?: run {
             Log.e(TAG, "publishReplaceable37004: event signing failed for d=$dTag")
-            return false
+            return PublishStatus(
+                success = false,
+                stage = "sign_event",
+                detail = "Signer returned null (rejected/cancelled or unsupported request)."
+            )
         }
         val sent = publishSignedEventJson(signedJson)
         Log.d(TAG, "publishReplaceable37004: d=$dTag sent=$sent")
-        return sent
+        return if (sent) {
+            PublishStatus(success = true, stage = "ok")
+        } else {
+            PublishStatus(
+                success = false,
+                stage = "publish_event",
+                detail = if (!ready) "Relay not ready/auth pending; event was not sent."
+                else "Relay send returned false."
+            )
+        }
     }
 
     /**

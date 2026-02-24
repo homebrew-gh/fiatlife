@@ -129,6 +129,11 @@ class CypherLogSubscriptionRepository @Inject constructor(
     private val nostrClient: NostrClient,
     private val json: Json
 ) {
+    data class SaveResult(
+        val success: Boolean,
+        val reason: String = ""
+    )
+
     /** Temporary debug export for local 37004 cache inspection in Settings screen. */
     suspend fun exportDebugRows(limit: Int = 20): String {
         val rows = dao.getRecent(limit)
@@ -223,10 +228,17 @@ class CypherLogSubscriptionRepository @Inject constructor(
         bill: Bill,
         preservedTags: Map<String, List<String>>? = null
     ): Boolean {
+        return saveSubscriptionDetailed(bill, preservedTags).success
+    }
+
+    suspend fun saveSubscriptionDetailed(
+        bill: Bill,
+        preservedTags: Map<String, List<String>>? = null
+    ): SaveResult {
         val dTag = bill.id.ifEmpty { UUID.randomUUID().toString() }
         val tags = billTo37004Tags(bill, preservedTags, dTag)
-        val sent = nostrClient.publishReplaceable37004(dTag, tags)
-        if (sent) {
+        val status = nostrClient.publishReplaceable37004Detailed(dTag, tags)
+        if (status.success) {
             val tagsJson = buildJsonArray {
                 tags.forEach { tag ->
                     add(buildJsonArray { tag.forEach { add(JsonPrimitive(it)) } })
@@ -240,8 +252,15 @@ class CypherLogSubscriptionRepository @Inject constructor(
                     createdAt = System.currentTimeMillis() / 1000
                 )
             )
+            return SaveResult(success = true)
         }
-        return sent
+        val reason = when (status.stage) {
+            "no_signer" -> "No signer configured."
+            "sign_event" -> "Amber signing was rejected/cancelled or not supported for this event."
+            "publish_event" -> "Signed event could not be sent to relay."
+            else -> "Unknown publish error."
+        } + if (status.detail.isNotBlank()) " ${status.detail}" else ""
+        return SaveResult(success = false, reason = reason)
     }
 
     suspend fun deleteSubscription(dTag: String) {
