@@ -41,7 +41,9 @@ import com.fiatlife.app.ui.components.formatCurrency
 import com.fiatlife.app.ui.theme.ProfitGreen
 import com.fiatlife.app.ui.viewmodel.BillsViewModel
 import android.widget.Toast
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -360,6 +362,36 @@ private fun BillCard(
     onCreditClick: (() -> Unit)? = null
 ) {
     val bill = item.bill
+    val now = System.currentTimeMillis()
+    val dueMillis = if (bill.isPastDue()) bill.lastDueDateMillis() else bill.nextDueDateMillis()
+    val dueDateText = dueMillis?.let { SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(it)) }
+    val daysUntilDue = dueMillis?.let { millis ->
+        val nowCal = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val dueCal = Calendar.getInstance().apply {
+            timeInMillis = millis
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        ((dueCal.timeInMillis - nowCal.timeInMillis) / 86_400_000L).toInt()
+    }
+    val countdownLabel = when {
+        bill.isPaid -> "Paid"
+        dueMillis == null -> null
+        bill.isPastDue() -> {
+            val daysOverdue = (((now - dueMillis) / 86_400_000L).toInt() + 1).coerceAtLeast(1)
+            "$daysOverdue d overdue"
+        }
+        daysUntilDue == 0 -> "Due today"
+        daysUntilDue == 1 -> "Due tomorrow"
+        else -> "${daysUntilDue ?: 0} d left"
+    }
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -427,16 +459,17 @@ private fun BillCard(
                             )
                         }
                     }
-                    if (linkedAccountId != null && onCreditClick != null) {
+                    if (countdownLabel != null) {
                         Surface(
                             shape = MaterialTheme.shapes.small,
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.clickable { onCreditClick() }
+                            color = if (bill.isPastDue()) MaterialTheme.colorScheme.errorContainer
+                            else MaterialTheme.colorScheme.primaryContainer
                         ) {
                             Text(
-                                text = "Credit: ${linkedAccountName ?: "…"}",
+                                text = countdownLabel,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                color = if (bill.isPastDue()) MaterialTheme.colorScheme.onErrorContainer
+                                else MaterialTheme.colorScheme.onPrimaryContainer,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
@@ -462,6 +495,32 @@ private fun BillCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (dueDateText != null) {
+                        Text(
+                            text = "·",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "Due $dueDateText",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (bill.isPastDue()) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (linkedAccountId != null && onCreditClick != null) {
+                        Text(
+                            text = "·",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "Credit: ${linkedAccountName ?: "…"}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.clickable { onCreditClick() }
+                        )
+                    }
                     if (bill.statementEntries.isNotEmpty() || bill.attachmentHashes.isNotEmpty()) {
                         Text(
                             text = "·",
