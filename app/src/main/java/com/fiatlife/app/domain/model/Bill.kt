@@ -316,7 +316,11 @@ data class Bill(
         val anchor = initialPurchaseDateMillis
         if (anchor != null) {
             val (unit, interval) = recurrenceConfig()
+            // Treat initial purchase/start as the cycle anchor, not an immediately due date.
+            // First due occurs after one full recurrence interval.
             var next = applyDueDayForMonthBased(startOfDayMillis(anchor), dueDay.coerceIn(1, 31), unit)
+            next = addRecurrence(next, unit, interval)
+            next = applyDueDayForMonthBased(next, dueDay.coerceIn(1, 31), unit)
             while (next <= System.currentTimeMillis()) {
                 next = addRecurrence(next, unit, interval)
                 next = applyDueDayForMonthBased(next, dueDay.coerceIn(1, 31), unit)
@@ -403,6 +407,12 @@ data class Bill(
     /** True if this bill is not paid and the due date (end of due day) has passed. */
     fun isPastDue(): Boolean {
         if (isPaid) return false
+        // For anchored recurrence, bill cannot be overdue before the first cycle due date.
+        initialPurchaseDateMillis?.let { anchor ->
+            val firstDue = firstDueDateFromAnchor(anchor)
+            val firstDueEnd = firstDue + 86_400_000L - 1
+            if (System.currentTimeMillis() <= firstDueEnd) return false
+        }
         val lastDue = lastDueDateMillis() ?: return false
         // Never mark a bill overdue before its first cycle after creation/start date.
         val startAnchor = initialPurchaseDateMillis ?: createdAt.takeIf { it > 0 }
@@ -423,6 +433,13 @@ data class Bill(
             BillFrequency.SEMIANNUALLY -> BillRecurrenceUnit.MONTH to 6
             BillFrequency.ANNUALLY -> BillRecurrenceUnit.YEAR to 1
         }
+    }
+
+    private fun firstDueDateFromAnchor(anchorMillis: Long): Long {
+        val (unit, interval) = recurrenceConfig()
+        var firstDue = applyDueDayForMonthBased(startOfDayMillis(anchorMillis), dueDay.coerceIn(1, 31), unit)
+        firstDue = addRecurrence(firstDue, unit, interval)
+        return applyDueDayForMonthBased(firstDue, dueDay.coerceIn(1, 31), unit)
     }
 
     private fun addRecurrence(baseMillis: Long, unit: BillRecurrenceUnit, interval: Int): Long {
