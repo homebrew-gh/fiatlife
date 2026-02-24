@@ -42,7 +42,9 @@ import com.fiatlife.app.ui.screens.pin.PinLockScreen
 import com.fiatlife.app.ui.theme.FiatLifeTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
@@ -160,6 +162,8 @@ class MainActivity : ComponentActivity() {
             }
 
             val pinLocked by needsPinUnlock
+            var relaySetupLoading by remember { mutableStateOf(false) }
+            var relaySetupStatus by remember { mutableStateOf("Connecting to relay…") }
 
             FiatLifeTheme {
                 when {
@@ -224,21 +228,43 @@ class MainActivity : ComponentActivity() {
                     !hasRelayConfigured -> {
                         isInMainApp = false
                         RelaySetupScreen(
+                            isLoading = relaySetupLoading,
+                            loadingMessage = relaySetupStatus,
                             onSave = { relayInput, blossomInput ->
+                                if (relaySetupLoading) return@RelaySetupScreen
                                 lifecycleScope.launch {
+                                    relaySetupLoading = true
                                     val relayUrl = normalizeRelayUrl(relayInput)
                                     val blossomUrl = normalizeBlossomUrl(blossomInput)
-                                    dataStore.edit { prefs ->
-                                        prefs[KEY_RELAY_URL] = relayUrl
-                                        prefs[KEY_BLOSSOM_URL] = blossomUrl
-                                    }
-                                    appSettingsRepository.publishBlossomUrl(blossomUrl)
-                                    if (relayUrl.isNotBlank()) {
-                                        nostrClient.connect(relayUrl)
-                                        nostrClient.currentSigner?.let { signer ->
-                                            if (blossomUrl.isNotBlank()) blossomClient.configure(blossomUrl, signer)
+                                    try {
+                                        relaySetupStatus = "Saving relay settings…"
+                                        dataStore.edit { prefs ->
+                                            prefs[KEY_RELAY_URL] = relayUrl
+                                            prefs[KEY_BLOSSOM_URL] = blossomUrl
                                         }
-                                        syncFromRelay()
+
+                                        if (relayUrl.isNotBlank()) {
+                                            relaySetupStatus = "Connecting to relay…"
+                                            nostrClient.connect(relayUrl)
+                                            val ready = nostrClient.awaitReady(12_000)
+                                            relaySetupStatus = if (ready) {
+                                                "Connected. Loading your data…"
+                                            } else {
+                                                "Waiting for relay/auth. Loading queued data…"
+                                            }
+                                            nostrClient.currentSigner?.let { signer ->
+                                                if (blossomUrl.isNotBlank()) blossomClient.configure(blossomUrl, signer)
+                                            }
+                                            syncFromRelayBlocking()
+                                        }
+                                        // Non-blocking: don't hold the onboarding UI while this publish finishes.
+                                        if (blossomUrl.isNotBlank()) {
+                                            this@MainActivity.lifecycleScope.launch {
+                                                runCatching { appSettingsRepository.publishBlossomUrl(blossomUrl) }
+                                            }
+                                        }
+                                    } finally {
+                                        relaySetupLoading = false
                                     }
                                     mainHandler.post { refresh++ }
                                 }
@@ -372,6 +398,22 @@ class MainActivity : ComponentActivity() {
             launch { try { billerRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Biller sync: ${e.message}") } }
             launch { try { cypherLogSubscriptionRepository.syncFromRelay() } catch (e: Exception) { Log.w(TAG, "CypherLog sync: ${e.message}") } }
         }
+    }
+
+    private suspend fun syncFromRelayBlocking() = coroutineScope {
+        if (!nostrClient.hasSigner) return@coroutineScope
+        Log.d(TAG, "Starting blocking one-shot sync from relay")
+        val jobs = listOf(
+            launch { runCatching { syncSettingsFromRelay() }.onFailure { Log.w(TAG, "Settings sync: ${it.message}") } },
+            launch { runCatching { salaryRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Salary sync: ${it.message}") } },
+            launch { runCatching { billRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bill sync: ${it.message}") } },
+            launch { runCatching { goalRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Goal sync: ${it.message}") } },
+            launch { runCatching { creditAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Credit account sync: ${it.message}") } },
+            launch { runCatching { bankAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bank account sync: ${it.message}") } },
+            launch { runCatching { billerRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Biller sync: ${it.message}") } },
+            launch { runCatching { cypherLogSubscriptionRepository.syncFromRelay() }.onFailure { Log.w(TAG, "CypherLog sync: ${it.message}") } }
+        )
+        jobs.joinAll()
     }
 
     private suspend fun syncSettingsFromRelay() {

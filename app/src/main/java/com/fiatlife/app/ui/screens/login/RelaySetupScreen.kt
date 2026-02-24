@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -33,7 +34,9 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun RelaySetupScreen(
-    onSave: (relayUrl: String, blossomUrl: String) -> Unit
+    onSave: (relayUrl: String, blossomUrl: String) -> Unit,
+    isLoading: Boolean = false,
+    loadingMessage: String = "Connecting to relay..."
 ) {
     var relayUrl by remember { mutableStateOf("wss://") }
     var blossomUrl by remember { mutableStateOf("") }
@@ -81,7 +84,8 @@ fun RelaySetupScreen(
                 placeholder = { Text("wss://relay.example.com") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                shape = MaterialTheme.shapes.medium
+                shape = MaterialTheme.shapes.medium,
+                enabled = !isLoading
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -93,22 +97,43 @@ fun RelaySetupScreen(
                 placeholder = { Text("https://blossom.example.com") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                shape = MaterialTheme.shapes.medium
+                shape = MaterialTheme.shapes.medium,
+                enabled = !isLoading
             )
 
             Spacer(modifier = Modifier.height(16.dp))
 
             Button(
                 onClick = { onSave(relayUrl, blossomUrl) },
-                enabled = relayUrl.removePrefix("wss://").isNotBlank(),
+                enabled = relayUrl.removePrefix("wss://").isNotBlank() && !isLoading,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
                 shape = MaterialTheme.shapes.large
             ) {
-                Icon(Icons.Filled.Cloud, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Save & Load Profile", style = MaterialTheme.typography.titleMedium)
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Loading…", style = MaterialTheme.typography.titleMedium)
+                } else {
+                    Icon(Icons.Filled.Cloud, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Save & Load Profile", style = MaterialTheme.typography.titleMedium)
+                }
+            }
+
+            if (isLoading) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = loadingMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
             }
         }
     }
