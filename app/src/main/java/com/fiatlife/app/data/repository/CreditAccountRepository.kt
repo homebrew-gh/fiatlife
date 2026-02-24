@@ -86,44 +86,37 @@ class CreditAccountRepository @Inject constructor(
             CreditAccountType.STUDENT_LOAN -> BillSubcategory.STUDENT_LOAN
             else -> BillSubcategory.OTHER_LOAN
         }
-        return when {
-            account.currentBalance > 0 -> {
-                if (account.linkedBillId != null) {
-                    val existing = billRepository.getBillById(account.linkedBillId).first()
-                    if (existing != null) {
-                        billRepository.saveBill(
-                            existing.copy(
-                                name = account.name,
-                                amount = account.effectiveMonthlyPayment(),
-                                dueDay = account.dueDay,
-                                subcategory = subcategory,
-                                updatedAt = System.currentTimeMillis()
-                            )
+        if (account.currentBalance > 0) {
+            val billId = account.linkedBillId
+            if (billId != null) {
+                val existing = billRepository.getBillById(billId).first()
+                if (existing != null) {
+                    billRepository.saveBill(
+                        existing.copy(
+                            name = account.name,
+                            amount = account.effectiveMonthlyPayment(),
+                            dueDay = account.dueDay,
+                            subcategory = subcategory,
+                            updatedAt = System.currentTimeMillis()
                         )
-                        return@ensureBillForAccount account
-                    } else {
-                        return@ensureBillForAccount createAndLinkBill(account, subcategory)
-                    }
-                } else {
-                    return@ensureBillForAccount createAndLinkBill(account, subcategory)
+                    )
+                    return account
                 }
             }
-            account.linkedBillId != null -> {
-                val billId = account.linkedBillId
-                if (billId != null) {
-                    billRepository.getBillById(billId).first()?.let { existing ->
-                        billRepository.saveBill(
-                            existing.copy(
-                                amount = 0.0,
-                                updatedAt = System.currentTimeMillis()
-                            )
-                        )
-                    }
-                }
-                return@ensureBillForAccount account
-            }
-            else -> return@ensureBillForAccount account
+            return createAndLinkBill(account, subcategory)
         }
+        val billId = account.linkedBillId
+        if (billId != null) {
+            billRepository.getBillById(billId).first()?.let { existing ->
+                billRepository.saveBill(
+                    existing.copy(
+                        amount = 0.0,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                )
+            }
+        }
+        return account
     }
 
     private suspend fun createAndLinkBill(account: CreditAccount, billSubcategory: BillSubcategory): CreditAccount {
