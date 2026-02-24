@@ -311,10 +311,17 @@ class NostrClient @Inject constructor(
         )
         val signedJson = s.signEvent(unsignedJson) ?: run {
             Log.e(TAG, "publishReplaceable37004: event signing failed for d=$dTag")
+            val amberReason = (s as? AmberSigner)?.consumeLastSignError()
             return PublishStatus(
                 success = false,
                 stage = "sign_event",
-                detail = "Signer returned null (rejected/cancelled or unsupported request)."
+                detail = buildString {
+                    append("Signer returned null (rejected/cancelled or unsupported request).")
+                    if (!amberReason.isNullOrBlank()) {
+                        append(" ")
+                        append(amberReason)
+                    }
+                }
             )
         }
         val sent = publishSignedEventJson(signedJson)
