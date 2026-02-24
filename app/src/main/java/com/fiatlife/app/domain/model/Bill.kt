@@ -290,10 +290,10 @@ data class Bill(
 
     /** Next due date (start of day) in ms. Handles MONTHLY; other frequencies use similar logic. */
     fun nextDueDateMillis(): Long? {
-        val explicitRenewal = renewalDateMillis
-        if (explicitRenewal != null) {
+        val explicitRenewal = renewalDateMillis ?: return nextDueFromFrequency()
+        run {
             val (unit, interval) = recurrenceConfig()
-            var next = explicitRenewal
+            var next: Long = explicitRenewal
             if (isPaid) {
                 val reference = lastPaidDate ?: System.currentTimeMillis()
                 while (next <= reference) {
@@ -302,7 +302,9 @@ data class Bill(
             }
             return next
         }
+    }
 
+    private fun nextDueFromFrequency(): Long? {
         val cal = java.util.Calendar.getInstance()
         val day = dueDay.coerceIn(1, 31)
         when (frequency) {
