@@ -82,6 +82,27 @@ class CypherLogSubscriptionRepository @Inject constructor(
     private val nostrClient: NostrClient,
     private val json: Json
 ) {
+    /** Temporary debug export for local 37004 cache inspection in Settings screen. */
+    suspend fun exportDebugRows(limit: Int = 20): String {
+        val rows = dao.getRecent(limit)
+        if (rows.isEmpty()) return "No cached 37004 subscription rows found."
+        fun truncate(s: String, max: Int = 2500): String =
+            if (s.length <= max) s else s.take(max) + "… [truncated]"
+
+        return buildString {
+            appendLine("CypherLog 37004 cache debug export")
+            appendLine("rows=${rows.size}")
+            rows.forEachIndexed { idx, row ->
+                appendLine()
+                appendLine("[$idx] dTag=${row.dTag}")
+                appendLine("eventId=${row.eventId}")
+                appendLine("createdAt=${row.createdAt}")
+                appendLine("tagsJson=${truncate(row.tagsJson)}")
+                appendLine("contentDecryptedJson=${row.contentDecryptedJson?.let { truncate(it) } ?: "<null>"}")
+            }
+        }
+    }
+
     fun getAllAsBills(): Flow<List<BillWithSource>> {
         return dao.getAll().map { entities ->
             entities.map { entity -> entityToBillWithSource(entity) }
