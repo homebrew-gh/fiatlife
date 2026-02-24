@@ -54,6 +54,7 @@ fun BillsScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val subscriptionExpandedBySubcategory = remember { mutableStateMapOf<String, Boolean>() }
 
     LaunchedEffect(Unit) {
         viewModel.showPastDueAutopayDialogIfNeeded()
@@ -187,19 +188,67 @@ fun BillsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    items(categoryBills, key = { it.id }) { item ->
-                        val linkedId = item.bill.linkedCreditAccountId
-                        val linkedAccount = state.creditAccounts.find { it.id == linkedId }
-                        BillCard(
-                            item = item,
-                            linkedAccountName = linkedAccount?.name,
-                            linkedAccountId = linkedId,
-                            onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
-                            onMarkPaid = { viewModel.recordPayment(item) },
-                            onCreditClick = if (linkedId != null) {
-                                { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
-                            } else null
-                        )
+                    if (generalCategory == BillGeneralCategory.SUBSCRIPTION) {
+                        val groupedSubscriptions = categoryBills
+                            .groupBy { it.bill.effectiveSubcategory }
+                            .toList()
+                            .sortedBy { it.first.displayName }
+
+                        groupedSubscriptions.forEach { (subcategory, subBills) ->
+                            val sortedSubBills = subBills.sortedWith(
+                                compareBy<BillWithSource> { item ->
+                                    val b = item.bill
+                                    if (b.isPastDue()) b.lastDueDateMillis() ?: Long.MAX_VALUE
+                                    else b.nextDueDateMillis() ?: Long.MAX_VALUE
+                                }.thenBy { it.bill.name.lowercase() }
+                            )
+                            val subcategoryKey = subcategory.name
+                            val isExpanded = subscriptionExpandedBySubcategory
+                                .getOrPut(subcategoryKey) { sortedSubBills.size <= 2 }
+                            val subtotal = sortedSubBills.sumOf { it.bill.effectiveAmountDue() }
+
+                            item(key = "sub_header_${subcategory.name}") {
+                                SubscriptionSubcategoryHeader(
+                                    subcategory = subcategory,
+                                    billCount = sortedSubBills.size,
+                                    subtotal = subtotal,
+                                    expanded = isExpanded,
+                                    onToggle = { subscriptionExpandedBySubcategory[subcategoryKey] = !isExpanded }
+                                )
+                            }
+
+                            if (isExpanded) {
+                                items(sortedSubBills, key = { it.id }) { item ->
+                                    val linkedId = item.bill.linkedCreditAccountId
+                                    val linkedAccount = state.creditAccounts.find { it.id == linkedId }
+                                    BillCard(
+                                        item = item,
+                                        linkedAccountName = linkedAccount?.name,
+                                        linkedAccountId = linkedId,
+                                        onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
+                                        onMarkPaid = { viewModel.recordPayment(item) },
+                                        onCreditClick = if (linkedId != null) {
+                                            { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
+                                        } else null
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        items(categoryBills, key = { it.id }) { item ->
+                            val linkedId = item.bill.linkedCreditAccountId
+                            val linkedAccount = state.creditAccounts.find { it.id == linkedId }
+                            BillCard(
+                                item = item,
+                                linkedAccountName = linkedAccount?.name,
+                                linkedAccountId = linkedId,
+                                onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
+                                onMarkPaid = { viewModel.recordPayment(item) },
+                                onCreditClick = if (linkedId != null) {
+                                    { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
+                                } else null
+                            )
+                        }
                     }
                     item(key = "spacer_${generalCategory.name}") { Spacer(modifier = Modifier.height(4.dp)) }
                 }
@@ -306,42 +355,115 @@ private fun CreditLoanPaymentDialog(
     onDismiss: () -> Unit,
     onConfirm: (amount: Double, newBalance: Double?) -> Unit
 ) {
+    val isCreditCard = item.bill.effectiveSubcategory == BillSubcategory.CREDIT_CARD
     var amountStr by remember { mutableStateOf("%.2f".format(defaultAmount)) }
     var newBalanceStr by remember { mutableStateOf("") }
-    val amount = amountStr.toDoubleOrNull() ?: 0.0
+    var creditCardPaymentMode by remember { mutableStateOf(CreditCardPaymentMode.MINIMUM_DUE) }
+    val customAmount = amountStr.toDoubleOrNull() ?: 0.0
+    val minimumDue = defaultAmount.coerceAtLeast(0.0)
+    val fullBalance = currentBalance.coerceAtLeast(0.0)
+    val selectedCreditAmount = when (creditCardPaymentMode) {
+        CreditCardPaymentMode.FULL_BALANCE -> fullBalance
+        CreditCardPaymentMode.MINIMUM_DUE -> minimumDue
+        CreditCardPaymentMode.CUSTOM -> customAmount
+    }.coerceAtMost(fullBalance)
+    val loanAmount = amountStr.toDoubleOrNull() ?: 0.0
     val newBalance = newBalanceStr.toDoubleOrNull()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Record payment — ${item.bill.name}") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    "Enter the amount paid. You can optionally set the new balance (e.g. from a statement); otherwise the balance will be reduced by the amount paid.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                CurrencyTextField(
-                    value = amountStr,
-                    onValueChange = { amountStr = it },
-                    label = "Amount paid"
-                )
-                OutlinedTextField(
-                    value = newBalanceStr,
-                    onValueChange = { newBalanceStr = it.filter { c -> c.isDigit() || c == '.' } },
-                    label = { Text("New balance (optional)") },
-                    placeholder = { Text("Leave blank to subtract amount from current (${currentBalance.formatCurrency()})") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    shape = MaterialTheme.shapes.medium
-                )
+                if (isCreditCard) {
+                    Text(
+                        "Current balance: ${currentBalance.formatCurrency()}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { creditCardPaymentMode = CreditCardPaymentMode.FULL_BALANCE },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = creditCardPaymentMode == CreditCardPaymentMode.FULL_BALANCE,
+                            onClick = { creditCardPaymentMode = CreditCardPaymentMode.FULL_BALANCE }
+                        )
+                        Text("Pay total balance (${fullBalance.formatCurrency()})")
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { creditCardPaymentMode = CreditCardPaymentMode.MINIMUM_DUE },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = creditCardPaymentMode == CreditCardPaymentMode.MINIMUM_DUE,
+                            onClick = { creditCardPaymentMode = CreditCardPaymentMode.MINIMUM_DUE }
+                        )
+                        Text("Pay minimum (${minimumDue.formatCurrency()})")
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { creditCardPaymentMode = CreditCardPaymentMode.CUSTOM },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = creditCardPaymentMode == CreditCardPaymentMode.CUSTOM,
+                            onClick = { creditCardPaymentMode = CreditCardPaymentMode.CUSTOM }
+                        )
+                        Text("Custom amount")
+                    }
+                    if (creditCardPaymentMode == CreditCardPaymentMode.CUSTOM) {
+                        CurrencyTextField(
+                            value = amountStr,
+                            onValueChange = { amountStr = it },
+                            label = "Custom amount paid"
+                        )
+                    }
+                    Text(
+                        text = "New balance after payment: ${(currentBalance - selectedCreditAmount).coerceAtLeast(0.0).formatCurrency()}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Text(
+                        "Enter the amount paid. You can optionally set the new balance (e.g. from a statement); otherwise the balance will be reduced by the amount paid.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    CurrencyTextField(
+                        value = amountStr,
+                        onValueChange = { amountStr = it },
+                        label = "Amount paid"
+                    )
+                    OutlinedTextField(
+                        value = newBalanceStr,
+                        onValueChange = { newBalanceStr = it.filter { c -> c.isDigit() || c == '.' } },
+                        label = { Text("New balance (optional)") },
+                        placeholder = { Text("Leave blank to subtract amount from current (${currentBalance.formatCurrency()})") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = MaterialTheme.shapes.medium
+                    )
+                }
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (amount > 0) {
-                        val balance = if (newBalance != null && newBalance >= 0) newBalance else null
-                        onConfirm(amount, balance)
+                    if (isCreditCard) {
+                        if (selectedCreditAmount > 0) {
+                            val balance = (currentBalance - selectedCreditAmount).coerceAtLeast(0.0)
+                            onConfirm(selectedCreditAmount, balance)
+                        }
+                    } else {
+                        if (loanAmount > 0) {
+                            val balance = if (newBalance != null && newBalance >= 0) newBalance else null
+                            onConfirm(loanAmount, balance)
+                        }
                     }
                 }
             ) { Text("Save") }
@@ -350,6 +472,12 @@ private fun CreditLoanPaymentDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+}
+
+private enum class CreditCardPaymentMode {
+    FULL_BALANCE,
+    MINIMUM_DUE,
+    CUSTOM
 }
 
 @Composable
@@ -537,6 +665,54 @@ private fun BillCard(
                 contentDescription = "View details",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun SubscriptionSubcategoryHeader(
+    subcategory: BillSubcategory,
+    billCount: Int,
+    subtotal: Double,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onToggle() },
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = if (expanded) "Collapse ${subcategory.displayName}" else "Expand ${subcategory.displayName}",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = subcategory.displayName,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "$billCount subscription(s)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            MoneyText(
+                amount = subtotal,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface
             )
         }
     }

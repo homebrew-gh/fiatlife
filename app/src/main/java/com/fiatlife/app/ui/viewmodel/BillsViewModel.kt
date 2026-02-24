@@ -57,20 +57,26 @@ class BillsViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            creditAccountRepository.getAllCreditAccounts().collect { accounts ->
-                _state.update { it.copy(creditAccounts = accounts) }
-            }
-        }
-        viewModelScope.launch {
             combine(
                 repository.getAllBills(),
-                cypherLogSubscriptionRepository.getAllAsBills()
-            ) { nativeBills, cypherLogBills ->
+                cypherLogSubscriptionRepository.getAllAsBills(),
+                creditAccountRepository.getAllCreditAccounts()
+            ) { nativeBills, cypherLogBills, creditAccounts ->
                 val merged = nativeBills.map { BillWithSource(it, com.fiatlife.app.domain.model.BillSource.NATIVE, null) } +
                     cypherLogBills
-                merged.sortedBy { it.bill.name.lowercase() }
+                val sortedMerged = merged.sortedBy { it.bill.name.lowercase() }
+                sortedMerged to creditAccounts
             }.collect { bills ->
-                val allBills = bills.map { it.bill }
+                val mergedBills = bills.first
+                val creditAccounts = bills.second
+                val accountsById = creditAccounts.associateBy { it.id }
+                val visibleBills = mergedBills.filter { item ->
+                    val linkedId = item.bill.linkedCreditAccountId ?: return@filter true
+                    val account = accountsById[linkedId] ?: return@filter true
+                    account.currentBalance > 0.0
+                }
+
+                val allBills = visibleBills.map { it.bill }
                 val monthlyTotal = allBills.sumOf { b ->
                     b.effectiveAmountDue() * b.frequency.timesPerYear / 12.0
                 }
@@ -89,7 +95,7 @@ class BillsViewModel @Inject constructor(
                 }
                 val todayStart = cal.timeInMillis
                 val todayEnd = todayStart + 86_400_000L - 1
-                val dueIn7Days = bills.filter { item ->
+                val dueIn7Days = visibleBills.filter { item ->
                     if (item.isCypherLog || item.bill.isPaid) return@filter false
                     if (!item.bill.autoPay || item.bill.isCreditOrLoan()) {
                         val nextDue = item.bill.nextDueDateMillis()
@@ -104,19 +110,20 @@ class BillsViewModel @Inject constructor(
                         .thenBy { it.bill.nextDueDateMillis() ?: Long.MAX_VALUE }
                 )
                 val dueIn7Ids = dueIn7Days.map { it.id }.toSet()
-                val otherByCategory = bills
+                val otherByCategory = visibleBills
                     .filter { it.id !in dueIn7Ids }
                     .groupBy { it.bill.effectiveGeneralCategory }
-                    .mapValues { (_, list) -> list.sortedBy { it.bill.name.lowercase() } }
+                    .mapValues { (_, list) -> list.sortedWith(billDueSoonestComparator()) }
 
-                val pastDueAutopay = bills.filter { item ->
+                val pastDueAutopay = visibleBills.filter { item ->
                     !item.isCypherLog && item.bill.autoPay && item.bill.isPastDue()
                 }
 
                 _state.update { state ->
                     state.copy(
-                        bills = bills,
-                        filteredBills = filterBills(bills, state.selectedGeneralCategory),
+                        bills = visibleBills,
+                        filteredBills = filterBills(visibleBills, state.selectedGeneralCategory),
+                        creditAccounts = creditAccounts,
                         totalMonthly = monthlyTotal,
                         categoryTotals = categoryTotals,
                         billsDueInNext7Days = dueIn7Days,
@@ -363,6 +370,21 @@ class BillsViewModel @Inject constructor(
 
     private fun filterBills(bills: List<BillWithSource>, generalCategory: BillGeneralCategory?): List<BillWithSource> {
         return if (generalCategory == null) bills
-        else bills.filter { it.bill.effectiveGeneralCategory == generalCategory }
+        else bills
+            .filter { it.bill.effectiveGeneralCategory == generalCategory }
+            .sortedWith(billDueSoonestComparator())
     }
+
+    private fun billDueSortKey(item: BillWithSource): Long {
+        val bill = item.bill
+        return if (bill.isPastDue()) {
+            bill.lastDueDateMillis() ?: Long.MAX_VALUE
+        } else {
+            bill.nextDueDateMillis() ?: Long.MAX_VALUE
+        }
+    }
+
+    private fun billDueSoonestComparator(): Comparator<BillWithSource> =
+        compareBy<BillWithSource> { billDueSortKey(it) }
+            .thenBy { it.bill.name.lowercase() }
 }
