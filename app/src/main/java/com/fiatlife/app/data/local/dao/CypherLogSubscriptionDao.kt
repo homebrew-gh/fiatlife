@@ -9,11 +9,17 @@ interface CypherLogSubscriptionDao {
     @Query("SELECT * FROM cypherlog_subscriptions ORDER BY createdAt DESC")
     fun getAll(): Flow<List<CypherLogSubscriptionEntity>>
 
+    @Query("SELECT * FROM cypherlog_subscriptions ORDER BY createdAt DESC")
+    suspend fun getAllSnapshot(): List<CypherLogSubscriptionEntity>
+
     @Query("SELECT * FROM cypherlog_subscriptions WHERE dTag = :dTag LIMIT 1")
     suspend fun getByDTag(dTag: String): CypherLogSubscriptionEntity?
 
     @Query("SELECT * FROM cypherlog_subscriptions WHERE dTag = :dTag LIMIT 1")
     fun getByDTagAsFlow(dTag: String): Flow<CypherLogSubscriptionEntity?>
+
+    @Query("SELECT * FROM cypherlog_subscriptions WHERE dTag = :dTagA OR dTag = :dTagB LIMIT 1")
+    fun getByEitherDTagAsFlow(dTagA: String, dTagB: String): Flow<CypherLogSubscriptionEntity?>
 
     @Upsert
     suspend fun upsert(entity: CypherLogSubscriptionEntity)

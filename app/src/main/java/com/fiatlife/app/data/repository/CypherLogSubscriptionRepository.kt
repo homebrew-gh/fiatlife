@@ -31,10 +31,11 @@ import javax.inject.Singleton
 
 private const val TAG = "CypherLogSubRepo"
 private const val DELETE_TOMBSTONE_DTAG_PREFIX = "fiatlife/cypherlog_deleted/"
+private const val SUBSCRIPTION_DTAG_PREFIX = "subscription:"
 
 /** CypherLog 37004 tag keys we map to Bill; all others are preserved for round-trip */
 private val MAPPED_TAG_KEYS = setOf(
-    "d", "name", "cost", "currency", "billing_frequency", "subscription_type",
+    "d", "id", "name", "cost", "amount", "currency", "billing_frequency", "recurrence", "subscription_type",
     "company_name", "company_id", "notes", "alt", "due_day",
     "renewal_date", "next_due_date", "due_date",
     "initial_purchase_date", "purchase_date", "anchor_date", "start_date",
@@ -183,6 +184,15 @@ class CypherLogSubscriptionRepository @Inject constructor(
     private val nostrClient: NostrClient,
     private val json: Json
 ) {
+    private fun toSubscriptionDTag(idOrDTag: String): String {
+        val value = idOrDTag.trim()
+        if (value.startsWith(SUBSCRIPTION_DTAG_PREFIX)) return value
+        return "$SUBSCRIPTION_DTAG_PREFIX$value"
+    }
+
+    private fun rawIdFromDTag(dTag: String): String =
+        dTag.removePrefix(SUBSCRIPTION_DTAG_PREFIX)
+
     data class SaveResult(
         val success: Boolean,
         val reason: String = ""
@@ -195,13 +205,14 @@ class CypherLogSubscriptionRepository @Inject constructor(
     }
 
     fun getByDTag(dTag: String): Flow<BillWithSource?> {
-        return dao.getByDTagAsFlow(dTag).map { entity ->
+        return dao.getByEitherDTagAsFlow(toSubscriptionDTag(dTag), dTag).map { entity ->
             entity?.let { entityToBillWithSource(it) }
         }
     }
 
     suspend fun upsertFromEvent(event: NostrEvent) {
-        val dTag = event.tags.firstOrNull { it.size >= 2 && it[0] == "d" }?.getOrNull(1) ?: return
+        val dTagRaw = event.tags.firstOrNull { it.size >= 2 && it[0] == "d" }?.getOrNull(1) ?: return
+        val dTag = toSubscriptionDTag(dTagRaw)
         val tagsJson = buildJsonArray {
             event.tags.forEach { tag ->
                 add(buildJsonArray { tag.forEach { add(JsonPrimitive(it)) } })
@@ -269,9 +280,10 @@ class CypherLogSubscriptionRepository @Inject constructor(
         bill: Bill,
         preservedTags: Map<String, List<String>>? = null
     ): SaveResult {
-        val dTag = bill.id.ifEmpty { UUID.randomUUID().toString() }
-        val tags = billTo37004Tags(bill, preservedTags, dTag)
-        val status = nostrClient.publishReplaceable37004Detailed(dTag, tags)
+        val rawId = bill.id.ifEmpty { UUID.randomUUID().toString() }
+        val dTag = toSubscriptionDTag(rawId)
+        val tags = billTo30078Tags(bill.copy(id = rawId), preservedTags, dTag, rawId)
+        val status = nostrClient.publishReplaceable30078Detailed(dTag, tags, content = "")
         if (status.success) {
             val tagsJson = buildJsonArray {
                 tags.forEach { tag ->
@@ -301,12 +313,13 @@ class CypherLogSubscriptionRepository @Inject constructor(
         publishDeleteTombstone(dTag)
         if (nostrClient.hasSigner) {
             try {
-                nostrClient.publishDeletion(NostrEvent.KIND_CYPHERLOG_SUBSCRIPTION, dTag)
-                Log.d(TAG, "Published NIP-09 deletion for 37004 d=$dTag")
+                nostrClient.publishDeletion(NostrEvent.KIND_APP_SPECIFIC_DATA, toSubscriptionDTag(dTag))
+                Log.d(TAG, "Published NIP-09 deletion for 30078 d=${toSubscriptionDTag(dTag)}")
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to publish 37004 deletion: ${e.message}")
+                Log.e(TAG, "Failed to publish 30078 deletion: ${e.message}")
             }
         }
+        dao.deleteByDTag(toSubscriptionDTag(dTag))
         dao.deleteByDTag(dTag)
     }
 
@@ -316,22 +329,35 @@ class CypherLogSubscriptionRepository @Inject constructor(
             withTimeout(30_000) {
                 val deletedDTags = loadDeletedDTagsFromRelay()
                 if (deletedDTags.isNotEmpty()) {
-                    deletedDTags.forEach { dao.deleteByDTag(it) }
+                    deletedDTags.forEach {
+                        dao.deleteByDTag(toSubscriptionDTag(it))
+                        dao.deleteByDTag(it)
+                    }
                 }
                 var count = 0
-                nostrClient.subscribeToKind37004().collect { event ->
+                val seenDTags = mutableSetOf<String>()
+                nostrClient.subscribeToKind30078ByDTagPrefix(SUBSCRIPTION_DTAG_PREFIX).collect { event ->
                     val dTag = event.tags.firstOrNull { it.size >= 2 && it[0] == "d" }?.getOrNull(1) ?: return@collect
-                    if (dTag in deletedDTags) {
-                        dao.deleteByDTag(dTag)
+                    val normalizedDTag = toSubscriptionDTag(dTag)
+                    if (rawIdFromDTag(normalizedDTag) in deletedDTags || normalizedDTag in deletedDTags) {
+                        dao.deleteByDTag(normalizedDTag)
                         return@collect
                     }
                     upsertFromEvent(event)
+                    seenDTags.add(normalizedDTag)
                     count++
                 }
-                Log.d(TAG, "Synced $count 37004 subscription(s) from relay")
+                // Prune stale local rows that no longer exist on relay (prevents ghost/deleted reappearance).
+                val local = dao.getAllSnapshot().map { toSubscriptionDTag(it.dTag) }
+                val stale = local.filter { it !in seenDTags && rawIdFromDTag(it) !in deletedDTags }
+                stale.forEach {
+                    dao.deleteByDTag(it)
+                    dao.deleteByDTag(rawIdFromDTag(it))
+                }
+                Log.d(TAG, "Synced $count 30078 subscription(s) from relay; pruned ${stale.size} stale row(s)")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "37004 sync failed: ${e.message}")
+            Log.e(TAG, "30078 subscription sync failed: ${e.message}")
         }
     }
 
@@ -371,7 +397,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
         return false
     }
 
-    /** Parse CypherLog encrypted content JSON (same logical fields as tags) and build Bill; preserved from tags. */
+    /** Parse CypherLog content JSON (same logical fields as tags) and build Bill; preserved from tags. */
     private fun content37004ToBill(dTag: String, contentJson: String, tags: List<List<String>>): Pair<Bill, Map<String, List<String>>?> {
         val tagMap = tagsToMap(tags)
         val preserved = tagMap.filter { (k, _) -> k !in MAPPED_TAG_KEYS }
@@ -417,7 +443,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
                 ?: keys.mapNotNull { key -> str(key)?.toDoubleOrNull() }.firstOrNull()
             var nameFromContent = str("name", "subscriptionName", "subscription_name", "title", "description") ?: ""
             cost = doubleVal("cost", "amount", "price", "costAmount", "subscriptionCost") ?: 0.0
-            frequency = billingFrequencyToBillFrequency(str("billing_frequency", "billingFrequency"))
+            frequency = billingFrequencyToBillFrequency(str("billing_frequency", "billingFrequency", "recurrence"))
             notes = str("notes") ?: ""
             companyName = str("company_name", "companyName") ?: ""
             val parsedDueDay = str("due_day")?.toIntOrNull()?.coerceIn(1, 31)
@@ -463,7 +489,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
         }
 
         val bill = Bill(
-            id = dTag,
+            id = tagMap["id"]?.firstOrNull()?.ifBlank { null } ?: rawIdFromDTag(dTag),
             name = name.ifBlank { "Subscription" },
             amount = cost,
             category = BillCategory.OTHER,
@@ -494,7 +520,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
         var name = first("name") ?: ""
         if (name.isBlank()) name = nameFromAltTag(tagMap)
         val cost = first("cost")?.toDoubleOrNull() ?: first("amount")?.toDoubleOrNull() ?: 0.0
-        val frequency = billingFrequencyToBillFrequency(first("billing_frequency"))
+        val frequency = billingFrequencyToBillFrequency(first("billing_frequency") ?: first("recurrence"))
         val notes = first("notes") ?: ""
         val companyName = first("company_name") ?: ""
         val parsedDueDay = first("due_day")?.toIntOrNull()?.coerceIn(1, 31)
@@ -520,7 +546,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
             .ifEmpty { null }
 
         val bill = Bill(
-            id = dTag,
+            id = first("id")?.ifBlank { null } ?: rawIdFromDTag(dTag),
             name = name.ifBlank { "Subscription" },
             amount = cost,
             category = BillCategory.OTHER,
@@ -562,19 +588,25 @@ class CypherLogSubscriptionRepository @Inject constructor(
         else -> "Other"
     }
 
-    private fun billTo37004Tags(
+    private fun billTo30078Tags(
         bill: Bill,
         preservedTags: Map<String, List<String>>?,
-        dTag: String
+        dTag: String,
+        rawId: String
     ): List<List<String>> {
         val list = mutableListOf<List<String>>()
         list.add(listOf("d", dTag))
+        list.add(listOf("id", rawId))
         list.add(listOf("alt", "Subscription: ${bill.name}"))
         list.add(listOf("name", bill.name))
         list.add(listOf("subscription_type", billSubcategoryToSubscriptionType(bill.effectiveSubcategory)))
         list.add(listOf("cost", bill.amount.toString()))
+        list.add(listOf("amount", bill.amount.toString()))
         list.add(listOf("billing_frequency", billFrequencyToCypherLog(bill.frequency)))
+        list.add(listOf("recurrence", billFrequencyToCypherLog(bill.frequency)))
         list.add(listOf("due_day", bill.dueDay.toString()))
+        list.add(listOf("schema_version", "2"))
+        list.add(listOf("updated_at", (System.currentTimeMillis() / 1000).toString()))
         bill.renewalDateMillis?.let { list.add(listOf("renewal_date", formatIsoDate(it))) }
         bill.initialPurchaseDateMillis?.let { list.add(listOf("initial_purchase_date", formatIsoDate(it))) }
         bill.initialPurchaseDateMillis?.let { list.add(listOf("start_date", formatUsDate(it))) }
@@ -591,7 +623,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
         bill.payFromBankAccountId?.takeIf { it.isNotBlank() }?.let { list.add(listOf("fiatlife_pay_from_bank_id", it)) }
         bill.payFromCreditAccountId?.takeIf { it.isNotBlank() }?.let { list.add(listOf("fiatlife_pay_from_credit_id", it)) }
         preservedTags?.forEach { (key, values) ->
-            if (key != "d") values.forEach { list.add(listOf(key, it)) }
+            if (key != "d" && key != "id") values.forEach { list.add(listOf(key, it)) }
         }
         return list
     }

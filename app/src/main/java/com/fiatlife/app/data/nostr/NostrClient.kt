@@ -339,6 +339,98 @@ class NostrClient @Inject constructor(
     }
 
     /**
+     * Publish a replaceable app-data event (kind 30078) with explicit tags/content.
+     * Used by CypherLog subscription interop migration from custom kinds.
+     */
+    suspend fun publishReplaceable30078Detailed(
+        dTag: String,
+        tags: List<List<String>>,
+        content: String = ""
+    ): PublishStatus {
+        val s = signer ?: return PublishStatus(
+            success = false,
+            stage = "no_signer",
+            detail = "No signer configured."
+        )
+        val ready = ensureConnected()
+        if (!ready) Log.w(TAG, "publishReplaceable30078: relay not ready")
+        val tagsWithD = tags.toMutableList()
+        if (!tagsWithD.any { it.isNotEmpty() && it[0] == "d" }) {
+            tagsWithD.add(0, listOf("d", dTag))
+        }
+        val unsignedJson = NostrEvent.buildUnsignedJson(
+            pubkeyHex = s.pubkeyHex,
+            kind = NostrEvent.KIND_APP_SPECIFIC_DATA,
+            content = content,
+            tags = tagsWithD
+        )
+        val signedJson = s.signEvent(unsignedJson) ?: run {
+            Log.e(TAG, "publishReplaceable30078: event signing failed for d=$dTag")
+            val amberReason = (s as? AmberSigner)?.consumeLastSignError()
+            return PublishStatus(
+                success = false,
+                stage = "sign_event",
+                detail = buildString {
+                    append("Signer returned null (rejected/cancelled or unsupported request).")
+                    if (!amberReason.isNullOrBlank()) {
+                        append(" ")
+                        append(amberReason)
+                    }
+                }
+            )
+        }
+        val sent = publishSignedEventJson(signedJson)
+        Log.d(TAG, "publishReplaceable30078: d=$dTag sent=$sent")
+        return if (sent) {
+            PublishStatus(success = true, stage = "ok")
+        } else {
+            PublishStatus(
+                success = false,
+                stage = "publish_event",
+                detail = if (!ready) "Relay not ready/auth pending; event was not sent."
+                else "Relay send returned false."
+            )
+        }
+    }
+
+    /**
+     * Subscribe to replaceable app-data events (kind 30078) by d-tag prefix.
+     * Emits raw events (tags + content) until EOSE and then closes.
+     */
+    fun subscribeToKind30078ByDTagPrefix(dTagPrefix: String): Flow<NostrEvent> = flow {
+        val s = signer ?: throw IllegalStateException("No signer configured")
+        val filter = NostrFilter(
+            authors = listOf(s.pubkeyHex),
+            kinds = listOf(NostrEvent.KIND_APP_SPECIFIC_DATA)
+        )
+        val subId = subscribe(filter)
+        Log.d(TAG, "Subscribed for kind 30078 with dTagPrefix=$dTagPrefix: subId=$subId")
+        try {
+            messages.collect { msg ->
+                when (msg) {
+                    is NostrMessage.Eose -> {
+                        if (msg.subscriptionId == subId) throw EoseSignal()
+                    }
+                    is NostrMessage.EventReceived -> {
+                        if (msg.subscriptionId != subId) return@collect
+                        val eventDTag = msg.event.tags
+                            .firstOrNull { it.size >= 2 && it[0] == "d" }
+                            ?.getOrNull(1)
+                            .orEmpty()
+                        if (eventDTag.startsWith(dTagPrefix)) {
+                            emit(msg.event)
+                        }
+                    }
+                    else -> {}
+                }
+            }
+        } catch (_: EoseSignal) {
+        } finally {
+            closeSubscription(subId)
+        }
+    }
+
+    /**
      * Subscribe to app data events and decrypt them. Collects events until
      * the relay sends EOSE (End of Stored Events), then closes the subscription
      * and terminates the flow. Safe for one-shot sync operations.
