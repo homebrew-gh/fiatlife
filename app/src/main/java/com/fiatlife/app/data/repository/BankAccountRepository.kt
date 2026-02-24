@@ -6,6 +6,7 @@ import com.fiatlife.app.data.local.entity.BankAccountEntity
 import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.nostr.NostrEvent
 import com.fiatlife.app.domain.model.BankAccount
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withTimeout
