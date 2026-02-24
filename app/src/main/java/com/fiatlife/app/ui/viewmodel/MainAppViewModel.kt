@@ -41,19 +41,22 @@ class MainAppViewModel @Inject constructor(
     private val _isManualSyncing = MutableStateFlow(false)
     val isManualSyncing = _isManualSyncing.asStateFlow()
 
-    val state = combine(
+    private val baseState = combine(
         nostrClient.connectionState,
         salaryRepository.getSalaryConfig(),
         billRepository.getAllBills(),
         cypherLogSubscriptionRepository.getAllAsBills(),
-        goalRepository.getAllGoals(),
-        isManualSyncing
-    ) { connected, salary, bills, cypherLogBills, goals, manualSyncing ->
+        goalRepository.getAllGoals()
+    ) { connected, salary, bills, cypherLogBills, goals ->
         MainAppState(
             isConnected = connected,
             hasData = salary != null || bills.isNotEmpty() || cypherLogBills.isNotEmpty() || goals.isNotEmpty(),
-            isManualSyncing = manualSyncing
+            isManualSyncing = false
         )
+    }
+
+    val state = combine(baseState, isManualSyncing) { base, manualSyncing ->
+        base.copy(isManualSyncing = manualSyncing)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
