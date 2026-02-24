@@ -87,6 +87,8 @@ class CreditAccountRepository @Inject constructor(
             else -> BillSubcategory.OTHER_LOAN
         }
         if (account.currentBalance > 0) {
+            val existingByLinkedAccount = billRepository.getAllBills().first()
+                .firstOrNull { it.linkedCreditAccountId == account.id }
             val billId = account.linkedBillId
             if (billId != null) {
                 val existing = billRepository.getBillById(billId).first()
@@ -102,6 +104,21 @@ class CreditAccountRepository @Inject constructor(
                     )
                     return account
                 }
+            }
+            if (existingByLinkedAccount != null) {
+                billRepository.saveBill(
+                    existingByLinkedAccount.copy(
+                        name = account.name,
+                        amount = account.effectiveMonthlyPayment(),
+                        dueDay = account.dueDay,
+                        subcategory = subcategory,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                )
+                if (account.linkedBillId != existingByLinkedAccount.id) {
+                    return saveCreditAccount(account.copy(linkedBillId = existingByLinkedAccount.id))
+                }
+                return account
             }
             return createAndLinkBill(account, subcategory)
         }
@@ -216,6 +233,10 @@ class CreditAccountRepository @Inject constructor(
                 if (backfilled > 0) {
                     Log.d(TAG, "Backfilled $backfilled missing linked bill(s) for credit accounts")
                 }
+                val deduped = dedupeLinkedBillsForAccounts()
+                if (deduped > 0) {
+                    Log.d(TAG, "Removed $deduped duplicate linked credit/loan bill(s)")
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Credit account sync failed: ${e.message}")
@@ -232,13 +253,20 @@ class CreditAccountRepository @Inject constructor(
                 .onFailure { Log.w(TAG, "Skipping malformed credit account ${entity.id}: ${it.message}") }
                 .getOrNull()
         }
+        val allBills = billRepository.getAllBills().first()
         var created = 0
         accounts.forEach { account ->
             if (account.currentBalance <= 0.0) return@forEach
             val hasValidLinkedBill = account.linkedBillId?.let { billId ->
                 billRepository.getBillById(billId).first() != null
             } ?: false
-            if (hasValidLinkedBill) return@forEach
+            val existingByLinkedAccount = allBills.firstOrNull { it.linkedCreditAccountId == account.id }
+            if (hasValidLinkedBill || existingByLinkedAccount != null) {
+                if (!hasValidLinkedBill && existingByLinkedAccount != null && account.linkedBillId != existingByLinkedAccount.id) {
+                    saveCreditAccount(account.copy(linkedBillId = existingByLinkedAccount.id))
+                }
+                return@forEach
+            }
 
             val subcategory = when (account.type) {
                 CreditAccountType.CREDIT_CARD -> BillSubcategory.CREDIT_CARD
@@ -249,5 +277,30 @@ class CreditAccountRepository @Inject constructor(
             created++
         }
         return created
+    }
+
+    /**
+     * Ensure there is at most one bill linked to each credit account.
+     * Keeps the most recently updated bill and deletes older duplicates.
+     */
+    private suspend fun dedupeLinkedBillsForAccounts(): Int {
+        val accounts = creditAccountDao.getAllSnapshot().mapNotNull { entity ->
+            runCatching { json.decodeFromString<CreditAccount>(entity.jsonData) }.getOrNull()
+        }
+        val allBills = billRepository.getAllBills().first()
+        var removed = 0
+        accounts.forEach { account ->
+            val linked = allBills.filter { it.linkedCreditAccountId == account.id }
+            if (linked.size <= 1) return@forEach
+            val keep = linked.maxByOrNull { it.updatedAt } ?: return@forEach
+            linked.filter { it.id != keep.id }.forEach { dup ->
+                billRepository.deleteBill(dup)
+                removed++
+            }
+            if (account.linkedBillId != keep.id) {
+                saveCreditAccount(account.copy(linkedBillId = keep.id))
+            }
+        }
+        return removed
     }
 }
