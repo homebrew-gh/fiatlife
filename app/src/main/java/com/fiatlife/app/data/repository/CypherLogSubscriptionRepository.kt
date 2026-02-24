@@ -46,7 +46,7 @@ private fun isPlaintextSubscriptionJson(content: String): Boolean {
     val trimmed = content.trim()
     if (trimmed.isEmpty() || (!trimmed.startsWith("{") && !trimmed.startsWith("["))) return false
     return try {
-        json.parseToJsonElement(trimmed)
+        Json.parseToJsonElement(trimmed)
         true
     } catch (_: Exception) {
         false
