@@ -113,12 +113,22 @@ fun BillDetailScreen(
                             style = MaterialTheme.typography.headlineMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
+                        val renewalText = b.renewalDateMillis?.let {
+                            "Renews ${SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(it))}"
+                        }
                         Text(
                             text = if (b.isCreditCard()) "Minimum due · Due day ${b.dueDay}"
-                            else "${b.frequency.displayName} · Due day ${b.dueDay}",
+                            else renewalText ?: "${b.frequency.displayName} · Due day ${b.dueDay}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                         )
+                        b.initialPurchaseDateMillis?.let { started ->
+                            Text(
+                                text = "Started ${SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(started))}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                            )
+                        }
                     }
                 }
             }

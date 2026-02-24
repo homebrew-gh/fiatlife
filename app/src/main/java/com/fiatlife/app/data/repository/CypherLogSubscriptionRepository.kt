@@ -8,6 +8,7 @@ import com.fiatlife.app.data.nostr.NostrEvent
 import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.domain.model.BillCategory
 import com.fiatlife.app.domain.model.BillFrequency
+import com.fiatlife.app.domain.model.BillRecurrenceUnit
 import com.fiatlife.app.domain.model.BillSource
 import com.fiatlife.app.domain.model.BillSubcategory
 import com.fiatlife.app.domain.model.BillWithSource
@@ -31,7 +32,10 @@ private const val TAG = "CypherLogSubRepo"
 /** CypherLog 37004 tag keys we map to Bill; all others are preserved for round-trip */
 private val MAPPED_TAG_KEYS = setOf(
     "d", "name", "cost", "currency", "billing_frequency", "subscription_type",
-    "company_name", "company_id", "notes", "alt", "due_day"
+    "company_name", "company_id", "notes", "alt", "due_day",
+    "renewal_date", "next_due_date", "due_date",
+    "initial_purchase_date", "purchase_date", "anchor_date",
+    "interval_unit", "interval_count", "timezone"
 )
 
 /** Build a tag map with lowercase keys so lookup is case-insensitive (Nostr/CypherLog may use varying case). */
@@ -76,6 +80,49 @@ private fun subscriptionTypeToSubcategory(value: String?): BillSubcategory {
     }
 }
 
+private fun parseIsoDateToMillis(value: String?): Long? {
+    if (value.isNullOrBlank()) return null
+    val parts = value.trim().split("-")
+    if (parts.size != 3) return null
+    val year = parts[0].toIntOrNull() ?: return null
+    val month = parts[1].toIntOrNull() ?: return null
+    val day = parts[2].toIntOrNull() ?: return null
+    val cal = java.util.Calendar.getInstance()
+    cal.set(java.util.Calendar.YEAR, year)
+    cal.set(java.util.Calendar.MONTH, (month - 1).coerceIn(0, 11))
+    cal.set(java.util.Calendar.DAY_OF_MONTH, day.coerceAtLeast(1))
+    cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+    cal.set(java.util.Calendar.MINUTE, 0)
+    cal.set(java.util.Calendar.SECOND, 0)
+    cal.set(java.util.Calendar.MILLISECOND, 0)
+    return cal.timeInMillis
+}
+
+private fun formatIsoDate(millis: Long): String {
+    val cal = java.util.Calendar.getInstance()
+    cal.timeInMillis = millis
+    val y = cal.get(java.util.Calendar.YEAR)
+    val m = cal.get(java.util.Calendar.MONTH) + 1
+    val d = cal.get(java.util.Calendar.DAY_OF_MONTH)
+    return String.format(java.util.Locale.US, "%04d-%02d-%02d", y, m, d)
+}
+
+private fun intervalUnitFromCypherLog(value: String?): BillRecurrenceUnit? = when (value?.trim()?.lowercase()) {
+    "day", "days" -> BillRecurrenceUnit.DAY
+    "week", "weeks" -> BillRecurrenceUnit.WEEK
+    "month", "months" -> BillRecurrenceUnit.MONTH
+    "year", "years" -> BillRecurrenceUnit.YEAR
+    else -> null
+}
+
+private fun intervalUnitToCypherLog(unit: BillRecurrenceUnit?): String? = when (unit) {
+    BillRecurrenceUnit.DAY -> "day"
+    BillRecurrenceUnit.WEEK -> "week"
+    BillRecurrenceUnit.MONTH -> "month"
+    BillRecurrenceUnit.YEAR -> "year"
+    null -> null
+}
+
 @Singleton
 class CypherLogSubscriptionRepository @Inject constructor(
     private val dao: CypherLogSubscriptionDao,
@@ -105,7 +152,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
 
     fun getAllAsBills(): Flow<List<BillWithSource>> {
         return dao.getAll().map { entities ->
-            entities.map { entity -> entityToBillWithSource(entity) }
+            entities.mapNotNull { entity -> entityToBillWithSource(entity) }
         }
     }
 
@@ -225,7 +272,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
         }
     }
 
-    private fun entityToBillWithSource(entity: CypherLogSubscriptionEntity): BillWithSource {
+    private fun entityToBillWithSource(entity: CypherLogSubscriptionEntity): BillWithSource? {
         val tags = try {
             json.parseToJsonElement(entity.tagsJson).jsonArray.map { arr ->
                 arr.jsonArray.map { it.jsonPrimitive.content }
@@ -233,12 +280,32 @@ class CypherLogSubscriptionRepository @Inject constructor(
         } catch (_: Exception) {
             emptyList()
         }
+        if (!isRenderableSubscription(tags, entity.contentDecryptedJson)) return null
         val (bill, preserved) = if (entity.contentDecryptedJson != null) {
             content37004ToBill(entity.dTag, entity.contentDecryptedJson!!, tags)
         } else {
             tags37004ToBill(entity.dTag, tags)
         }
         return BillWithSource(bill = bill, source = BillSource.CYPHERLOG, preservedTags = preserved)
+    }
+
+    /** Hide non-renderable encrypted placeholders (d/alt/client only, no parseable fields). */
+    private fun isRenderableSubscription(tags: List<List<String>>, contentDecryptedJson: String?): Boolean {
+        val tagMap = tagsToMap(tags)
+        val name = tagMap["name"]?.firstOrNull()?.trim().orEmpty()
+        val cost = tagMap["cost"]?.firstOrNull()?.toDoubleOrNull() ?: tagMap["amount"]?.firstOrNull()?.toDoubleOrNull()
+        val frequency = tagMap["billing_frequency"]?.firstOrNull()?.trim().orEmpty()
+        val type = tagMap["subscription_type"]?.firstOrNull()?.trim().orEmpty()
+        val alt = tagMap["alt"]?.firstOrNull()?.trim().orEmpty().lowercase()
+        val altIsPlaceholder = alt.contains("encrypted") && alt.contains("subscription data")
+
+        if (name.isNotBlank() || cost != null || frequency.isNotBlank() || type.isNotBlank()) return true
+        if (contentDecryptedJson != null) {
+            val lower = contentDecryptedJson.lowercase()
+            if (lower.isNotBlank() && !lower.contains("could not decrypt")) return true
+        }
+        if (alt.isNotBlank() && !altIsPlaceholder) return true
+        return false
     }
 
     /** Parse CypherLog encrypted content JSON (same logical fields as tags) and build Bill; preserved from tags. */
@@ -255,6 +322,11 @@ class CypherLogSubscriptionRepository @Inject constructor(
         val companyName: String
         val dueDay: Int
         val subcategory: BillSubcategory
+        val renewalDateMillis: Long?
+        val initialPurchaseDateMillis: Long?
+        val recurrenceUnit: BillRecurrenceUnit?
+        val recurrenceIntervalCount: Int
+        val recurrenceTimezone: String?
         try {
             val root = json.parseToJsonElement(contentJson)
             val obj: JsonObject = when {
@@ -284,6 +356,24 @@ class CypherLogSubscriptionRepository @Inject constructor(
             companyName = str("company_name", "companyName") ?: ""
             dueDay = str("due_day")?.toIntOrNull()?.coerceIn(1, 31)
                 ?: preserved?.get("due_day")?.firstOrNull()?.toIntOrNull()?.coerceIn(1, 31) ?: 1
+            renewalDateMillis = parseIsoDateToMillis(
+                str("renewal_date", "next_due_date", "due_date")
+                    ?: tagMap["renewal_date"]?.firstOrNull()
+                    ?: tagMap["next_due_date"]?.firstOrNull()
+                    ?: tagMap["due_date"]?.firstOrNull()
+            )
+            initialPurchaseDateMillis = parseIsoDateToMillis(
+                str("initial_purchase_date", "purchase_date", "anchor_date")
+                    ?: tagMap["initial_purchase_date"]?.firstOrNull()
+                    ?: tagMap["purchase_date"]?.firstOrNull()
+                    ?: tagMap["anchor_date"]?.firstOrNull()
+            )
+            recurrenceUnit = intervalUnitFromCypherLog(
+                str("interval_unit") ?: tagMap["interval_unit"]?.firstOrNull()
+            )
+            recurrenceIntervalCount = (str("interval_count") ?: tagMap["interval_count"]?.firstOrNull())
+                ?.toIntOrNull()?.coerceAtLeast(1) ?: 1
+            recurrenceTimezone = str("timezone") ?: tagMap["timezone"]?.firstOrNull()
             if (nameFromContent.isBlank()) {
                 nameFromContent = nameFromAltTag(tagMap)
             }
@@ -303,6 +393,11 @@ class CypherLogSubscriptionRepository @Inject constructor(
             subcategory = subcategory,
             frequency = frequency,
             dueDay = dueDay,
+            renewalDateMillis = renewalDateMillis,
+            initialPurchaseDateMillis = initialPurchaseDateMillis,
+            recurrenceUnit = recurrenceUnit,
+            recurrenceIntervalCount = recurrenceIntervalCount,
+            recurrenceTimezone = recurrenceTimezone,
             accountName = companyName,
             notes = notes,
             updatedAt = 0L
@@ -322,6 +417,11 @@ class CypherLogSubscriptionRepository @Inject constructor(
         val companyName = first("company_name") ?: ""
         val dueDay = first("due_day")?.toIntOrNull()?.coerceIn(1, 31) ?: 1
         val subcategory = subscriptionTypeToSubcategory(first("subscription_type"))
+        val renewalDateMillis = parseIsoDateToMillis(first("renewal_date") ?: first("next_due_date") ?: first("due_date"))
+        val initialPurchaseDateMillis = parseIsoDateToMillis(first("initial_purchase_date") ?: first("purchase_date") ?: first("anchor_date"))
+        val recurrenceUnit = intervalUnitFromCypherLog(first("interval_unit"))
+        val recurrenceIntervalCount = first("interval_count")?.toIntOrNull()?.coerceAtLeast(1) ?: 1
+        val recurrenceTimezone = first("timezone")
 
         val preserved = tagMap.filter { (k, _) -> k !in MAPPED_TAG_KEYS }
             .mapValues { (_, v) -> v.toList() }
@@ -335,6 +435,11 @@ class CypherLogSubscriptionRepository @Inject constructor(
             subcategory = subcategory,
             frequency = frequency,
             dueDay = dueDay,
+            renewalDateMillis = renewalDateMillis,
+            initialPurchaseDateMillis = initialPurchaseDateMillis,
+            recurrenceUnit = recurrenceUnit,
+            recurrenceIntervalCount = recurrenceIntervalCount,
+            recurrenceTimezone = recurrenceTimezone,
             accountName = companyName,
             notes = notes,
             updatedAt = 0L
@@ -373,6 +478,11 @@ class CypherLogSubscriptionRepository @Inject constructor(
         list.add(listOf("cost", bill.amount.toString()))
         list.add(listOf("billing_frequency", billFrequencyToCypherLog(bill.frequency)))
         list.add(listOf("due_day", bill.dueDay.toString()))
+        bill.renewalDateMillis?.let { list.add(listOf("renewal_date", formatIsoDate(it))) }
+        bill.initialPurchaseDateMillis?.let { list.add(listOf("initial_purchase_date", formatIsoDate(it))) }
+        intervalUnitToCypherLog(bill.recurrenceUnit)?.let { list.add(listOf("interval_unit", it)) }
+        if (bill.recurrenceIntervalCount > 1) list.add(listOf("interval_count", bill.recurrenceIntervalCount.toString()))
+        if (!bill.recurrenceTimezone.isNullOrBlank()) list.add(listOf("timezone", bill.recurrenceTimezone))
         if (bill.notes.isNotBlank()) list.add(listOf("notes", bill.notes))
         if (bill.accountName.isNotBlank()) list.add(listOf("company_name", bill.accountName))
         preservedTags?.forEach { (key, values) ->

@@ -50,6 +50,15 @@ data class CreditCardDetails(
         if (apr <= 0 || balance <= 0) 0.0 else balance * (apr / 12.0)
 }
 
+/** Recurrence unit for advanced schedules (e.g., every 2 years). */
+@Serializable
+enum class BillRecurrenceUnit {
+    DAY,
+    WEEK,
+    MONTH,
+    YEAR
+}
+
 /** General bill category for high-level grouping (header totals, dashboard). */
 @Serializable
 enum class BillGeneralCategory {
@@ -214,6 +223,16 @@ data class Bill(
     val frequency: BillFrequency = BillFrequency.MONTHLY,
     val dueDay: Int = 1,
     val autoPay: Boolean = false,
+    /** Optional explicit next renewal/due date (epoch millis, start of day). */
+    val renewalDateMillis: Long? = null,
+    /** Optional initial purchase/start date (epoch millis, start of day). */
+    val initialPurchaseDateMillis: Long? = null,
+    /** Optional explicit recurrence unit for advanced intervals (e.g. YEAR). */
+    val recurrenceUnit: BillRecurrenceUnit? = null,
+    /** Optional explicit recurrence interval count (e.g. 2 + YEAR = every 2 years). */
+    val recurrenceIntervalCount: Int = 1,
+    /** Optional timezone identifier for external systems; currently informational. */
+    val recurrenceTimezone: String? = null,
     val accountName: String = "",
     val notes: String = "",
     val attachmentHashes: List<String> = emptyList(),
@@ -271,6 +290,19 @@ data class Bill(
 
     /** Next due date (start of day) in ms. Handles MONTHLY; other frequencies use similar logic. */
     fun nextDueDateMillis(): Long? {
+        val explicitRenewal = renewalDateMillis
+        if (explicitRenewal != null) {
+            val (unit, interval) = recurrenceConfig()
+            var next = explicitRenewal
+            if (isPaid) {
+                val reference = lastPaidDate ?: System.currentTimeMillis()
+                while (next <= reference) {
+                    next = addRecurrence(next, unit, interval)
+                }
+            }
+            return next
+        }
+
         val cal = java.util.Calendar.getInstance()
         val day = dueDay.coerceIn(1, 31)
         when (frequency) {
@@ -320,6 +352,17 @@ data class Bill(
 
     /** Most recent due date (start of day) that is <= now; null if none. Used to detect past due. */
     fun lastDueDateMillis(): Long? {
+        if (renewalDateMillis != null) {
+            if (!isPaid) {
+                val due = renewalDateMillis
+                return if (due <= System.currentTimeMillis()) due else null
+            }
+            val next = nextDueDateMillis() ?: return null
+            val (unit, interval) = recurrenceConfig()
+            val previous = addRecurrence(next, unit, -interval)
+            return if (previous <= System.currentTimeMillis()) previous else null
+        }
+
         val next = nextDueDateMillis() ?: return null
         val cal = java.util.Calendar.getInstance()
         cal.timeInMillis = next
@@ -340,8 +383,47 @@ data class Bill(
     fun isPastDue(): Boolean {
         if (isPaid) return false
         val lastDue = lastDueDateMillis() ?: return false
+        // Never mark a bill overdue before its first cycle after creation/start date.
+        val startAnchor = initialPurchaseDateMillis ?: createdAt.takeIf { it > 0 }
+        if (startAnchor != null && lastDue < startOfDayMillis(startAnchor)) return false
         val endOfDueDay = lastDue + 86400_000L - 1
         return System.currentTimeMillis() > endOfDueDay
+    }
+
+    private fun recurrenceConfig(): Pair<BillRecurrenceUnit, Int> {
+        val explicitInterval = recurrenceIntervalCount.coerceAtLeast(1)
+        if (recurrenceUnit != null) return recurrenceUnit to explicitInterval
+        return when (frequency) {
+            BillFrequency.WEEKLY -> BillRecurrenceUnit.WEEK to 1
+            BillFrequency.BIWEEKLY -> BillRecurrenceUnit.WEEK to 2
+            BillFrequency.MONTHLY -> BillRecurrenceUnit.MONTH to 1
+            BillFrequency.BIMONTHLY -> BillRecurrenceUnit.MONTH to 2
+            BillFrequency.QUARTERLY -> BillRecurrenceUnit.MONTH to 3
+            BillFrequency.SEMIANNUALLY -> BillRecurrenceUnit.MONTH to 6
+            BillFrequency.ANNUALLY -> BillRecurrenceUnit.YEAR to 1
+        }
+    }
+
+    private fun addRecurrence(baseMillis: Long, unit: BillRecurrenceUnit, interval: Int): Long {
+        val cal = java.util.Calendar.getInstance()
+        cal.timeInMillis = baseMillis
+        when (unit) {
+            BillRecurrenceUnit.DAY -> cal.add(java.util.Calendar.DAY_OF_YEAR, interval)
+            BillRecurrenceUnit.WEEK -> cal.add(java.util.Calendar.WEEK_OF_YEAR, interval)
+            BillRecurrenceUnit.MONTH -> cal.add(java.util.Calendar.MONTH, interval)
+            BillRecurrenceUnit.YEAR -> cal.add(java.util.Calendar.YEAR, interval)
+        }
+        return cal.timeInMillis
+    }
+
+    private fun startOfDayMillis(millis: Long): Long {
+        val cal = java.util.Calendar.getInstance()
+        cal.timeInMillis = millis
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+        cal.set(java.util.Calendar.MINUTE, 0)
+        cal.set(java.util.Calendar.SECOND, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
     }
 }
 

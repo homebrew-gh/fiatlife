@@ -197,17 +197,27 @@ class BillsViewModel @Inject constructor(
             try {
                 if (isCypherLog) {
                     val billWithId = if (merged.id.isEmpty()) merged.copy(id = java.util.UUID.randomUUID().toString()) else merged
-                    cypherLogSubscriptionRepository.saveSubscription(billWithId, preservedTags)
-                    _state.update {
-                        it.copy(
-                            isSaving = false,
-                            showAddDialog = false,
-                            editingBill = null,
-                            editingIsCypherLog = false,
-                            editingPreservedTags = null,
-                            dialogStatementEntries = emptyList(),
-                            navigateToBillId = billWithId.id
-                        )
+                    val sent = cypherLogSubscriptionRepository.saveSubscription(billWithId, preservedTags)
+                    if (sent) {
+                        _state.update {
+                            it.copy(
+                                isSaving = false,
+                                showAddDialog = false,
+                                editingBill = null,
+                                editingIsCypherLog = false,
+                                editingPreservedTags = null,
+                                dialogStatementEntries = emptyList(),
+                                navigateToBillId = billWithId.id,
+                                message = "CypherLog subscription saved."
+                            )
+                        }
+                    } else {
+                        _state.update {
+                            it.copy(
+                                isSaving = false,
+                                message = "Could not publish to relay/Amber. Please confirm signing and try again."
+                            )
+                        }
                     }
                 } else {
                     val previousBill = current.editingBill
@@ -315,6 +325,10 @@ class BillsViewModel @Inject constructor(
 
     fun dismissPastDueAutopayDialog() {
         _state.update { it.copy(showPastDueAutopayDialog = false) }
+    }
+
+    fun clearMessage() {
+        _state.update { it.copy(message = "") }
     }
 
     fun uploadAttachment(data: ByteArray, contentType: String, filename: String) {

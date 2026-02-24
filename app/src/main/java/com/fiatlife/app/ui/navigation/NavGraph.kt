@@ -10,8 +10,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -34,6 +39,7 @@ import com.fiatlife.app.ui.screens.goals.GoalsScreen
 import com.fiatlife.app.ui.screens.salary.SalaryScreen
 import com.fiatlife.app.ui.screens.settings.SettingsScreen
 import com.fiatlife.app.ui.viewmodel.MainAppViewModel
+import android.widget.Toast
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,7 +49,19 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
     val currentDestination = navBackStackEntry?.destination
     val mainViewModel: MainAppViewModel = hiltViewModel()
     val mainState by mainViewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var manualSyncStarted by remember { mutableStateOf(false) }
     val currentScreen = Screen.fromRoute(currentDestination?.route)
+
+    LaunchedEffect(mainState.isManualSyncing) {
+        if (mainState.isManualSyncing) {
+            manualSyncStarted = true
+            Toast.makeText(context, "Syncing with relay…", Toast.LENGTH_SHORT).show()
+        } else if (manualSyncStarted) {
+            manualSyncStarted = false
+            Toast.makeText(context, "Sync complete", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -57,6 +75,8 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
                     subtitle = currentScreen?.subtitle?.takeIf { it.isNotBlank() } ?: "Your financial dashboard",
                     isConnected = mainState.isConnected,
                     hasData = mainState.hasData,
+                    isSyncing = mainState.isManualSyncing,
+                    onSyncClick = { mainViewModel.manualSyncFromRelay() },
                     actions = {
                         IconButton(onClick = { navController.navigate(Screen.Settings.route) }) {
                             Icon(Icons.Filled.Settings, contentDescription = "Settings")

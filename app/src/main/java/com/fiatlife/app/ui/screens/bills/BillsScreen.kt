@@ -23,6 +23,7 @@ import androidx.navigation.NavController
 import com.fiatlife.app.domain.model.BillCategory
 import com.fiatlife.app.domain.model.BillGeneralCategory
 import com.fiatlife.app.domain.model.BillFrequency
+import com.fiatlife.app.domain.model.BillRecurrenceUnit
 import com.fiatlife.app.domain.model.CreditAccount
 import com.fiatlife.app.domain.model.CreditCardDetails
 import com.fiatlife.app.domain.model.CreditCardMinPaymentType
@@ -39,6 +40,9 @@ import com.fiatlife.app.ui.components.PercentageTextField
 import com.fiatlife.app.ui.components.formatCurrency
 import com.fiatlife.app.ui.theme.ProfitGreen
 import com.fiatlife.app.ui.viewmodel.BillsViewModel
+import android.widget.Toast
+import java.util.Calendar
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,9 +51,16 @@ fun BillsScreen(
     viewModel: BillsViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     LaunchedEffect(Unit) {
         viewModel.showPastDueAutopayDialogIfNeeded()
+    }
+    LaunchedEffect(state.message) {
+        if (state.message.isNotBlank()) {
+            Toast.makeText(context, state.message, Toast.LENGTH_SHORT).show()
+            viewModel.clearMessage()
+        }
     }
 
     Scaffold(
@@ -507,6 +518,12 @@ internal fun BillDialog(
     var showInCypherLog by remember { mutableStateOf(false) }
     var frequency by remember { mutableStateOf(bill?.frequency ?: BillFrequency.MONTHLY) }
     var dueDay by remember { mutableStateOf(bill?.dueDay?.toString() ?: "1") }
+    var renewalDate by remember { mutableStateOf(bill?.renewalDateMillis?.let { formatIsoDate(it) } ?: "") }
+    var initialPurchaseDate by remember { mutableStateOf(bill?.initialPurchaseDateMillis?.let { formatIsoDate(it) } ?: "") }
+    var recurrenceUnit by remember { mutableStateOf(bill?.recurrenceUnit) }
+    var recurrenceUnitExpanded by remember { mutableStateOf(false) }
+    var recurrenceIntervalCount by remember { mutableStateOf((bill?.recurrenceIntervalCount ?: 1).toString()) }
+    var recurrenceTimezone by remember { mutableStateOf(bill?.recurrenceTimezone ?: "") }
     var autoPay by remember { mutableStateOf(bill?.autoPay ?: false) }
     var accountName by remember { mutableStateOf(bill?.accountName ?: "") }
     var notes by remember { mutableStateOf(bill?.notes ?: "") }
@@ -791,6 +808,97 @@ internal fun BillDialog(
                     }
                 }
                 item {
+                    HorizontalDivider()
+                    Text(
+                        text = "Advanced recurrence (optional)",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                item {
+                    OutlinedTextField(
+                        value = renewalDate,
+                        onValueChange = { renewalDate = it.take(10) },
+                        label = { Text("Renewal date (YYYY-MM-DD)") },
+                        placeholder = { Text("2026-03-15") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = MaterialTheme.shapes.medium
+                    )
+                }
+                item {
+                    OutlinedTextField(
+                        value = initialPurchaseDate,
+                        onValueChange = { initialPurchaseDate = it.take(10) },
+                        label = { Text("Initial purchase date (YYYY-MM-DD)") },
+                        placeholder = { Text("2025-03-15") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = MaterialTheme.shapes.medium
+                    )
+                }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ExposedDropdownMenuBox(
+                            expanded = recurrenceUnitExpanded,
+                            onExpandedChange = { recurrenceUnitExpanded = it },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            OutlinedTextField(
+                                value = recurrenceUnit?.name?.lowercase()
+                                    ?.replaceFirstChar { it.uppercase() } ?: "Default (from frequency)",
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Interval unit") },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(recurrenceUnitExpanded) },
+                                modifier = Modifier.menuAnchor(),
+                                singleLine = true,
+                                shape = MaterialTheme.shapes.medium
+                            )
+                            ExposedDropdownMenu(
+                                expanded = recurrenceUnitExpanded,
+                                onDismissRequest = { recurrenceUnitExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Default (from frequency)") },
+                                    onClick = {
+                                        recurrenceUnit = null
+                                        recurrenceUnitExpanded = false
+                                    }
+                                )
+                                BillRecurrenceUnit.entries.forEach { unit ->
+                                    DropdownMenuItem(
+                                        text = { Text(unit.name.lowercase().replaceFirstChar { it.uppercase() }) },
+                                        onClick = {
+                                            recurrenceUnit = unit
+                                            recurrenceUnitExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        OutlinedTextField(
+                            value = recurrenceIntervalCount,
+                            onValueChange = { recurrenceIntervalCount = it.filter { c -> c.isDigit() }.take(3) },
+                            label = { Text("Interval") },
+                            modifier = Modifier.weight(0.5f),
+                            singleLine = true,
+                            shape = MaterialTheme.shapes.medium
+                        )
+                    }
+                }
+                item {
+                    OutlinedTextField(
+                        value = recurrenceTimezone,
+                        onValueChange = { recurrenceTimezone = it },
+                        label = { Text("Timezone (optional)") },
+                        placeholder = { Text("America/New_York") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = MaterialTheme.shapes.medium
+                    )
+                }
+                item {
                     OutlinedTextField(
                         value = accountName,
                         onValueChange = { accountName = it },
@@ -901,6 +1009,9 @@ internal fun BillDialog(
                     } else null
                     val effectiveAmount = ccDetails?.minimumDue(ccDetails.currentBalance) ?: (amount.toDoubleOrNull() ?: 0.0)
                     val showInCypherLogArg = if (showInCypherLogVisible) showInCypherLog else null
+                    val renewalDateMillis = parseIsoDate(renewalDate)
+                    val initialPurchaseDateMillis = parseIsoDate(initialPurchaseDate)
+                    val intervalCount = recurrenceIntervalCount.toIntOrNull()?.coerceAtLeast(1) ?: 1
                     onSave(
                         Bill(
                             id = bill?.id ?: "",
@@ -911,6 +1022,11 @@ internal fun BillDialog(
                             frequency = frequency,
                             dueDay = dueDay.toIntOrNull() ?: 1,
                             autoPay = autoPay,
+                            renewalDateMillis = renewalDateMillis,
+                            initialPurchaseDateMillis = initialPurchaseDateMillis,
+                            recurrenceUnit = recurrenceUnit,
+                            recurrenceIntervalCount = intervalCount,
+                            recurrenceTimezone = recurrenceTimezone.trim().takeIf { it.isNotBlank() },
                             accountName = accountName,
                             notes = notes,
                             attachmentHashes = bill?.attachmentHashes ?: emptyList(),
@@ -937,5 +1053,36 @@ internal fun BillDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
+    )
+}
+
+private fun parseIsoDate(input: String): Long? {
+    val value = input.trim()
+    if (value.isEmpty()) return null
+    val parts = value.split("-")
+    if (parts.size != 3) return null
+    val year = parts[0].toIntOrNull() ?: return null
+    val month = parts[1].toIntOrNull() ?: return null
+    val day = parts[2].toIntOrNull() ?: return null
+    val cal = Calendar.getInstance()
+    cal.set(Calendar.YEAR, year)
+    cal.set(Calendar.MONTH, (month - 1).coerceIn(0, 11))
+    cal.set(Calendar.DAY_OF_MONTH, day.coerceAtLeast(1))
+    cal.set(Calendar.HOUR_OF_DAY, 0)
+    cal.set(Calendar.MINUTE, 0)
+    cal.set(Calendar.SECOND, 0)
+    cal.set(Calendar.MILLISECOND, 0)
+    return cal.timeInMillis
+}
+
+private fun formatIsoDate(millis: Long): String {
+    val cal = Calendar.getInstance()
+    cal.timeInMillis = millis
+    return String.format(
+        Locale.US,
+        "%04d-%02d-%02d",
+        cal.get(Calendar.YEAR),
+        cal.get(Calendar.MONTH) + 1,
+        cal.get(Calendar.DAY_OF_MONTH)
     )
 }

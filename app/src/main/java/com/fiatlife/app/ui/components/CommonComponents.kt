@@ -3,6 +3,7 @@ package com.fiatlife.app.ui.components
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -251,6 +252,8 @@ fun AppBanner(
     subtitle: String,
     isConnected: Boolean,
     hasData: Boolean,
+    isSyncing: Boolean = false,
+    onSyncClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     actions: (@Composable RowScope.() -> Unit)? = null
 ) {
@@ -275,21 +278,31 @@ fun AppBanner(
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Badge(
-                containerColor = when {
-                    isConnected && hasData -> ProfitGreen
-                    isConnected -> WarningAmber
-                    else -> MaterialTheme.colorScheme.error
-                }
+            Box(
+                modifier = if (onSyncClick != null) {
+                    Modifier
+                        .clip(RoundedCornerShape(100))
+                        .clickable(enabled = !isSyncing, onClick = onSyncClick)
+                } else Modifier
             ) {
-                Text(
-                    text = when {
-                        isConnected && hasData -> "Synced"
-                        isConnected -> "Syncing…"
-                        else -> "Offline"
-                    },
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                )
+                Badge(
+                    containerColor = when {
+                        isSyncing -> WarningAmber
+                        isConnected && hasData -> ProfitGreen
+                        isConnected -> WarningAmber
+                        else -> MaterialTheme.colorScheme.error
+                    }
+                ) {
+                    Text(
+                        text = when {
+                            isSyncing -> "Syncing…"
+                            isConnected && hasData -> "Synced"
+                            isConnected -> "Syncing…"
+                            else -> "Offline"
+                        },
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
+                }
             }
             if (actions != null) {
                 Spacer(modifier = Modifier.width(8.dp))

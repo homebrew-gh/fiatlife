@@ -9,6 +9,9 @@ interface CreditAccountDao {
     @Query("SELECT * FROM credit_accounts ORDER BY updatedAt DESC")
     fun getAll(): Flow<List<CreditAccountEntity>>
 
+    @Query("SELECT * FROM credit_accounts ORDER BY updatedAt DESC")
+    suspend fun getAllSnapshot(): List<CreditAccountEntity>
+
     @Query("SELECT * FROM credit_accounts WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): CreditAccountEntity?
 
