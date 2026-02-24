@@ -13,7 +13,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -36,6 +38,7 @@ fun SettingsScreen(
     var showSetPinSheet by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     var hasNotifPermission by remember {
         mutableStateOf(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -406,6 +409,39 @@ fun SettingsScreen(
                     label = "Authentication",
                     value = if (state.authType == "amber") "NIP-55 (Amber)" else "NIP-42 relay auth"
                 )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedButton(
+                    onClick = { viewModel.exportCypherLogDebugRows() },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Icon(Icons.Filled.BugReport, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Export CypherLog 37004 Debug")
+                }
+
+                if (state.cypherLogDebugDump.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { clipboard.setText(AnnotatedString(state.cypherLogDebugDump)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.medium
+                    ) {
+                        Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Copy Debug Dump")
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    SelectionContainer {
+                        Text(
+                            text = state.cypherLogDebugDump,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         }
 
