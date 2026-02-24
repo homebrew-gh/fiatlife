@@ -22,6 +22,9 @@ import com.fiatlife.app.ui.components.*
 import com.fiatlife.app.ui.navigation.Screen
 import com.fiatlife.app.ui.theme.*
 import com.fiatlife.app.ui.viewmodel.DashboardViewModel
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -115,44 +118,91 @@ fun DashboardScreen(
                             }
                     }
                 }
-                if (state.unpaidBillCount > 0) {
+                if (state.overdueBillCount > 0 || state.billsComingDueCount > 0) {
                     Spacer(modifier = Modifier.height(8.dp))
-                    AssistChip(
-                        onClick = {
-                            navController.navigate(Screen.Bills.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
-                        label = {
-                            Text("${state.unpaidBillCount} unpaid bill(s)")
-                        },
-                        leadingIcon = {
-                            Icon(
-                                Icons.Filled.Warning,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (state.overdueBillCount > 0) {
+                            AssistChip(
+                                onClick = {
+                                    navController.navigate(Screen.Bills.route) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                },
+                                label = {
+                                    Text(
+                                        "${state.overdueBillCount} overdue bill(s)",
+                                        color = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.Warning,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                },
+                                colors = AssistChipDefaults.assistChipColors(
+                                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                                    labelColor = MaterialTheme.colorScheme.onErrorContainer
+                                )
                             )
-                        },
-                        colors = AssistChipDefaults.assistChipColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer,
-                            labelColor = MaterialTheme.colorScheme.onErrorContainer
-                        )
-                    )
+                        }
+                        if (state.billsComingDueCount > 0) {
+                            AssistChip(
+                                onClick = {
+                                    navController.navigate(Screen.Bills.route) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                },
+                                label = {
+                                    Text(
+                                        "${state.billsComingDueCount} bill(s) coming due",
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.Schedule,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.onTertiaryContainer
+                                    )
+                                },
+                                colors = AssistChipDefaults.assistChipColors(
+                                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                    labelColor = MaterialTheme.colorScheme.onTertiaryContainer
+                                )
+                            )
+                        }
+                    }
                 }
             }
         }
 
         if (state.upcomingBills.isNotEmpty()) {
             item {
+                val dateFormat = SimpleDateFormat("EEE, MMM d", Locale.getDefault())
                 SectionCard(
                     title = "Upcoming Bills",
                     icon = Icons.Filled.Receipt
                 ) {
                     state.upcomingBills.forEach { bill ->
+                        val dueMillis = if (bill.isPastDue()) bill.lastDueDateMillis() else bill.nextDueDateMillis()
+                        val dueDateText = dueMillis?.let { dateFormat.format(Date(it)) }
+                            ?.let { if (bill.isPastDue()) "$it (Overdue)" else it }
+                            ?: ""
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -163,7 +213,7 @@ fun DashboardScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = bill.name,
                                     style = MaterialTheme.typography.bodyMedium,
@@ -174,6 +224,16 @@ fun DashboardScreen(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                if (dueDateText.isNotEmpty()) {
+                                    Text(
+                                        text = dueDateText,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (bill.isPastDue())
+                                            MaterialTheme.colorScheme.error
+                                        else
+                                            MaterialTheme.colorScheme.primary
+                                    )
+                                }
                             }
                             MoneyText(
                                 amount = bill.effectiveAmountDue(),

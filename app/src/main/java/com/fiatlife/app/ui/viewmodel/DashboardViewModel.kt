@@ -21,7 +21,10 @@ data class DashboardState(
     val effectiveTaxRate: Double = 0.0,
     val monthlyBills: Double = 0.0,
     val billCount: Int = 0,
-    val unpaidBillCount: Int = 0,
+    /** Unpaid bills with next due date in the next 7 days (not overdue). */
+    val billsComingDueCount: Int = 0,
+    /** Unpaid bills that are past due. */
+    val overdueBillCount: Int = 0,
     val billCategoryTotals: Map<BillGeneralCategory, Double> = emptyMap(),
     val goalCount: Int = 0,
     val goalsProgress: Double = 0.0,
@@ -64,7 +67,13 @@ class DashboardViewModel @Inject constructor(
                     .mapValues { (_, list) ->
                         list.sumOf { b -> b.effectiveAmountDue() * b.frequency.timesPerYear / 12.0 }
                     }
-                val unpaidCount = bills.count { !it.isPaid }
+                val now = System.currentTimeMillis()
+                val sevenDaysMs = 7L * 24 * 60 * 60 * 1000
+                val overdueCount = bills.count { !it.isPaid && it.isPastDue() }
+                val comingDueCount = bills.count { bill ->
+                    !bill.isPaid && !bill.isPastDue() && bill.nextDueDateMillis() != null &&
+                        bill.nextDueDateMillis()!! <= now + sevenDaysMs
+                }
                 val totalSaved = goals.sumOf { it.currentAmount }
                 val totalTarget = goals.sumOf { it.targetAmount }
                 val goalsProgress = if (totalTarget > 0) totalSaved / totalTarget * 100 else 0.0
@@ -81,7 +90,8 @@ class DashboardViewModel @Inject constructor(
                     effectiveTaxRate = calculation?.effectiveTaxRate ?: 0.0,
                     monthlyBills = monthlyBills,
                     billCount = bills.size,
-                    unpaidBillCount = unpaidCount,
+                    billsComingDueCount = comingDueCount,
+                    overdueBillCount = overdueCount,
                     billCategoryTotals = billCategoryTotals,
                     goalCount = goals.size,
                     goalsProgress = goalsProgress,
@@ -91,7 +101,17 @@ class DashboardViewModel @Inject constructor(
                     isConnected = connected,
                     hasData = salary != null || nativeBills.isNotEmpty() || cypherLogBills.isNotEmpty() || goals.isNotEmpty(),
                     topGoals = goals.sortedByDescending { it.progressPercent }.take(3),
-                    upcomingBills = bills.filter { !it.isPaid }.take(5)
+                    upcomingBills = bills
+                        .filter { bill ->
+                            !bill.isPaid && (
+                                bill.isPastDue() ||
+                                (bill.nextDueDateMillis() != null && bill.nextDueDateMillis()!! <= now + sevenDaysMs)
+                            )
+                        }
+                        .sortedBy { bill ->
+                            if (bill.isPastDue()) bill.lastDueDateMillis() ?: 0L
+                            else bill.nextDueDateMillis() ?: Long.MAX_VALUE
+                        }
                 )
             }.collect { state ->
                 _state.value = state

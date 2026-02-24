@@ -34,12 +34,46 @@ private val MAPPED_TAG_KEYS = setOf(
     "company_name", "company_id", "notes", "alt", "due_day"
 )
 
+/** Build a tag map with lowercase keys so lookup is case-insensitive (Nostr/CypherLog may use varying case). */
+private fun tagsToMap(tags: List<List<String>>): Map<String, List<String>> {
+    val map = mutableMapOf<String, MutableList<String>>()
+    tags.forEach { pair ->
+        if (pair.size >= 2) {
+            val key = pair[0].lowercase()
+            map.getOrPut(key) { mutableListOf() }.add(pair[1])
+        }
+    }
+    return map
+}
+
 /** When name is empty, try to derive from CypherLog "alt" tag (e.g. "Subscription: Netflix"). */
 private fun nameFromAltTag(tagMap: Map<String, List<String>>): String {
     val alt = tagMap["alt"]?.firstOrNull() ?: return ""
     val lower = alt.lowercase()
     if (lower.contains("encrypted") && lower.contains("subscription data")) return ""
     return alt.removePrefix("Subscription:").removePrefix("subscription:").trim()
+}
+
+/** Map CypherLog subscription_type to BillSubcategory (spec: Streaming, Software, Health/Wellness, etc.). */
+private fun subscriptionTypeToSubcategory(value: String?): BillSubcategory {
+    val v = value?.trim()?.lowercase() ?: return BillSubcategory.OTHER_SUBSCRIPTION
+    return when (v) {
+        "streaming" -> BillSubcategory.STREAMING
+        "software" -> BillSubcategory.SOFTWARE
+        "health/wellness", "health", "wellness" -> BillSubcategory.HEALTH_WELLNESS
+        "shopping" -> BillSubcategory.SHOPPING
+        "vehicle" -> BillSubcategory.VEHICLE
+        "food" -> BillSubcategory.FOOD
+        "gaming" -> BillSubcategory.GAMING
+        "news/media", "news", "media" -> BillSubcategory.NEWS_MEDIA
+        "music" -> BillSubcategory.MUSIC
+        "home" -> BillSubcategory.SUB_HOME
+        "finance" -> BillSubcategory.FINANCE
+        "pet care", "petcare" -> BillSubcategory.PET_CARE
+        "education" -> BillSubcategory.EDUCATION
+        "travel" -> BillSubcategory.TRAVEL
+        else -> BillSubcategory.OTHER_SUBSCRIPTION
+    }
 }
 
 @Singleton
@@ -165,12 +199,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
 
     /** Parse CypherLog encrypted content JSON (same logical fields as tags) and build Bill; preserved from tags. */
     private fun content37004ToBill(dTag: String, contentJson: String, tags: List<List<String>>): Pair<Bill, Map<String, List<String>>?> {
-        val tagMap = mutableMapOf<String, MutableList<String>>()
-        tags.forEach { pair ->
-            if (pair.size >= 2) {
-                tagMap.getOrPut(pair[0]) { mutableListOf() }.add(pair[1])
-            }
-        }
+        val tagMap = tagsToMap(tags)
         val preserved = tagMap.filter { (k, _) -> k !in MAPPED_TAG_KEYS }
             .mapValues { (_, v) -> v.toList() }
             .ifEmpty { null }
@@ -181,6 +210,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
         val notes: String
         val companyName: String
         val dueDay: Int
+        val subcategory: BillSubcategory
         try {
             val root = json.parseToJsonElement(contentJson)
             val obj: JsonObject = when {
@@ -214,6 +244,8 @@ class CypherLogSubscriptionRepository @Inject constructor(
                 nameFromContent = nameFromAltTag(tagMap)
             }
             name = nameFromContent
+            val subscriptionTypeFromContent = str("subscription_type", "subscriptionType")
+            subcategory = subscriptionTypeToSubcategory(subscriptionTypeFromContent ?: tagMap["subscription_type"]?.firstOrNull())
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse 37004 content for d=$dTag: ${e.message}; content snippet: ${contentJson.take(200)}…")
             return tags37004ToBill(dTag, tags)
@@ -224,7 +256,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
             name = name.ifBlank { "Subscription" },
             amount = cost,
             category = BillCategory.OTHER,
-            subcategory = BillSubcategory.OTHER_SUBSCRIPTION,
+            subcategory = subcategory,
             frequency = frequency,
             dueDay = dueDay,
             accountName = companyName,
@@ -235,12 +267,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
     }
 
     private fun tags37004ToBill(dTag: String, tags: List<List<String>>): Pair<Bill, Map<String, List<String>>?> {
-        val tagMap = mutableMapOf<String, MutableList<String>>()
-        tags.forEach { pair ->
-            if (pair.size >= 2) {
-                tagMap.getOrPut(pair[0]) { mutableListOf() }.add(pair[1])
-            }
-        }
+        val tagMap = tagsToMap(tags)
         fun first(key: String): String? = tagMap[key]?.firstOrNull()
 
         var name = first("name") ?: ""
@@ -250,6 +277,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
         val notes = first("notes") ?: ""
         val companyName = first("company_name") ?: ""
         val dueDay = first("due_day")?.toIntOrNull()?.coerceIn(1, 31) ?: 1
+        val subcategory = subscriptionTypeToSubcategory(first("subscription_type"))
 
         val preserved = tagMap.filter { (k, _) -> k !in MAPPED_TAG_KEYS }
             .mapValues { (_, v) -> v.toList() }
@@ -260,7 +288,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
             name = name.ifBlank { "Subscription" },
             amount = cost,
             category = BillCategory.OTHER,
-            subcategory = BillSubcategory.OTHER_SUBSCRIPTION,
+            subcategory = subcategory,
             frequency = frequency,
             dueDay = dueDay,
             accountName = companyName,
@@ -270,6 +298,24 @@ class CypherLogSubscriptionRepository @Inject constructor(
         return bill to preserved
     }
 
+    private fun billSubcategoryToSubscriptionType(sub: BillSubcategory): String = when (sub) {
+        BillSubcategory.STREAMING -> "Streaming"
+        BillSubcategory.SOFTWARE -> "Software"
+        BillSubcategory.HEALTH_WELLNESS -> "Health/Wellness"
+        BillSubcategory.SHOPPING -> "Shopping"
+        BillSubcategory.VEHICLE -> "Vehicle"
+        BillSubcategory.FOOD -> "Food"
+        BillSubcategory.GAMING -> "Gaming"
+        BillSubcategory.NEWS_MEDIA -> "News/Media"
+        BillSubcategory.MUSIC -> "Music"
+        BillSubcategory.SUB_HOME -> "Home"
+        BillSubcategory.FINANCE -> "Finance"
+        BillSubcategory.PET_CARE -> "Pet Care"
+        BillSubcategory.EDUCATION -> "Education"
+        BillSubcategory.TRAVEL -> "Travel"
+        else -> "Other"
+    }
+
     private fun billTo37004Tags(
         bill: Bill,
         preservedTags: Map<String, List<String>>?,
@@ -277,7 +323,9 @@ class CypherLogSubscriptionRepository @Inject constructor(
     ): List<List<String>> {
         val list = mutableListOf<List<String>>()
         list.add(listOf("d", dTag))
+        list.add(listOf("alt", "Subscription: ${bill.name}"))
         list.add(listOf("name", bill.name))
+        list.add(listOf("subscription_type", billSubcategoryToSubscriptionType(bill.effectiveSubcategory)))
         list.add(listOf("cost", bill.amount.toString()))
         list.add(listOf("billing_frequency", billFrequencyToCypherLog(bill.frequency)))
         list.add(listOf("due_day", bill.dueDay.toString()))

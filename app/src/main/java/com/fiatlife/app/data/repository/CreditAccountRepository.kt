@@ -6,8 +6,13 @@ import com.fiatlife.app.data.local.dao.CreditAccountDao
 import com.fiatlife.app.data.local.entity.CreditAccountEntity
 import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.nostr.NostrEvent
+import com.fiatlife.app.domain.model.Bill
+import com.fiatlife.app.domain.model.BillFrequency
+import com.fiatlife.app.domain.model.BillSubcategory
 import com.fiatlife.app.domain.model.CreditAccount
+import com.fiatlife.app.domain.model.CreditAccountType
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -23,6 +28,7 @@ private const val TAG = "CreditAccountRepo"
 @Singleton
 class CreditAccountRepository @Inject constructor(
     private val creditAccountDao: CreditAccountDao,
+    private val billRepository: BillRepository,
     private val nostrClient: NostrClient,
     private val blossomClient: BlossomClient,
     private val json: Json
@@ -70,7 +76,85 @@ class CreditAccountRepository @Inject constructor(
                 Log.e(TAG, "Failed to publish credit account: ${e.message}")
             }
         }
-        return withId
+        return ensureBillForAccount(withId)
+    }
+
+    /** When balance > 0, ensure a linked bill exists (create or update). When balance == 0, set bill amount to 0. */
+    private suspend fun ensureBillForAccount(account: CreditAccount): CreditAccount {
+        val subcategory = when (account.type) {
+            CreditAccountType.CREDIT_CARD -> BillSubcategory.CREDIT_CARD
+            CreditAccountType.STUDENT_LOAN -> BillSubcategory.STUDENT_LOAN
+            else -> BillSubcategory.OTHER_LOAN
+        }
+        return when {
+            account.currentBalance > 0 -> {
+                if (account.linkedBillId != null) {
+                    val existing = billRepository.getBillById(account.linkedBillId).first()
+                    if (existing != null) {
+                        billRepository.saveBill(
+                            existing.copy(
+                                name = account.name,
+                                amount = account.effectiveMonthlyPayment(),
+                                dueDay = account.dueDay,
+                                subcategory = subcategory,
+                                updatedAt = System.currentTimeMillis()
+                            )
+                        )
+                        account
+                    } else {
+                        createAndLinkBill(account, subcategory)
+                    }
+                } else {
+                    createAndLinkBill(account, subcategory)
+                }
+            }
+            account.linkedBillId != null -> {
+                billRepository.getBillById(account.linkedBillId).first()?.let { existing ->
+                    billRepository.saveBill(
+                        existing.copy(
+                            amount = 0.0,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    }
+                }
+                account
+            }
+            else -> account
+        }
+    }
+
+    private suspend fun createAndLinkBill(account: CreditAccount, billSubcategory: BillSubcategory): CreditAccount {
+        val billId = UUID.randomUUID().toString()
+        val bill = Bill(
+            id = billId,
+            name = account.name,
+            amount = account.effectiveMonthlyPayment(),
+            subcategory = billSubcategory,
+            frequency = BillFrequency.MONTHLY,
+            dueDay = account.dueDay,
+            linkedCreditAccountId = account.id,
+            createdAt = System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis()
+        )
+        billRepository.saveBill(bill)
+        val updated = account.copy(linkedBillId = billId)
+        val jsonStr = json.encodeToString(CreditAccount.serializer(), updated)
+        creditAccountDao.upsert(
+            CreditAccountEntity(
+                id = updated.id,
+                jsonData = jsonStr,
+                type = updated.type.name,
+                updatedAt = updated.updatedAt
+            )
+        )
+        if (nostrClient.hasSigner) {
+            try {
+                nostrClient.publishEncryptedAppData("$NOSTR_D_TAG_PREFIX${updated.id}", jsonStr)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to publish credit account after linking bill: ${e.message}")
+            }
+        }
+        return updated
     }
 
     suspend fun uploadAttachment(
