@@ -2,6 +2,7 @@ package com.fiatlife.app.data.repository
 
 import android.util.Log
 import com.fiatlife.app.data.nostr.NostrClient
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
