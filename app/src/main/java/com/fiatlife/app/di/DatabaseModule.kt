@@ -7,6 +7,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.fiatlife.app.data.local.FiatLifeDatabase
 import com.fiatlife.app.data.local.dao.BankAccountDao
 import com.fiatlife.app.data.local.dao.BillDao
+import com.fiatlife.app.data.local.dao.BillerDao
 import com.fiatlife.app.data.local.dao.CreditAccountDao
 import com.fiatlife.app.data.local.dao.CypherLogSubscriptionDao
 import com.fiatlife.app.data.local.dao.GoalDao
@@ -61,6 +62,21 @@ private val MIGRATION_4_5 = object : Migration(4, 5) {
     }
 }
 
+private val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS billers (
+                id TEXT NOT NULL PRIMARY KEY,
+                name TEXT NOT NULL,
+                normalizedName TEXT NOT NULL,
+                linkedBillId TEXT,
+                updatedAt INTEGER NOT NULL DEFAULT 0
+            )
+        """.trimIndent())
+        db.execSQL("ALTER TABLE bills ADD COLUMN linkedBillerId TEXT")
+    }
+}
+
 @Module
 @InstallIn(SingletonComponent::class)
 object DatabaseModule {
@@ -72,7 +88,7 @@ object DatabaseModule {
             context,
             FiatLifeDatabase::class.java,
             FiatLifeDatabase.DATABASE_NAME
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build()
     }
 
     @Provides
@@ -95,4 +111,8 @@ object DatabaseModule {
     @Provides
     fun provideBankAccountDao(database: FiatLifeDatabase): BankAccountDao =
         database.bankAccountDao()
+
+    @Provides
+    fun provideBillerDao(database: FiatLifeDatabase): BillerDao =
+        database.billerDao()
 }

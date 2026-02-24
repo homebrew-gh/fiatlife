@@ -5,11 +5,13 @@ import androidx.lifecycle.viewModelScope
 import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.repository.BankAccountRepository
 import com.fiatlife.app.data.repository.BillRepository
+import com.fiatlife.app.data.repository.BillerRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
 import com.fiatlife.app.domain.model.BankAccount
 import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.domain.model.CreditAccount
+import com.fiatlife.app.domain.model.Biller
 import com.fiatlife.app.domain.model.BillGeneralCategory
 import com.fiatlife.app.domain.model.BillPayment
 import com.fiatlife.app.domain.model.BillWithSource
@@ -33,6 +35,7 @@ data class BillsState(
     val filteredBills: List<BillWithSource> = emptyList(),
     val creditAccounts: List<CreditAccount> = emptyList(),
     val bankAccounts: List<BankAccount> = emptyList(),
+    val billers: List<Biller> = emptyList(),
     /** Breakdown by payment account (banks then credit cards) for summary. */
     val paymentBreakdown: List<PaymentBreakdownRow> = emptyList(),
     val paymentSubtotalBanks: Double = 0.0,
@@ -65,6 +68,7 @@ class BillsViewModel @Inject constructor(
     private val cypherLogSubscriptionRepository: CypherLogSubscriptionRepository,
     private val creditAccountRepository: CreditAccountRepository,
     private val bankAccountRepository: BankAccountRepository,
+    private val billerRepository: BillerRepository,
     private val nostrClient: NostrClient
 ) : ViewModel() {
 
@@ -77,13 +81,14 @@ class BillsViewModel @Inject constructor(
                 repository.getAllBills(),
                 cypherLogSubscriptionRepository.getAllAsBills(),
                 creditAccountRepository.getAllCreditAccounts(),
-                bankAccountRepository.getAllBankAccounts()
-            ) { nativeBills, cypherLogBills, creditAccounts, bankAccounts ->
+                bankAccountRepository.getAllBankAccounts(),
+                billerRepository.getAllBillers()
+            ) { nativeBills, cypherLogBills, creditAccounts, bankAccounts, billers ->
                 val merged = nativeBills.map { BillWithSource(it, com.fiatlife.app.domain.model.BillSource.NATIVE, null) } +
                     cypherLogBills
                 val sortedMerged = merged.sortedBy { it.bill.name.lowercase() }
-                Triple(sortedMerged, creditAccounts, bankAccounts)
-            }.collect { (mergedBills, creditAccounts, bankAccounts) ->
+                Quadruple(sortedMerged, creditAccounts, bankAccounts, billers)
+            }.collect { (mergedBills, creditAccounts, bankAccounts, billers) ->
                 val accountsById = creditAccounts.associateBy { it.id }
                 val visibleBills = mergedBills.filter { item ->
                     val linkedId = item.bill.linkedCreditAccountId ?: return@filter true
@@ -166,6 +171,7 @@ class BillsViewModel @Inject constructor(
                         filteredBills = filterBills(visibleBills, state.selectedGeneralCategory),
                         creditAccounts = creditAccounts,
                         bankAccounts = bankAccounts,
+                        billers = billers,
                         paymentBreakdown = breakdown,
                         paymentSubtotalBanks = subtotalBanks,
                         paymentSubtotalCredit = subtotalCredit,
@@ -283,7 +289,8 @@ class BillsViewModel @Inject constructor(
                     }
                 } else {
                     val previousBill = current.editingBill
-                    val saved = repository.saveBill(merged)
+                    val reconciled = reconcileNativeBillerForSave(merged, previousBill)
+                    val saved = repository.saveBill(reconciled)
                     val newLinkedId = saved.linkedCreditAccountId
                     val oldLinkedId = previousBill?.linkedCreditAccountId
                     if (oldLinkedId != null && oldLinkedId != newLinkedId) {
@@ -295,6 +302,14 @@ class BillsViewModel @Inject constructor(
                         creditAccountRepository.getCreditAccountById(newLinkedId).first()?.let { acc ->
                             creditAccountRepository.saveCreditAccount(acc.copy(linkedBillId = saved.id))
                         }
+                    }
+                    previousBill?.linkedBillerId
+                        ?.takeIf { it != saved.linkedBillerId }
+                        ?.let { oldBillerId ->
+                            billerRepository.unlinkIfLinkedToBill(oldBillerId, saved.id)
+                        }
+                    saved.linkedBillerId?.let { billerId ->
+                        billerRepository.linkToBill(billerId, saved.id)
                     }
                     _state.update {
                         it.copy(
@@ -319,6 +334,9 @@ class BillsViewModel @Inject constructor(
             if (item.isCypherLog) {
                 cypherLogSubscriptionRepository.deleteSubscription(item.bill.id)
             } else {
+                item.bill.linkedBillerId?.let { billerId ->
+                    billerRepository.unlinkIfLinkedToBill(billerId, item.bill.id)
+                }
                 repository.deleteBill(item.bill)
             }
         }
@@ -432,4 +450,49 @@ class BillsViewModel @Inject constructor(
     private fun billDueSoonestComparator(): Comparator<BillWithSource> =
         compareBy<BillWithSource> { billDueSortKey(it) }
             .thenBy { it.bill.name.lowercase() }
+
+    private suspend fun reconcileNativeBillerForSave(incoming: Bill, previous: Bill?): Bill {
+        val requestedName = incoming.billerName.trim()
+        if (requestedName.isBlank()) {
+            previous?.linkedBillerId?.let { oldId ->
+                billerRepository.unlinkIfLinkedToBill(oldId, incoming.id)
+            }
+            return incoming.copy(linkedBillerId = null, billerName = "")
+        }
+        val existingById = incoming.linkedBillerId?.let { billerRepository.getById(it) }
+        val finalBiller = if (existingById != null &&
+            billerRepository.normalize(existingById.name) == billerRepository.normalize(requestedName)
+        ) {
+            if (existingById.name != requestedName) {
+                billerRepository.saveBiller(existingById.copy(name = requestedName))
+            } else existingById
+        } else {
+            billerRepository.getOrCreateByName(requestedName)
+        }
+        return incoming.copy(
+            linkedBillerId = finalBiller.id,
+            billerName = finalBiller.name
+        ).let { candidate ->
+            // New entry + existing linked bill for this company -> upsert the existing record.
+            if (incoming.id.isNotBlank()) return@let candidate
+            val linkedBillId = finalBiller.linkedBillId ?: return@let candidate
+            val existing = repository.getBillById(linkedBillId).first() ?: return@let candidate
+            candidate.copy(
+                id = existing.id,
+                createdAt = existing.createdAt,
+                paymentHistory = existing.paymentHistory,
+                statementEntries = existing.statementEntries,
+                attachmentHashes = existing.attachmentHashes,
+                // New statement/bill cycle should surface as currently due/unpaid.
+                isPaid = false
+            )
+        }
+    }
 }
+
+private data class Quadruple<A, B, C, D>(
+    val first: A,
+    val second: B,
+    val third: C,
+    val fourth: D
+)

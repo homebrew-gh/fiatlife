@@ -26,6 +26,7 @@ import androidx.lifecycle.lifecycleScope
 import com.fiatlife.app.data.blossom.BlossomClient
 import com.fiatlife.app.data.nostr.*
 import com.fiatlife.app.data.repository.BillRepository
+import com.fiatlife.app.data.repository.BillerRepository
 import com.fiatlife.app.data.repository.BankAccountRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
@@ -57,6 +58,7 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var pinPrefs: PinPrefs
     @Inject lateinit var salaryRepository: SalaryRepository
     @Inject lateinit var billRepository: BillRepository
+    @Inject lateinit var billerRepository: BillerRepository
     @Inject lateinit var goalRepository: GoalRepository
     @Inject lateinit var creditAccountRepository: CreditAccountRepository
     @Inject lateinit var bankAccountRepository: BankAccountRepository
@@ -367,6 +369,7 @@ class MainActivity : ComponentActivity() {
             launch { try { goalRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Goal sync: ${e.message}") } }
             launch { try { creditAccountRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Credit account sync: ${e.message}") } }
             launch { try { bankAccountRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bank account sync: ${e.message}") } }
+            launch { try { billerRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Biller sync: ${e.message}") } }
             launch { try { cypherLogSubscriptionRepository.syncFromRelay() } catch (e: Exception) { Log.w(TAG, "CypherLog sync: ${e.message}") } }
         }
     }

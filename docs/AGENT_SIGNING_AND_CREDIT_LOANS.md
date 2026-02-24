@@ -108,3 +108,125 @@ No code in this doc. Implementation would involve either:
 - **NIP-26 path**: NIP-26 verification in the app’s Nostr sync path; optionally UI to create/export a delegation for an agent key; agent-side code to sign and publish kind 30078 with the delegation tag.
 
 **Summary:** For “agent updates my credit/loan data from a statement,” **NIP-46 (bunker)** is the better default when the user has or is willing to use a bunker and the agent can reach it. **NIP-26** (e.g. cypherlog sub-key flow) is the option when the agent cannot or should not call a bunker. Blossom uploads by the agent would require either Blossom supporting one of these flows or a separate design (e.g. proxy or user-only Blossom uploads).
+
+---
+
+## 6. Feasibility assessment and recommended default
+
+Based on current app architecture and signer constraints, the recommended near-term path is:
+
+- **Default:** NIP-46 bunker signing for agent-published `kind=30078` updates.
+- **Fallback:** NIP-26 only when bunker access is not possible.
+- **Defer:** automated Blossom uploads (design this separately after relay update flow is stable).
+
+### Why this is feasible now
+
+- FiatLife already syncs replaceable app-data (`30078`) and merges by `d` tags.
+- NIP-46 produces standard user-signed events, so FiatLife read paths do not need delegation verification logic.
+- Permissioning/revocation can be centralized in bunker policy instead of app-level cryptographic delegation checks.
+
+### Main feasibility risks
+
+- Agent trust boundary (who sees statement data and where parsing runs).
+- Over-broad signing permissions (`sign_event:30078` without additional controls).
+- Missing rollback path when extraction is wrong.
+
+---
+
+## 7. MVP scope (recommended)
+
+To minimize complexity and risk:
+
+1. Agent parses statement and produces structured credit/loan updates only.
+2. Agent requests NIP-46 signatures for `kind=30078` events.
+3. FiatLife syncs and displays updates with source metadata.
+4. Statement file upload remains manual (or optional) for MVP.
+
+Out of scope for MVP:
+
+- Automatic attachment upload to Blossom by agent
+- NIP-26 event acceptance path in FiatLife
+- Fully autonomous writes without approval controls
+
+---
+
+## 8. Security model and policy requirements
+
+### 8.1 Threat model (minimum)
+
+- Agent may process sensitive financial statement contents.
+- Bunker signs events but should not expose private key material.
+- Relay may be untrusted for confidentiality (payload encryption still required where applicable).
+
+### 8.2 Bunker permission policy template
+
+At minimum:
+
+- allow `sign_event` only
+- restrict to `kind=30078`
+- restrict by time window (renewable)
+- optionally restrict by namespace convention in `d` tags (e.g. `fiatlife/credit/*`)
+- rate-limit signing requests (e.g. max writes/day)
+
+### 8.3 Revocation and recovery
+
+- one-tap revoke for agent client key in bunker
+- emergency disable in app UI
+- re-issue onboarding token/secret for new agent key
+
+---
+
+## 9. Data integrity, audit, and rollback
+
+For each agent-authored update, include machine-readable metadata in payload:
+
+- `source = "agent"`
+- `agent_client_pubkey` (or stable id)
+- `agent_run_id`
+- `extracted_at`
+- `statement_period_start` / `statement_period_end` (if known)
+- `confidence` (optional)
+
+App requirements:
+
+- show “agent-updated” indicator in relevant UI
+- preserve previous value snapshot locally for rollback
+- allow “revert latest agent update” per account
+- log update timestamp and source in account history
+
+---
+
+## 10. Phased implementation plan
+
+### Phase 0: Readiness
+
+- Define bunker policy constraints and onboarding flow.
+- Define account update schema and required metadata fields.
+- Define `d`-tag namespace strategy for agent-managed credit/loan data.
+
+### Phase 1: Controlled write path (MVP)
+
+- Agent signs via NIP-46 and publishes `30078` updates.
+- FiatLife syncs and displays with source badge.
+- Manual statement attachments remain user-managed.
+
+### Phase 2: Operator controls
+
+- Add agent health/status page in settings.
+- Add revoke/rotate actions and policy diagnostics.
+- Add optional approval mode (user confirms high-impact updates).
+
+### Phase 3: Attachment automation (optional)
+
+- Add a dedicated Blossom signing/upload architecture (bunker-mediated or proxy model).
+- Link uploaded attachment hash to update event with audit trail.
+
+---
+
+## 11. Decision checklist before implementation
+
+- [ ] Use NIP-46 as default agent signing path
+- [ ] Keep NIP-26 as optional fallback only
+- [ ] Start with relay updates only (no auto Blossom uploads)
+- [ ] Implement metadata + rollback before broad rollout
+- [ ] Implement explicit revocation UX before enabling unattended updates

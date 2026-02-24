@@ -18,6 +18,9 @@ interface BillDao {
     @Query("SELECT * FROM bills WHERE id = :id")
     fun getByIdAsFlow(id: String): Flow<BillEntity?>
 
+    @Query("SELECT * FROM bills WHERE linkedBillerId = :billerId LIMIT 1")
+    suspend fun getByLinkedBillerId(billerId: String): BillEntity?
+
     @Upsert
     suspend fun upsert(entity: BillEntity)
 

@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.fiatlife.app.data.repository.BankAccountRepository
 import com.fiatlife.app.data.repository.BillRepository
+import com.fiatlife.app.data.repository.BillerRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
 import com.fiatlife.app.domain.model.BankAccount
@@ -12,6 +13,7 @@ import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.domain.model.BillPayment
 import com.fiatlife.app.domain.model.BillSource
 import com.fiatlife.app.domain.model.BillWithSource
+import com.fiatlife.app.domain.model.Biller
 import com.fiatlife.app.domain.model.CreditAccount
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
@@ -34,6 +36,7 @@ class BillDetailViewModel @Inject constructor(
     private val repository: BillRepository,
     private val creditAccountRepository: CreditAccountRepository,
     private val bankAccountRepository: BankAccountRepository,
+    private val billerRepository: BillerRepository,
     private val cypherLogSubscriptionRepository: CypherLogSubscriptionRepository
 ) : ViewModel() {
     private val _message = MutableStateFlow("")
@@ -85,6 +88,13 @@ class BillDetailViewModel @Inject constructor(
             initialValue = emptyList()
         )
 
+    val billers: StateFlow<List<Biller>> = billerRepository.getAllBillers()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
     fun recordPayment(bill: Bill) {
         val item = billWithSource.value ?: return
         if (bill.isCreditOrLoan()) return
@@ -130,6 +140,9 @@ class BillDetailViewModel @Inject constructor(
             if (item.isCypherLog) {
                 cypherLogSubscriptionRepository.deleteSubscription(item.bill.id)
             } else {
+                item.bill.linkedBillerId?.let { billerId ->
+                    billerRepository.unlinkIfLinkedToBill(billerId, item.bill.id)
+                }
                 repository.deleteBill(item.bill)
             }
         }
@@ -146,7 +159,8 @@ class BillDetailViewModel @Inject constructor(
                 }
             } else {
                 val previousBill = item.bill
-                val saved = repository.saveBill(bill)
+                val reconciled = reconcileNativeBillerForSave(bill, previousBill)
+                val saved = repository.saveBill(reconciled)
                 val newLinkedId = saved.linkedCreditAccountId
                 val oldLinkedId = previousBill.linkedCreditAccountId
                 if (oldLinkedId != null && oldLinkedId != newLinkedId) {
@@ -159,6 +173,14 @@ class BillDetailViewModel @Inject constructor(
                         creditAccountRepository.saveCreditAccount(acc.copy(linkedBillId = saved.id))
                     }
                 }
+                previousBill.linkedBillerId
+                    ?.takeIf { it != saved.linkedBillerId }
+                    ?.let { oldBillerId ->
+                        billerRepository.unlinkIfLinkedToBill(oldBillerId, saved.id)
+                    }
+                saved.linkedBillerId?.let { billerId ->
+                    billerRepository.linkToBill(billerId, saved.id)
+                }
             }
         }
     }
@@ -169,4 +191,28 @@ class BillDetailViewModel @Inject constructor(
 
     suspend fun getStatementBytes(hash: String): Result<ByteArray> =
         repository.downloadAttachment(hash)
+
+    private suspend fun reconcileNativeBillerForSave(incoming: Bill, previous: Bill?): Bill {
+        val requestedName = incoming.billerName.trim()
+        if (requestedName.isBlank()) {
+            previous?.linkedBillerId?.let { oldId ->
+                billerRepository.unlinkIfLinkedToBill(oldId, incoming.id)
+            }
+            return incoming.copy(linkedBillerId = null, billerName = "")
+        }
+        val existingById = incoming.linkedBillerId?.let { billerRepository.getById(it) }
+        val finalBiller = if (existingById != null &&
+            billerRepository.normalize(existingById.name) == billerRepository.normalize(requestedName)
+        ) {
+            if (existingById.name != requestedName) {
+                billerRepository.saveBiller(existingById.copy(name = requestedName))
+            } else existingById
+        } else {
+            billerRepository.getOrCreateByName(requestedName)
+        }
+        return incoming.copy(
+            linkedBillerId = finalBiller.id,
+            billerName = finalBiller.name
+        )
+    }
 }

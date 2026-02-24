@@ -20,6 +20,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -29,6 +30,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "CypherLogSubRepo"
+private const val DELETE_TOMBSTONE_DTAG_PREFIX = "fiatlife/cypherlog_deleted/"
 
 /** CypherLog 37004 tag keys we map to Bill; all others are preserved for round-trip */
 private val MAPPED_TAG_KEYS = setOf(
@@ -186,27 +188,6 @@ class CypherLogSubscriptionRepository @Inject constructor(
         val reason: String = ""
     )
 
-    /** Temporary debug export for local 37004 cache inspection in Settings screen. */
-    suspend fun exportDebugRows(limit: Int = 20): String {
-        val rows = dao.getRecent(limit)
-        if (rows.isEmpty()) return "No cached 37004 subscription rows found."
-        fun truncate(s: String, max: Int = 2500): String =
-            if (s.length <= max) s else s.take(max) + "… [truncated]"
-
-        return buildString {
-            appendLine("CypherLog 37004 cache debug export")
-            appendLine("rows=${rows.size}")
-            rows.forEachIndexed { idx, row ->
-                appendLine()
-                appendLine("[$idx] dTag=${row.dTag}")
-                appendLine("eventId=${row.eventId}")
-                appendLine("createdAt=${row.createdAt}")
-                appendLine("tagsJson=${truncate(row.tagsJson)}")
-                appendLine("contentDecryptedJson=${row.contentDecryptedJson?.let { truncate(it) } ?: "<null>"}")
-            }
-        }
-    }
-
     fun getAllAsBills(): Flow<List<BillWithSource>> {
         return dao.getAll().map { entities ->
             entities.mapNotNull { entity -> entityToBillWithSource(entity) }
@@ -317,6 +298,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
     }
 
     suspend fun deleteSubscription(dTag: String) {
+        publishDeleteTombstone(dTag)
         if (nostrClient.hasSigner) {
             try {
                 nostrClient.publishDeletion(NostrEvent.KIND_CYPHERLOG_SUBSCRIPTION, dTag)
@@ -332,8 +314,17 @@ class CypherLogSubscriptionRepository @Inject constructor(
         if (!nostrClient.hasSigner) return
         try {
             withTimeout(30_000) {
+                val deletedDTags = loadDeletedDTagsFromRelay()
+                if (deletedDTags.isNotEmpty()) {
+                    deletedDTags.forEach { dao.deleteByDTag(it) }
+                }
                 var count = 0
                 nostrClient.subscribeToKind37004().collect { event ->
+                    val dTag = event.tags.firstOrNull { it.size >= 2 && it[0] == "d" }?.getOrNull(1) ?: return@collect
+                    if (dTag in deletedDTags) {
+                        dao.deleteByDTag(dTag)
+                        return@collect
+                    }
                     upsertFromEvent(event)
                     count++
                 }
@@ -623,5 +614,38 @@ class CypherLogSubscriptionRepository @Inject constructor(
         BillFrequency.ANNUALLY -> "annually"
         BillFrequency.BIWEEKLY -> "monthly"
         BillFrequency.BIMONTHLY -> "quarterly"
+    }
+
+    /** Local/app-level tombstone so deleted 37004 subscriptions stay hidden across resync and devices. */
+    private suspend fun publishDeleteTombstone(dTag: String) {
+        if (!nostrClient.hasSigner) return
+        val tombstoneDTag = "$DELETE_TOMBSTONE_DTAG_PREFIX$dTag"
+        val payload = """{"deleted":true,"dTag":"$dTag","updatedAt":${System.currentTimeMillis()}}"""
+        try {
+            nostrClient.publishEncryptedAppData(tombstoneDTag, payload)
+            Log.d(TAG, "Published CypherLog tombstone for d=$dTag")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to publish CypherLog tombstone for d=$dTag: ${e.message}")
+        }
+    }
+
+    private suspend fun loadDeletedDTagsFromRelay(): Set<String> {
+        val deleted = mutableSetOf<String>()
+        try {
+            withTimeout(12_000) {
+                nostrClient.subscribeToAppData(dTagPrefix = DELETE_TOMBSTONE_DTAG_PREFIX).collect { (eventDTag, decrypted) ->
+                    val dTag = eventDTag.removePrefix(DELETE_TOMBSTONE_DTAG_PREFIX).trim()
+                    if (dTag.isBlank()) return@collect
+                    val isDeleted = runCatching {
+                        val obj = json.parseToJsonElement(decrypted).jsonObject
+                        obj["deleted"]?.jsonPrimitive?.booleanOrNull != false
+                    }.getOrDefault(true)
+                    if (isDeleted) deleted.add(dTag)
+                }
+            }
+        } catch (_: Exception) {
+            // If tombstone sync fails, we still continue with normal 37004 sync.
+        }
+        return deleted
     }
 }

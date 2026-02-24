@@ -50,6 +50,10 @@ class BillRepository @Inject constructor(
         }
     }
 
+    suspend fun getBillByLinkedBillerId(billerId: String): Bill? {
+        return billDao.getByLinkedBillerId(billerId)?.let { json.decodeFromString<Bill>(it.jsonData) }
+    }
+
     suspend fun saveBill(bill: Bill): Bill {
         val billWithId = if (bill.id.isEmpty()) {
             bill.copy(
@@ -68,6 +72,7 @@ class BillRepository @Inject constructor(
                 id = billWithId.id,
                 jsonData = jsonStr,
                 category = billWithId.effectiveSubcategory.name,
+                linkedBillerId = billWithId.linkedBillerId,
                 updatedAt = billWithId.updatedAt
             )
         )
@@ -91,7 +96,8 @@ class BillRepository @Inject constructor(
             BillEntity(
                 id = bill.id,
                 jsonData = "",
-                category = bill.effectiveSubcategory.name
+                category = bill.effectiveSubcategory.name,
+                linkedBillerId = bill.linkedBillerId
             )
         )
 
@@ -145,6 +151,7 @@ class BillRepository @Inject constructor(
                                     id = bill.id,
                                     jsonData = decrypted,
                                     category = bill.effectiveSubcategory.name,
+                                    linkedBillerId = bill.linkedBillerId,
                                     updatedAt = bill.updatedAt
                                 )
                             )

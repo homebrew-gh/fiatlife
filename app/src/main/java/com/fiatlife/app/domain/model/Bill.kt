@@ -245,6 +245,10 @@ data class Bill(
     val creditCardDetails: CreditCardDetails? = null,
     /** When set, this bill represents the monthly payment for the linked credit/loan account (Debt tab). */
     val linkedCreditAccountId: String? = null,
+    /** Optional normalized company/payee identity for recurring bill tracking. */
+    val linkedBillerId: String? = null,
+    /** Human-readable biller/company label used for matching and display. */
+    val billerName: String = "",
     /** When set, this bill is paid from this bank account (Settings → Payment accounts). */
     val payFromBankAccountId: String? = null,
     /** When set, this bill is paid from this credit/loan account (Debt tab). */

@@ -15,9 +15,6 @@ interface CypherLogSubscriptionDao {
     @Query("SELECT * FROM cypherlog_subscriptions WHERE dTag = :dTag LIMIT 1")
     fun getByDTagAsFlow(dTag: String): Flow<CypherLogSubscriptionEntity?>
 
-    @Query("SELECT * FROM cypherlog_subscriptions ORDER BY createdAt DESC LIMIT :limit")
-    suspend fun getRecent(limit: Int): List<CypherLogSubscriptionEntity>
-
     @Upsert
     suspend fun upsert(entity: CypherLogSubscriptionEntity)
 

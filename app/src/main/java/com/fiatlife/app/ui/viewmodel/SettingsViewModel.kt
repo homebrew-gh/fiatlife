@@ -24,7 +24,6 @@ import com.fiatlife.app.data.nostr.toHex
 import com.fiatlife.app.data.repository.BankAccountRepository
 import com.fiatlife.app.data.repository.AppSettingsRepository
 import com.fiatlife.app.data.repository.BillRepository
-import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
 import com.fiatlife.app.data.repository.GoalRepository
 import com.fiatlife.app.data.repository.SalaryRepository
 import com.fiatlife.app.domain.model.BankAccount
@@ -52,7 +51,6 @@ data class SettingsState(
     val billNotifEnabled: Boolean = false,
     val billNotifDetailLevel: NotifDetailLevel = NotifDetailLevel.PRIVATE,
     val billNotifDaysBefore: Int = 3,
-    val cypherLogDebugDump: String = "",
     val statusMessage: String = "",
     val bankAccounts: List<BankAccount> = emptyList(),
     val editingBankAccount: BankAccount? = null
@@ -66,7 +64,6 @@ class SettingsViewModel @Inject constructor(
     private val blossomClient: BlossomClient,
     private val salaryRepository: SalaryRepository,
     private val billRepository: BillRepository,
-    private val cypherLogSubscriptionRepository: CypherLogSubscriptionRepository,
     private val goalRepository: GoalRepository,
     private val bankAccountRepository: BankAccountRepository,
     private val appSettingsRepository: AppSettingsRepository,
@@ -290,22 +287,6 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             bankAccountRepository.deleteBankAccount(account)
             _state.update { it.copy(editingBankAccount = null) }
-        }
-    }
-
-    fun exportCypherLogDebugRows() {
-        viewModelScope.launch {
-            val dump = try {
-                cypherLogSubscriptionRepository.exportDebugRows(limit = 25)
-            } catch (e: Exception) {
-                "Failed to export CypherLog debug rows: ${e.message}"
-            }
-            _state.update {
-                it.copy(
-                    cypherLogDebugDump = dump,
-                    statusMessage = "Generated CypherLog 37004 debug export (${dump.length} chars)."
-                )
-            }
         }
     }
 

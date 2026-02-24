@@ -25,6 +25,7 @@ import com.fiatlife.app.domain.model.BillCategory
 import com.fiatlife.app.domain.model.BillGeneralCategory
 import com.fiatlife.app.domain.model.BillFrequency
 import com.fiatlife.app.domain.model.BillRecurrenceUnit
+import com.fiatlife.app.domain.model.Biller
 import com.fiatlife.app.domain.model.CreditAccount
 import com.fiatlife.app.domain.model.CreditCardDetails
 import com.fiatlife.app.domain.model.CreditCardMinPaymentType
@@ -355,6 +356,7 @@ fun BillsScreen(
             bill = state.editingBill,
             creditAccounts = state.creditAccounts,
             bankAccounts = state.bankAccounts,
+            billers = state.billers,
             isEditingCypherLog = state.editingIsCypherLog,
             statementCount = state.dialogStatementEntries.size,
             onDismiss = { viewModel.dismissDialog() },
@@ -808,6 +810,7 @@ internal fun BillDialog(
     bill: Bill?,
     creditAccounts: List<CreditAccount> = emptyList(),
     bankAccounts: List<BankAccount> = emptyList(),
+    billers: List<Biller> = emptyList(),
     isEditingCypherLog: Boolean = false,
     statementCount: Int = 0,
     onDismiss: () -> Unit,
@@ -831,6 +834,7 @@ internal fun BillDialog(
     var showAdvancedRecurrence by remember { mutableStateOf(false) }
     var autoPay by remember { mutableStateOf(bill?.autoPay ?: false) }
     var accountName by remember { mutableStateOf(bill?.accountName ?: "") }
+    var billerName by remember { mutableStateOf(bill?.billerName ?: "") }
     var payFromBankAccountId by remember { mutableStateOf(bill?.payFromBankAccountId ?: "") }
     var payFromCreditAccountId by remember { mutableStateOf(bill?.payFromCreditAccountId ?: "") }
     var payFromExpanded by remember { mutableStateOf(false) }
@@ -1210,6 +1214,27 @@ internal fun BillDialog(
                     }
                 }
                 item {
+                    val suggestedBillerNames = billers.map { it.name }.distinct()
+                    OutlinedTextField(
+                        value = billerName,
+                        onValueChange = { billerName = it },
+                        label = { Text("Company/Biller (optional)") },
+                        placeholder = { Text("e.g. Duke Energy") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = MaterialTheme.shapes.medium
+                    )
+                    if (suggestedBillerNames.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Existing: ${suggestedBillerNames.take(4).joinToString(", ")}" +
+                                if (suggestedBillerNames.size > 4) "…" else "",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                item {
                     val payFromDisplay = when {
                         payFromBankAccountId.isNotBlank() -> bankAccounts.find { it.id == payFromBankAccountId }?.let { "${it.name} (Bank)" } ?: "…"
                         payFromCreditAccountId.isNotBlank() -> creditAccounts.find { it.id == payFromCreditAccountId }?.let { "${it.name} (Credit card)" } ?: "…"
@@ -1369,6 +1394,11 @@ internal fun BillDialog(
                     val showInCypherLogArg = if (showInCypherLogVisible) showInCypherLog else null
                     val initialPurchaseDateMillis = parseIsoDate(initialPurchaseDate)
                     val intervalCount = recurrenceIntervalCount.toIntOrNull()?.coerceAtLeast(1) ?: 1
+                    val originalBillerName = bill?.billerName?.trim().orEmpty()
+                    val normalizedInputBiller = billerName.trim()
+                    val linkedBillerIdForSave = if (
+                        normalizedInputBiller.equals(originalBillerName, ignoreCase = true)
+                    ) bill?.linkedBillerId else null
                     onSave(
                         Bill(
                             id = bill?.id ?: "",
@@ -1385,6 +1415,7 @@ internal fun BillDialog(
                             recurrenceIntervalCount = intervalCount,
                             recurrenceTimezone = recurrenceTimezone.trim().takeIf { it.isNotBlank() },
                             accountName = accountName,
+                            billerName = normalizedInputBiller,
                             notes = notes,
                             attachmentHashes = bill?.attachmentHashes ?: emptyList(),
                             statementEntries = bill?.statementEntries ?: emptyList(),
@@ -1395,6 +1426,7 @@ internal fun BillDialog(
                             updatedAt = 0L,
                             creditCardDetails = ccDetails,
                             linkedCreditAccountId = linkedCreditAccountId.takeIf { it.isNotBlank() },
+                            linkedBillerId = linkedBillerIdForSave,
                             payFromBankAccountId = payFromBankAccountId.takeIf { it.isNotBlank() },
                             payFromCreditAccountId = payFromCreditAccountId.takeIf { it.isNotBlank() }
                         ),

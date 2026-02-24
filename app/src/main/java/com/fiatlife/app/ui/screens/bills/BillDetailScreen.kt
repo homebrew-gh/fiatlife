@@ -47,6 +47,7 @@ fun BillDetailScreen(
     val linkedCreditAccount by viewModel.linkedCreditAccount.collectAsStateWithLifecycle()
     val creditAccounts by viewModel.creditAccounts.collectAsStateWithLifecycle()
     val bankAccounts by viewModel.bankAccounts.collectAsStateWithLifecycle()
+    val billers by viewModel.billers.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -131,6 +132,21 @@ fun BillDetailScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                         )
+                        val payFromName = when {
+                            !b.payFromBankAccountId.isNullOrBlank() ->
+                                bankAccounts.find { it.id == b.payFromBankAccountId }?.name
+                            !b.payFromCreditAccountId.isNullOrBlank() ->
+                                creditAccounts.find { it.id == b.payFromCreditAccountId }?.name
+                            b.accountName.isNotBlank() -> b.accountName
+                            else -> null
+                        }
+                        payFromName?.let { account ->
+                            Text(
+                                text = "Pay from $account",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                            )
+                        }
                         b.initialPurchaseDateMillis?.let { started ->
                             Text(
                                 text = "Started ${SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(started))}",
@@ -432,6 +448,7 @@ fun BillDetailScreen(
                 bill = editingBill,
                 creditAccounts = creditAccounts,
                 bankAccounts = bankAccounts,
+                billers = billers,
                 isEditingCypherLog = billWithSource?.isCypherLog == true,
                 statementCount = editingBill.statementEntries.size,
                 onDismiss = { showEditDialog = false },
