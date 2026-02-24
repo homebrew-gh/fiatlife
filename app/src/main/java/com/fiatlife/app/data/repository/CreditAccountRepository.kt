@@ -100,26 +100,29 @@ class CreditAccountRepository @Inject constructor(
                                 updatedAt = System.currentTimeMillis()
                             )
                         )
-                        account
+                        return@ensureBillForAccount account
                     } else {
-                        createAndLinkBill(account, subcategory)
+                        return@ensureBillForAccount createAndLinkBill(account, subcategory)
                     }
                 } else {
-                    createAndLinkBill(account, subcategory)
+                    return@ensureBillForAccount createAndLinkBill(account, subcategory)
                 }
             }
             account.linkedBillId != null -> {
-                billRepository.getBillById(account.linkedBillId).first()?.let { existing ->
-                    billRepository.saveBill(
-                        existing.copy(
-                            amount = 0.0,
-                            updatedAt = System.currentTimeMillis()
+                val billId = account.linkedBillId
+                if (billId != null) {
+                    billRepository.getBillById(billId).first()?.let { existing ->
+                        billRepository.saveBill(
+                            existing.copy(
+                                amount = 0.0,
+                                updatedAt = System.currentTimeMillis()
+                            )
                         )
                     }
                 }
-                account
+                return@ensureBillForAccount account
             }
-            else -> account
+            else -> return@ensureBillForAccount account
         }
     }
 
