@@ -190,7 +190,7 @@ class MainActivity : ComponentActivity() {
                                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:"))
                                 intent.putExtra("type", "get_public_key")
                                 intent.putExtra("permissions",
-                                    """[{"type":"nip44_decrypt"},{"type":"nip44_encrypt"},{"type":"sign_event","kind":22242},{"type":"sign_event","kind":24242},{"type":"sign_event","kind":30078},{"type":"sign_event","kind":37004}]"""
+                                    """[{"type":"nip44_decrypt"},{"type":"nip44_encrypt"},{"type":"sign_event"},{"type":"sign_event","kind":22242},{"type":"sign_event","kind":24242},{"type":"sign_event","kind":30078},{"type":"sign_event","kind":37004},{"type":"sign_event","kind":5}]"""
                                 )
                                 resolvedSignerPackage = packageManager
                                     .queryIntentActivities(intent, 0)
