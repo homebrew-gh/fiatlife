@@ -219,9 +219,42 @@ class CreditAccountRepository @Inject constructor(
                     }
                 }
                 Log.d(TAG, "Synced $count credit account(s) from relay")
+                val backfilled = backfillMissingLinkedBills()
+                if (backfilled > 0) {
+                    Log.d(TAG, "Backfilled $backfilled missing linked bill(s) for credit accounts")
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Credit account sync failed: ${e.message}")
         }
+    }
+
+    /**
+     * One-time-safe backfill: create/link a bill for any positive-balance account that has no valid linked bill.
+     * Idempotent for already-linked accounts.
+     */
+    suspend fun backfillMissingLinkedBills(): Int {
+        val accounts = creditAccountDao.getAllSnapshot().mapNotNull { entity ->
+            runCatching { json.decodeFromString<CreditAccount>(entity.jsonData) }
+                .onFailure { Log.w(TAG, "Skipping malformed credit account ${entity.id}: ${it.message}") }
+                .getOrNull()
+        }
+        var created = 0
+        accounts.forEach { account ->
+            if (account.currentBalance <= 0.0) return@forEach
+            val hasValidLinkedBill = account.linkedBillId?.let { billId ->
+                billRepository.getBillById(billId).first() != null
+            } ?: false
+            if (hasValidLinkedBill) return@forEach
+
+            val subcategory = when (account.type) {
+                CreditAccountType.CREDIT_CARD -> BillSubcategory.CREDIT_CARD
+                CreditAccountType.STUDENT_LOAN -> BillSubcategory.STUDENT_LOAN
+                else -> BillSubcategory.OTHER_LOAN
+            }
+            createAndLinkBill(account, subcategory)
+            created++
+        }
+        return created
     }
 }
