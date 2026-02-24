@@ -22,10 +22,12 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fiatlife.app.data.notification.NotifDetailLevel
+import com.fiatlife.app.domain.model.BankAccount
 import com.fiatlife.app.ui.components.SectionCard
 import com.fiatlife.app.ui.screens.pin.SetPinSheet
 import com.fiatlife.app.ui.theme.ProfitGreen
 import com.fiatlife.app.ui.viewmodel.SettingsViewModel
+import androidx.compose.foundation.clickable
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -495,6 +497,51 @@ fun SettingsScreen(
             }
         }
 
+        // Payment accounts (banks)
+        item {
+            SectionCard(
+                title = "Payment accounts (banks)",
+                icon = Icons.Filled.AccountBalance
+            ) {
+                Text(
+                    text = "Named accounts to tag which bills are paid from which account. No credentials stored.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                state.bankAccounts.forEach { account ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { viewModel.showEditBankAccount(account) },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = account.name,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Icon(
+                            Icons.Filled.ChevronRight,
+                            contentDescription = "Edit",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { viewModel.showAddBankAccount() },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Add bank account")
+                }
+            }
+        }
+
         // About
         item {
             SectionCard(
@@ -545,6 +592,64 @@ fun SettingsScreen(
                 }
             }
         )
+    }
+
+    state.editingBankAccount?.let { account ->
+        var name by remember(account) { mutableStateOf(account.name) }
+        var showDeleteConfirm by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissBankAccountDialog() },
+            title = { Text(if (account.id.isEmpty()) "Add bank account" else "Edit bank account") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("Account name") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = MaterialTheme.shapes.medium,
+                        placeholder = { Text("e.g. Chase Checking") }
+                    )
+                    if (account.id.isNotEmpty()) {
+                        TextButton(
+                            onClick = { showDeleteConfirm = true },
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                        ) { Text("Delete account") }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.saveBankAccount(account.copy(name = name.trim()))
+                    },
+                    enabled = name.isNotBlank()
+                ) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissBankAccountDialog() }) { Text("Cancel") }
+            }
+        )
+        if (showDeleteConfirm) {
+            AlertDialog(
+                onDismissRequest = { showDeleteConfirm = false },
+                title = { Text("Delete ${account.name}?") },
+                text = { Text("Bills tagged with this account will show no payment account.") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            viewModel.deleteBankAccount(account)
+                            showDeleteConfirm = false
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) { Text("Delete") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
+                }
+            )
+        }
     }
 
     if (showSetPinSheet) {

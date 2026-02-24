@@ -37,8 +37,21 @@ private val MAPPED_TAG_KEYS = setOf(
     "renewal_date", "next_due_date", "due_date",
     "initial_purchase_date", "purchase_date", "anchor_date", "start_date",
     "interval_unit", "interval_count", "timezone",
-    "fiatlife_is_paid", "fiatlife_last_paid_date", "fiatlife_payment"
+    "fiatlife_is_paid", "fiatlife_last_paid_date", "fiatlife_payment",
+    "fiatlife_pay_from_bank_id", "fiatlife_pay_from_credit_id"
 )
+
+/** True if [content] looks like plaintext subscription JSON (CypherLog on private relay often sends unencrypted). */
+private fun isPlaintextSubscriptionJson(content: String): Boolean {
+    val trimmed = content.trim()
+    if (trimmed.isEmpty() || (!trimmed.startsWith("{") && !trimmed.startsWith("["))) return false
+    return try {
+        json.parseToJsonElement(trimmed)
+        true
+    } catch (_: Exception) {
+        false
+    }
+}
 
 /** Build a tag map with lowercase keys so lookup is case-insensitive (Nostr/CypherLog may use varying case). */
 private fun tagsToMap(tags: List<List<String>>): Map<String, List<String>> {
@@ -215,35 +228,36 @@ class CypherLogSubscriptionRepository @Inject constructor(
         }.toString()
         var contentDecryptedJson: String? = null
         if (event.content.isNotBlank()) {
-            val signer = nostrClient.currentSigner
-            if (signer != null) {
-                val pTagPubkeys = event.tags
-                    .filter { it.size >= 2 && it[0] == "p" }
-                    .map { it[1] }
-                val candidates = (listOf(event.pubkey, signer.pubkeyHex) + pTagPubkeys)
-                    .filter { it.isNotBlank() }
-                    .distinct()
-                for (candidate in candidates) {
-                    val raw = signer.nip44Decrypt(event.content, candidate)?.trim()
-                    if (raw.isNullOrBlank()) continue
-                    val lower = raw.lowercase()
-                    if (lower.contains("could not decrypt")) continue
-                    val isJson = try {
-                        json.parseToJsonElement(raw)
-                        true
-                    } catch (_: Exception) {
-                        false
+            val rawContent = event.content.trim()
+            // CypherLog does not encrypt on personal/private (NIP-42 auth'd) relays; content may be plaintext JSON.
+            if (isPlaintextSubscriptionJson(rawContent)) {
+                contentDecryptedJson = rawContent
+                Log.d(TAG, "37004 d=$dTag: using plaintext content (private-relay style)")
+            } else {
+                val signer = nostrClient.currentSigner
+                if (signer != null) {
+                    val pTagPubkeys = event.tags
+                        .filter { it.size >= 2 && it[0] == "p" }
+                        .map { it[1] }
+                    val candidates = (listOf(event.pubkey, signer.pubkeyHex) + pTagPubkeys)
+                        .filter { it.isNotBlank() }
+                        .distinct()
+                    for (candidate in candidates) {
+                        val raw = signer.nip44Decrypt(event.content, candidate)?.trim()
+                        if (raw.isNullOrBlank()) continue
+                        val lower = raw.lowercase()
+                        if (lower.contains("could not decrypt")) continue
+                        if (isPlaintextSubscriptionJson(raw)) {
+                            contentDecryptedJson = raw
+                            break
+                        }
                     }
-                    if (isJson) {
-                        contentDecryptedJson = raw
-                        break
+                    if (contentDecryptedJson == null) {
+                        Log.w(
+                            TAG,
+                            "Failed to decrypt 37004 content for d=$dTag (author=${event.pubkey.take(8)}…, pTags=${pTagPubkeys.size})"
+                        )
                     }
-                }
-                if (contentDecryptedJson == null) {
-                    Log.w(
-                        TAG,
-                        "Failed to decrypt 37004 content for d=$dTag (author=${event.pubkey.take(8)}…, pTags=${pTagPubkeys.size})"
-                    )
                 }
             }
         }
@@ -475,7 +489,9 @@ class CypherLogSubscriptionRepository @Inject constructor(
             lastPaidDate = lastPaidDate,
             accountName = companyName,
             notes = notes,
-            updatedAt = 0L
+            updatedAt = 0L,
+            payFromBankAccountId = tagMap["fiatlife_pay_from_bank_id"]?.firstOrNull()?.takeIf { it.isNotBlank() },
+            payFromCreditAccountId = tagMap["fiatlife_pay_from_credit_id"]?.firstOrNull()?.takeIf { it.isNotBlank() }
         )
         return bill to preserved
     }
@@ -530,7 +546,9 @@ class CypherLogSubscriptionRepository @Inject constructor(
             lastPaidDate = lastPaidDate,
             accountName = companyName,
             notes = notes,
-            updatedAt = 0L
+            updatedAt = 0L,
+            payFromBankAccountId = first("fiatlife_pay_from_bank_id")?.takeIf { it.isNotBlank() },
+            payFromCreditAccountId = first("fiatlife_pay_from_credit_id")?.takeIf { it.isNotBlank() }
         )
         return bill to preserved
     }
@@ -579,6 +597,8 @@ class CypherLogSubscriptionRepository @Inject constructor(
         }
         if (bill.notes.isNotBlank()) list.add(listOf("notes", bill.notes))
         if (bill.accountName.isNotBlank()) list.add(listOf("company_name", bill.accountName))
+        bill.payFromBankAccountId?.takeIf { it.isNotBlank() }?.let { list.add(listOf("fiatlife_pay_from_bank_id", it)) }
+        bill.payFromCreditAccountId?.takeIf { it.isNotBlank() }?.let { list.add(listOf("fiatlife_pay_from_credit_id", it)) }
         preservedTags?.forEach { (key, values) ->
             if (key != "d") values.forEach { list.add(listOf(key, it)) }
         }

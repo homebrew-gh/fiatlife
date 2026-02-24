@@ -21,10 +21,13 @@ import com.fiatlife.app.data.notification.NotifDetailLevel
 import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.nostr.hexToByteArray
 import com.fiatlife.app.data.nostr.toHex
+import com.fiatlife.app.data.repository.BankAccountRepository
+import com.fiatlife.app.data.repository.AppSettingsRepository
 import com.fiatlife.app.data.repository.BillRepository
 import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
 import com.fiatlife.app.data.repository.GoalRepository
 import com.fiatlife.app.data.repository.SalaryRepository
+import com.fiatlife.app.domain.model.BankAccount
 import com.fiatlife.app.data.security.PinPrefs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -50,7 +53,9 @@ data class SettingsState(
     val billNotifDetailLevel: NotifDetailLevel = NotifDetailLevel.PRIVATE,
     val billNotifDaysBefore: Int = 3,
     val cypherLogDebugDump: String = "",
-    val statusMessage: String = ""
+    val statusMessage: String = "",
+    val bankAccounts: List<BankAccount> = emptyList(),
+    val editingBankAccount: BankAccount? = null
 )
 
 @HiltViewModel
@@ -63,6 +68,8 @@ class SettingsViewModel @Inject constructor(
     private val billRepository: BillRepository,
     private val cypherLogSubscriptionRepository: CypherLogSubscriptionRepository,
     private val goalRepository: GoalRepository,
+    private val bankAccountRepository: BankAccountRepository,
+    private val appSettingsRepository: AppSettingsRepository,
     val pinPrefs: PinPrefs
 ) : ViewModel() {
 
@@ -72,6 +79,11 @@ class SettingsViewModel @Inject constructor(
     init {
         loadSettings()
         observeConnection()
+        viewModelScope.launch {
+            bankAccountRepository.getAllBankAccounts().collect { list ->
+                _state.update { it.copy(bankAccounts = list) }
+            }
+        }
     }
 
     private fun loadSettings() {
@@ -152,6 +164,7 @@ class SettingsViewModel @Inject constructor(
                 prefs[MainActivity.KEY_RELAY_URL] = relayUrl
                 prefs[MainActivity.KEY_BLOSSOM_URL] = blossomUrl
             }
+            launch { appSettingsRepository.publishBlossomUrl(blossomUrl) }
 
             val current = _state.value
 
@@ -250,6 +263,33 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             nostrClient.clearSigner()
             dataStore.edit { it.clear() }
+        }
+    }
+
+    fun showAddBankAccount() {
+        _state.update { it.copy(editingBankAccount = BankAccount(id = "", name = "")) }
+    }
+
+    fun showEditBankAccount(account: BankAccount) {
+        _state.update { it.copy(editingBankAccount = account) }
+    }
+
+    fun dismissBankAccountDialog() {
+        _state.update { it.copy(editingBankAccount = null) }
+    }
+
+    fun saveBankAccount(account: BankAccount) {
+        viewModelScope.launch {
+            if (account.name.isBlank()) return@launch
+            bankAccountRepository.saveBankAccount(account.copy(name = account.name.trim()))
+            _state.update { it.copy(editingBankAccount = null) }
+        }
+    }
+
+    fun deleteBankAccount(account: BankAccount) {
+        viewModelScope.launch {
+            bankAccountRepository.deleteBankAccount(account)
+            _state.update { it.copy(editingBankAccount = null) }
         }
     }
 

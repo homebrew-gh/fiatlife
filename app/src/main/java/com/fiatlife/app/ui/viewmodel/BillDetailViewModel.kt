@@ -3,9 +3,11 @@ package com.fiatlife.app.ui.viewmodel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.fiatlife.app.data.repository.BankAccountRepository
 import com.fiatlife.app.data.repository.BillRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
+import com.fiatlife.app.domain.model.BankAccount
 import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.domain.model.BillPayment
 import com.fiatlife.app.domain.model.BillSource
@@ -31,6 +33,7 @@ class BillDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val repository: BillRepository,
     private val creditAccountRepository: CreditAccountRepository,
+    private val bankAccountRepository: BankAccountRepository,
     private val cypherLogSubscriptionRepository: CypherLogSubscriptionRepository
 ) : ViewModel() {
     private val _message = MutableStateFlow("")
@@ -69,6 +72,13 @@ class BillDetailViewModel @Inject constructor(
     )
 
     val creditAccounts: StateFlow<List<CreditAccount>> = creditAccountRepository.getAllCreditAccounts()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val bankAccounts: StateFlow<List<BankAccount>> = bankAccountRepository.getAllBankAccounts()
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),

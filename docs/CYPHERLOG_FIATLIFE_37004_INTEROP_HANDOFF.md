@@ -16,6 +16,18 @@ Observed cached events in FiatLife:
 
 Result: FiatLife has no `name`, `cost`, `billing_frequency`, or `subscription_type` to display.
 
+## Relay type and encryption (possible root cause)
+
+**CypherLog does not encrypt events on personal/private relays.** That may be causing the interop issues:
+
+- If the user’s relay is treated as “personal/private” by CypherLog, subscription events may be published with **plaintext** (or empty) content and possibly only minimal tags.
+- FiatLife currently assumes content may be NIP-44 encrypted and tries to decrypt; when decryption fails, it falls back to tags. If CypherLog omits canonical tags when it “doesn’t encrypt,” FiatLife has nothing to show.
+- Conversely, on a relay CypherLog treats as “public,” events may be encrypted. Then FiatLife must decrypt with the same identity; key/recipient mismatch would also yield “Could not decrypt” and empty UI.
+
+**Recommendation for CypherLog:** Document when encryption is applied (e.g. “encrypt on public relays only; plaintext on private”). For interop, either (a) always emit canonical tags regardless of encryption, or (b) ensure FiatLife’s identity can decrypt when encryption is used. That way “no encrypt on private relay” either gives FiatLife plaintext tags to parse or consistent encrypted content on public relays.
+
+**FiatLife behavior:** On NIP-42 auth’d / whitelisted relays, subscription data in plaintext is accepted. FiatLife treats 37004 content as plaintext JSON when it looks like JSON (e.g. starts with `{` or `[` and parses); otherwise it attempts NIP-44 decryption. So CypherLog can safely publish 37004 with plaintext content on private relays without breaking FiatLife.
+
 ## Why UI Looks Wrong
 
 FiatLife can display `37004` subscriptions only if at least one is true:

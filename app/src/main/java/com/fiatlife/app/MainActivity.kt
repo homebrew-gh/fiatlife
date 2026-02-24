@@ -26,13 +26,16 @@ import androidx.lifecycle.lifecycleScope
 import com.fiatlife.app.data.blossom.BlossomClient
 import com.fiatlife.app.data.nostr.*
 import com.fiatlife.app.data.repository.BillRepository
+import com.fiatlife.app.data.repository.BankAccountRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
 import com.fiatlife.app.data.repository.GoalRepository
 import com.fiatlife.app.data.repository.SalaryRepository
+import com.fiatlife.app.data.repository.AppSettingsRepository
 import com.fiatlife.app.data.security.PinPrefs
 import com.fiatlife.app.ui.navigation.FiatLifeNavGraph
 import com.fiatlife.app.ui.screens.login.LoginScreen
+import com.fiatlife.app.ui.screens.login.RelaySetupScreen
 import com.fiatlife.app.ui.screens.login.parseAmberResult
 import com.fiatlife.app.ui.screens.pin.PinLockScreen
 import com.fiatlife.app.ui.theme.FiatLifeTheme
@@ -56,7 +59,9 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var billRepository: BillRepository
     @Inject lateinit var goalRepository: GoalRepository
     @Inject lateinit var creditAccountRepository: CreditAccountRepository
+    @Inject lateinit var bankAccountRepository: BankAccountRepository
     @Inject lateinit var cypherLogSubscriptionRepository: CypherLogSubscriptionRepository
+    @Inject lateinit var appSettingsRepository: AppSettingsRepository
 
     val amberSignerRef = AtomicReference<AmberSigner?>(null)
     lateinit var decryptLauncher: ActivityResultLauncher<Intent>
@@ -131,18 +136,22 @@ class MainActivity : ComponentActivity() {
             @Suppress("UNUSED_EXPRESSION")
             refresh
 
-            val isLoggedIn = remember(refresh) {
+            val sessionState = remember(refresh) {
                 runBlocking {
                     val prefs = dataStore.data.first()
                     val authType = prefs[KEY_AUTH_TYPE] ?: ""
-                    when (authType) {
+                    val loggedIn = when (authType) {
                         "local" -> prefs[KEY_PRIVATE_KEY]?.isNotEmpty() == true
                         "amber" -> prefs[KEY_AMBER_PUBKEY]?.isNotEmpty() == true
                                 && prefs[KEY_SIGNER_PACKAGE]?.isNotEmpty() == true
                         else -> false
                     }
+                    val hasRelay = prefs[KEY_RELAY_URL]?.isNotBlank() == true
+                    loggedIn to hasRelay
                 }
             }
+            val isLoggedIn = sessionState.first
+            val hasRelayConfigured = sessionState.second
 
             LaunchedEffect(isLoggedIn, refresh) {
                 if (isLoggedIn) restoreSession()
@@ -208,6 +217,30 @@ class MainActivity : ComponentActivity() {
                                 ensureRelayReconnect()
                             },
                             onVerifyPin = { pinPrefs.verifyPin(it) }
+                        )
+                    }
+                    !hasRelayConfigured -> {
+                        isInMainApp = false
+                        RelaySetupScreen(
+                            onSave = { relayInput, blossomInput ->
+                                lifecycleScope.launch {
+                                    val relayUrl = normalizeRelayUrl(relayInput)
+                                    val blossomUrl = normalizeBlossomUrl(blossomInput)
+                                    dataStore.edit { prefs ->
+                                        prefs[KEY_RELAY_URL] = relayUrl
+                                        prefs[KEY_BLOSSOM_URL] = blossomUrl
+                                    }
+                                    appSettingsRepository.publishBlossomUrl(blossomUrl)
+                                    if (relayUrl.isNotBlank()) {
+                                        nostrClient.connect(relayUrl)
+                                        nostrClient.currentSigner?.let { signer ->
+                                            if (blossomUrl.isNotBlank()) blossomClient.configure(blossomUrl, signer)
+                                        }
+                                        syncFromRelay()
+                                    }
+                                    mainHandler.post { refresh++ }
+                                }
+                            }
                         )
                     }
                     else -> {
@@ -328,11 +361,39 @@ class MainActivity : ComponentActivity() {
         if (!nostrClient.hasSigner) return
         lifecycleScope.launch {
             Log.d(TAG, "Starting one-shot sync from relay")
+            launch { runCatching { syncSettingsFromRelay() }.onFailure { Log.w(TAG, "Settings sync: ${it.message}") } }
             launch { try { salaryRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Salary sync: ${e.message}") } }
             launch { try { billRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bill sync: ${e.message}") } }
             launch { try { goalRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Goal sync: ${e.message}") } }
             launch { try { creditAccountRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Credit account sync: ${e.message}") } }
+            launch { try { bankAccountRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bank account sync: ${e.message}") } }
             launch { try { cypherLogSubscriptionRepository.syncFromRelay() } catch (e: Exception) { Log.w(TAG, "CypherLog sync: ${e.message}") } }
         }
+    }
+
+    private suspend fun syncSettingsFromRelay() {
+        val remote = appSettingsRepository.fetchSettingsFromRelay() ?: return
+        if (remote.blossomUrl.isBlank()) return
+        val normalizedBlossom = normalizeBlossomUrl(remote.blossomUrl)
+        dataStore.edit { prefs ->
+            prefs[KEY_BLOSSOM_URL] = normalizedBlossom
+        }
+        nostrClient.currentSigner?.let { signer ->
+            blossomClient.configure(normalizedBlossom, signer)
+        }
+    }
+
+    private fun normalizeRelayUrl(url: String): String {
+        val trimmed = url.trim()
+        if (trimmed.isEmpty()) return trimmed
+        if (trimmed.startsWith("wss://") || trimmed.startsWith("ws://")) return trimmed
+        return "wss://$trimmed"
+    }
+
+    private fun normalizeBlossomUrl(url: String): String {
+        val trimmed = url.trim()
+        if (trimmed.isEmpty()) return trimmed
+        if (trimmed.startsWith("https://") || trimmed.startsWith("http://")) return trimmed
+        return "https://$trimmed"
     }
 }

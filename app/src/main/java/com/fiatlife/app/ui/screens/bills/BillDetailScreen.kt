@@ -46,6 +46,7 @@ fun BillDetailScreen(
     val billWithSource by viewModel.billWithSource.collectAsStateWithLifecycle()
     val linkedCreditAccount by viewModel.linkedCreditAccount.collectAsStateWithLifecycle()
     val creditAccounts by viewModel.creditAccounts.collectAsStateWithLifecycle()
+    val bankAccounts by viewModel.bankAccounts.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -430,6 +431,7 @@ fun BillDetailScreen(
             BillDialog(
                 bill = editingBill,
                 creditAccounts = creditAccounts,
+                bankAccounts = bankAccounts,
                 isEditingCypherLog = billWithSource?.isCypherLog == true,
                 statementCount = editingBill.statementEntries.size,
                 onDismiss = { showEditDialog = false },

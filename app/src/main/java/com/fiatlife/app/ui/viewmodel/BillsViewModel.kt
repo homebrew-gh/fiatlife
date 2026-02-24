@@ -3,9 +3,11 @@ package com.fiatlife.app.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.fiatlife.app.data.nostr.NostrClient
+import com.fiatlife.app.data.repository.BankAccountRepository
 import com.fiatlife.app.data.repository.BillRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
+import com.fiatlife.app.domain.model.BankAccount
 import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.domain.model.CreditAccount
 import com.fiatlife.app.domain.model.BillGeneralCategory
@@ -18,10 +20,23 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/** Per-account monthly total for summary breakdown. */
+data class PaymentBreakdownRow(
+    val id: String,
+    val name: String,
+    val isCredit: Boolean,
+    val monthlyTotal: Double
+)
+
 data class BillsState(
     val bills: List<BillWithSource> = emptyList(),
     val filteredBills: List<BillWithSource> = emptyList(),
     val creditAccounts: List<CreditAccount> = emptyList(),
+    val bankAccounts: List<BankAccount> = emptyList(),
+    /** Breakdown by payment account (banks then credit cards) for summary. */
+    val paymentBreakdown: List<PaymentBreakdownRow> = emptyList(),
+    val paymentSubtotalBanks: Double = 0.0,
+    val paymentSubtotalCredit: Double = 0.0,
     val selectedGeneralCategory: BillGeneralCategory? = null,
     val showAddDialog: Boolean = false,
     val editingBill: Bill? = null,
@@ -49,6 +64,7 @@ class BillsViewModel @Inject constructor(
     private val repository: BillRepository,
     private val cypherLogSubscriptionRepository: CypherLogSubscriptionRepository,
     private val creditAccountRepository: CreditAccountRepository,
+    private val bankAccountRepository: BankAccountRepository,
     private val nostrClient: NostrClient
 ) : ViewModel() {
 
@@ -60,15 +76,14 @@ class BillsViewModel @Inject constructor(
             combine(
                 repository.getAllBills(),
                 cypherLogSubscriptionRepository.getAllAsBills(),
-                creditAccountRepository.getAllCreditAccounts()
-            ) { nativeBills, cypherLogBills, creditAccounts ->
+                creditAccountRepository.getAllCreditAccounts(),
+                bankAccountRepository.getAllBankAccounts()
+            ) { nativeBills, cypherLogBills, creditAccounts, bankAccounts ->
                 val merged = nativeBills.map { BillWithSource(it, com.fiatlife.app.domain.model.BillSource.NATIVE, null) } +
                     cypherLogBills
                 val sortedMerged = merged.sortedBy { it.bill.name.lowercase() }
-                sortedMerged to creditAccounts
-            }.collect { bills ->
-                val mergedBills = bills.first
-                val creditAccounts = bills.second
+                Triple(sortedMerged, creditAccounts, bankAccounts)
+            }.collect { (mergedBills, creditAccounts, bankAccounts) ->
                 val accountsById = creditAccounts.associateBy { it.id }
                 val visibleBills = mergedBills.filter { item ->
                     val linkedId = item.bill.linkedCreditAccountId ?: return@filter true
@@ -119,11 +134,41 @@ class BillsViewModel @Inject constructor(
                     !item.isCypherLog && item.bill.autoPay && item.bill.isPastDue()
                 }
 
+                val bankTotals = mutableMapOf<String, Double>()
+                val creditTotals = mutableMapOf<String, Double>()
+                visibleBills.forEach { item ->
+                    val monthly = item.bill.effectiveAmountDue() * item.bill.frequency.timesPerYear / 12.0
+                    item.bill.payFromBankAccountId?.let { id ->
+                        bankTotals[id] = (bankTotals[id] ?: 0.0) + monthly
+                    }
+                    item.bill.payFromCreditAccountId?.let { id ->
+                        creditTotals[id] = (creditTotals[id] ?: 0.0) + monthly
+                    }
+                }
+                val breakdown = buildList {
+                    bankAccounts.forEach { acc ->
+                        (bankTotals[acc.id] ?: 0.0).takeIf { it > 0 }?.let { total ->
+                            add(PaymentBreakdownRow(acc.id, acc.name, false, total))
+                        }
+                    }
+                    creditAccounts.forEach { acc ->
+                        (creditTotals[acc.id] ?: 0.0).takeIf { it > 0 }?.let { total ->
+                            add(PaymentBreakdownRow(acc.id, acc.name, true, total))
+                        }
+                    }
+                }
+                val subtotalBanks = breakdown.filter { !it.isCredit }.sumOf { it.monthlyTotal }
+                val subtotalCredit = breakdown.filter { it.isCredit }.sumOf { it.monthlyTotal }
+
                 _state.update { state ->
                     state.copy(
                         bills = visibleBills,
                         filteredBills = filterBills(visibleBills, state.selectedGeneralCategory),
                         creditAccounts = creditAccounts,
+                        bankAccounts = bankAccounts,
+                        paymentBreakdown = breakdown,
+                        paymentSubtotalBanks = subtotalBanks,
+                        paymentSubtotalCredit = subtotalCredit,
                         totalMonthly = monthlyTotal,
                         categoryTotals = categoryTotals,
                         billsDueInNext7Days = dueIn7Days,

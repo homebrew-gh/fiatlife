@@ -31,6 +31,7 @@ Feasibility depends on which of these is realistic. If Cypherlog’s subscriptio
 ### 2.3 Encryption and readability
 
 - FiatLife today encrypts app data (kind 30078) with **NIP-44** (and the user’s key). If Cypherlog’s subscription events are **unencrypted**, FiatLife could read them but would be displaying plaintext from the relay. If Cypherlog’s events are **encrypted**, FiatLife can only decrypt them if it uses the **same key** (same identity) and the **same encryption method** (e.g. NIP-44, same conventions). So: **same pubkey + same encryption** makes bidirectional read/write straightforward; different encryption or keys block it unless one app explicitly supports the other’s format.
+- **Note:** CypherLog is reported **not to encrypt** events on personal/private relays. On such relays, subscription events may be plaintext or tag-only; on “public” relays they may be encrypted. This inconsistency can cause FiatLife to see “decrypt failed” and minimal tags when CypherLog omitted encryption and also omitted canonical tags. See the handoff doc (`CYPHERLOG_FIATLIFE_37004_INTEROP_HANDOFF.md`) for the recommended contract (canonical tags regardless of encryption).
 
 ### 2.4 Relay overlap
 

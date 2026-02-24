@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
+import com.fiatlife.app.domain.model.BankAccount
 import com.fiatlife.app.domain.model.BillCategory
 import com.fiatlife.app.domain.model.BillGeneralCategory
 import com.fiatlife.app.domain.model.BillFrequency
@@ -142,6 +143,88 @@ fun BillsScreen(
                                             )
                                         }
                                     }
+                            }
+                        }
+                        if (state.paymentBreakdown.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            HorizontalDivider(color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f))
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "By payment account",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
+                            )
+                            state.paymentBreakdown.filter { !it.isCredit }.forEach { row ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = row.name,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
+                                    )
+                                    Text(
+                                        text = row.monthlyTotal.formatCurrency(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
+                            if (state.paymentSubtotalBanks > 0) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Banks subtotal",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                    Text(
+                                        text = state.paymentSubtotalBanks.formatCurrency(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
+                            state.paymentBreakdown.filter { it.isCredit }.forEach { row ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = row.name,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
+                                    )
+                                    Text(
+                                        text = row.monthlyTotal.formatCurrency(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
+                            if (state.paymentSubtotalCredit > 0) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Credit cards subtotal",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                    Text(
+                                        text = state.paymentSubtotalCredit.formatCurrency(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
                             }
                         }
                     }
@@ -271,6 +354,7 @@ fun BillsScreen(
         BillDialog(
             bill = state.editingBill,
             creditAccounts = state.creditAccounts,
+            bankAccounts = state.bankAccounts,
             isEditingCypherLog = state.editingIsCypherLog,
             statementCount = state.dialogStatementEntries.size,
             onDismiss = { viewModel.dismissDialog() },
@@ -723,6 +807,7 @@ private fun SubscriptionSubcategoryHeader(
 internal fun BillDialog(
     bill: Bill?,
     creditAccounts: List<CreditAccount> = emptyList(),
+    bankAccounts: List<BankAccount> = emptyList(),
     isEditingCypherLog: Boolean = false,
     statementCount: Int = 0,
     onDismiss: () -> Unit,
@@ -746,6 +831,9 @@ internal fun BillDialog(
     var showAdvancedRecurrence by remember { mutableStateOf(false) }
     var autoPay by remember { mutableStateOf(bill?.autoPay ?: false) }
     var accountName by remember { mutableStateOf(bill?.accountName ?: "") }
+    var payFromBankAccountId by remember { mutableStateOf(bill?.payFromBankAccountId ?: "") }
+    var payFromCreditAccountId by remember { mutableStateOf(bill?.payFromCreditAccountId ?: "") }
+    var payFromExpanded by remember { mutableStateOf(false) }
     var notes by remember { mutableStateOf(bill?.notes ?: "") }
     var generalCategoryExpanded by remember { mutableStateOf(false) }
     var subcategoryExpanded by remember { mutableStateOf(false) }
@@ -1122,14 +1210,61 @@ internal fun BillDialog(
                     }
                 }
                 item {
-                    OutlinedTextField(
-                        value = accountName,
-                        onValueChange = { accountName = it },
-                        label = { Text("Pay From Account") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        shape = MaterialTheme.shapes.medium
-                    )
+                    val payFromDisplay = when {
+                        payFromBankAccountId.isNotBlank() -> bankAccounts.find { it.id == payFromBankAccountId }?.let { "${it.name} (Bank)" } ?: "…"
+                        payFromCreditAccountId.isNotBlank() -> creditAccounts.find { it.id == payFromCreditAccountId }?.let { "${it.name} (Credit card)" } ?: "…"
+                        else -> "None"
+                    }
+                    ExposedDropdownMenuBox(
+                        expanded = payFromExpanded,
+                        onExpandedChange = { payFromExpanded = it }
+                    ) {
+                        OutlinedTextField(
+                            value = payFromDisplay,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Pay from account") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(payFromExpanded) },
+                            modifier = Modifier.fillMaxWidth().menuAnchor(),
+                            shape = MaterialTheme.shapes.medium
+                        )
+                        ExposedDropdownMenu(
+                            expanded = payFromExpanded,
+                            onDismissRequest = { payFromExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("None") },
+                                onClick = {
+                                    payFromBankAccountId = ""
+                                    payFromCreditAccountId = ""
+                                    accountName = ""
+                                    payFromExpanded = false
+                                }
+                            )
+                            bankAccounts.forEach { acc ->
+                                DropdownMenuItem(
+                                    text = { Text("${acc.name} (Bank)") },
+                                    onClick = {
+                                        payFromBankAccountId = acc.id
+                                        payFromCreditAccountId = ""
+                                        accountName = acc.name
+                                        payFromExpanded = false
+                                    }
+                                )
+                            }
+                            creditAccounts.forEach { acc ->
+                                DropdownMenuItem(
+                                    text = { Text("${acc.name} (${acc.type.displayName})") },
+                                    onClick = {
+                                        payFromBankAccountId = ""
+                                        payFromCreditAccountId = acc.id
+                                        accountName = acc.name
+                                        payFromExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
                 item {
                     Row(
@@ -1259,7 +1394,9 @@ internal fun BillDialog(
                             createdAt = bill?.createdAt ?: 0L,
                             updatedAt = 0L,
                             creditCardDetails = ccDetails,
-                            linkedCreditAccountId = linkedCreditAccountId.takeIf { it.isNotBlank() }
+                            linkedCreditAccountId = linkedCreditAccountId.takeIf { it.isNotBlank() },
+                            payFromBankAccountId = payFromBankAccountId.takeIf { it.isNotBlank() },
+                            payFromCreditAccountId = payFromCreditAccountId.takeIf { it.isNotBlank() }
                         ),
                         showInCypherLogArg
                     )

@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.repository.BillRepository
+import com.fiatlife.app.data.repository.BankAccountRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
 import com.fiatlife.app.data.repository.GoalRepository
@@ -35,7 +36,8 @@ class MainAppViewModel @Inject constructor(
     private val billRepository: BillRepository,
     private val cypherLogSubscriptionRepository: CypherLogSubscriptionRepository,
     private val goalRepository: GoalRepository,
-    private val creditAccountRepository: CreditAccountRepository
+    private val creditAccountRepository: CreditAccountRepository,
+    private val bankAccountRepository: BankAccountRepository
 ) : ViewModel() {
 
     private val _isManualSyncing = MutableStateFlow(false)
@@ -74,7 +76,8 @@ class MainAppViewModel @Inject constructor(
                     launch { runCatching { billRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bill sync failed: ${it.message}") } },
                     launch { runCatching { cypherLogSubscriptionRepository.syncFromRelay() }.onFailure { Log.w(TAG, "CypherLog 37004 sync failed: ${it.message}") } },
                     launch { runCatching { goalRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Goal sync failed: ${it.message}") } },
-                    launch { runCatching { creditAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Credit account sync failed: ${it.message}") } }
+                    launch { runCatching { creditAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Credit account sync failed: ${it.message}") } },
+                    launch { runCatching { bankAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bank account sync failed: ${it.message}") } }
                 )
                 jobs.joinAll()
             } finally {
