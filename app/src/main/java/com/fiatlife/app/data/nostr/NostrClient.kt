@@ -116,11 +116,7 @@ class NostrClient @Inject constructor(
      */
     suspend fun ensureConnected(): Boolean {
         if (_connectionState.value && isAuthenticated) return true
-        val s = signer ?: return PublishStatus(
-            success = false,
-            stage = "no_signer",
-            detail = "No signer configured."
-        )
+        val s = signer ?: return false
         if (relayUrl.isEmpty()) return false
         if (!_connectionState.value) {
             connect(relayUrl, s)
@@ -196,11 +192,7 @@ class NostrClient @Inject constructor(
         dTag: String,
         jsonContent: String
     ): Boolean {
-        val s = signer ?: return PublishStatus(
-            success = false,
-            stage = "no_signer",
-            detail = "No signer configured."
-        )
+        val s = signer ?: return false
 
         val ready = ensureConnected()
         if (!ready) {

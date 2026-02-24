@@ -34,7 +34,7 @@ private val MAPPED_TAG_KEYS = setOf(
     "d", "name", "cost", "currency", "billing_frequency", "subscription_type",
     "company_name", "company_id", "notes", "alt", "due_day",
     "renewal_date", "next_due_date", "due_date",
-    "initial_purchase_date", "purchase_date", "anchor_date",
+    "initial_purchase_date", "purchase_date", "anchor_date", "start_date",
     "interval_unit", "interval_count", "timezone"
 )
 
@@ -82,11 +82,24 @@ private fun subscriptionTypeToSubcategory(value: String?): BillSubcategory {
 
 private fun parseIsoDateToMillis(value: String?): Long? {
     if (value.isNullOrBlank()) return null
-    val parts = value.trim().split("-")
-    if (parts.size != 3) return null
-    val year = parts[0].toIntOrNull() ?: return null
-    val month = parts[1].toIntOrNull() ?: return null
-    val day = parts[2].toIntOrNull() ?: return null
+    val input = value.trim()
+    val isoParts = input.split("-")
+    val (year, month, day) = if (isoParts.size == 3) {
+        Triple(
+            isoParts[0].toIntOrNull() ?: return null,
+            isoParts[1].toIntOrNull() ?: return null,
+            isoParts[2].toIntOrNull() ?: return null
+        )
+    } else {
+        // CypherLog compatibility: start_date currently uses MM/dd/yyyy.
+        val usParts = input.split("/")
+        if (usParts.size != 3) return null
+        Triple(
+            usParts[2].toIntOrNull() ?: return null,
+            usParts[0].toIntOrNull() ?: return null,
+            usParts[1].toIntOrNull() ?: return null
+        )
+    }
     val cal = java.util.Calendar.getInstance()
     cal.set(java.util.Calendar.YEAR, year)
     cal.set(java.util.Calendar.MONTH, (month - 1).coerceIn(0, 11))
@@ -105,6 +118,15 @@ private fun formatIsoDate(millis: Long): String {
     val m = cal.get(java.util.Calendar.MONTH) + 1
     val d = cal.get(java.util.Calendar.DAY_OF_MONTH)
     return String.format(java.util.Locale.US, "%04d-%02d-%02d", y, m, d)
+}
+
+private fun formatUsDate(millis: Long): String {
+    val cal = java.util.Calendar.getInstance()
+    cal.timeInMillis = millis
+    val y = cal.get(java.util.Calendar.YEAR)
+    val m = cal.get(java.util.Calendar.MONTH) + 1
+    val d = cal.get(java.util.Calendar.DAY_OF_MONTH)
+    return String.format(java.util.Locale.US, "%02d/%02d/%04d", m, d, y)
 }
 
 private fun intervalUnitFromCypherLog(value: String?): BillRecurrenceUnit? = when (value?.trim()?.lowercase()) {
@@ -382,10 +404,11 @@ class CypherLogSubscriptionRepository @Inject constructor(
                     ?: tagMap["due_date"]?.firstOrNull()
             )
             initialPurchaseDateMillis = parseIsoDateToMillis(
-                str("initial_purchase_date", "purchase_date", "anchor_date")
+                str("initial_purchase_date", "purchase_date", "anchor_date", "start_date")
                     ?: tagMap["initial_purchase_date"]?.firstOrNull()
                     ?: tagMap["purchase_date"]?.firstOrNull()
                     ?: tagMap["anchor_date"]?.firstOrNull()
+                    ?: tagMap["start_date"]?.firstOrNull()
             )
             recurrenceUnit = intervalUnitFromCypherLog(
                 str("interval_unit") ?: tagMap["interval_unit"]?.firstOrNull()
@@ -437,7 +460,9 @@ class CypherLogSubscriptionRepository @Inject constructor(
         val dueDay = first("due_day")?.toIntOrNull()?.coerceIn(1, 31) ?: 1
         val subcategory = subscriptionTypeToSubcategory(first("subscription_type"))
         val renewalDateMillis = parseIsoDateToMillis(first("renewal_date") ?: first("next_due_date") ?: first("due_date"))
-        val initialPurchaseDateMillis = parseIsoDateToMillis(first("initial_purchase_date") ?: first("purchase_date") ?: first("anchor_date"))
+        val initialPurchaseDateMillis = parseIsoDateToMillis(
+            first("initial_purchase_date") ?: first("purchase_date") ?: first("anchor_date") ?: first("start_date")
+        )
         val recurrenceUnit = intervalUnitFromCypherLog(first("interval_unit"))
         val recurrenceIntervalCount = first("interval_count")?.toIntOrNull()?.coerceAtLeast(1) ?: 1
         val recurrenceTimezone = first("timezone")
@@ -499,6 +524,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
         list.add(listOf("due_day", bill.dueDay.toString()))
         bill.renewalDateMillis?.let { list.add(listOf("renewal_date", formatIsoDate(it))) }
         bill.initialPurchaseDateMillis?.let { list.add(listOf("initial_purchase_date", formatIsoDate(it))) }
+        bill.initialPurchaseDateMillis?.let { list.add(listOf("start_date", formatUsDate(it))) }
         intervalUnitToCypherLog(bill.recurrenceUnit)?.let { list.add(listOf("interval_unit", it)) }
         if (bill.recurrenceIntervalCount > 1) list.add(listOf("interval_count", bill.recurrenceIntervalCount.toString()))
         if (!bill.recurrenceTimezone.isNullOrBlank()) list.add(listOf("timezone", bill.recurrenceTimezone))

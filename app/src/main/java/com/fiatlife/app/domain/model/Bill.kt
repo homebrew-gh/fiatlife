@@ -305,6 +305,17 @@ data class Bill(
     }
 
     private fun nextDueFromFrequency(): Long? {
+        val anchor = initialPurchaseDateMillis
+        if (anchor != null) {
+            val (unit, interval) = recurrenceConfig()
+            var next = applyDueDayForMonthBased(startOfDayMillis(anchor), dueDay.coerceIn(1, 31), unit)
+            while (next <= System.currentTimeMillis()) {
+                next = addRecurrence(next, unit, interval)
+                next = applyDueDayForMonthBased(next, dueDay.coerceIn(1, 31), unit)
+            }
+            return next
+        }
+
         val cal = java.util.Calendar.getInstance()
         val day = dueDay.coerceIn(1, 31)
         when (frequency) {
@@ -415,6 +426,18 @@ data class Bill(
             BillRecurrenceUnit.MONTH -> cal.add(java.util.Calendar.MONTH, interval)
             BillRecurrenceUnit.YEAR -> cal.add(java.util.Calendar.YEAR, interval)
         }
+        return cal.timeInMillis
+    }
+
+    private fun applyDueDayForMonthBased(baseMillis: Long, day: Int, unit: BillRecurrenceUnit): Long {
+        if (unit != BillRecurrenceUnit.MONTH && unit != BillRecurrenceUnit.YEAR) return baseMillis
+        val cal = java.util.Calendar.getInstance()
+        cal.timeInMillis = baseMillis
+        cal.set(java.util.Calendar.DAY_OF_MONTH, day.coerceIn(1, cal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)))
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+        cal.set(java.util.Calendar.MINUTE, 0)
+        cal.set(java.util.Calendar.SECOND, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
         return cal.timeInMillis
     }
 

@@ -577,12 +577,12 @@ internal fun BillDialog(
     var showInCypherLog by remember { mutableStateOf(false) }
     var frequency by remember { mutableStateOf(bill?.frequency ?: BillFrequency.MONTHLY) }
     var dueDay by remember { mutableStateOf(bill?.dueDay?.toString() ?: "1") }
-    var renewalDate by remember { mutableStateOf(bill?.renewalDateMillis?.let { formatIsoDate(it) } ?: "") }
     var initialPurchaseDate by remember { mutableStateOf(bill?.initialPurchaseDateMillis?.let { formatIsoDate(it) } ?: "") }
     var recurrenceUnit by remember { mutableStateOf(bill?.recurrenceUnit) }
     var recurrenceUnitExpanded by remember { mutableStateOf(false) }
     var recurrenceIntervalCount by remember { mutableStateOf((bill?.recurrenceIntervalCount ?: 1).toString()) }
     var recurrenceTimezone by remember { mutableStateOf(bill?.recurrenceTimezone ?: "") }
+    var showAdvancedRecurrence by remember { mutableStateOf(false) }
     var autoPay by remember { mutableStateOf(bill?.autoPay ?: false) }
     var accountName by remember { mutableStateOf(bill?.accountName ?: "") }
     var notes by remember { mutableStateOf(bill?.notes ?: "") }
@@ -868,22 +868,23 @@ internal fun BillDialog(
                 }
                 item {
                     HorizontalDivider()
-                    Text(
-                        text = "Advanced recurrence (optional)",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                item {
-                    OutlinedTextField(
-                        value = renewalDate,
-                        onValueChange = { renewalDate = it.take(10) },
-                        label = { Text("Renewal date (YYYY-MM-DD)") },
-                        placeholder = { Text("2026-03-15") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        shape = MaterialTheme.shapes.medium
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showAdvancedRecurrence = !showAdvancedRecurrence },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Advanced recurrence (optional)",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Icon(
+                            imageVector = if (showAdvancedRecurrence) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            contentDescription = if (showAdvancedRecurrence) "Collapse advanced recurrence" else "Expand advanced recurrence"
+                        )
+                    }
                 }
                 item {
                     OutlinedTextField(
@@ -896,66 +897,68 @@ internal fun BillDialog(
                         shape = MaterialTheme.shapes.medium
                     )
                 }
-                item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ExposedDropdownMenuBox(
-                            expanded = recurrenceUnitExpanded,
-                            onExpandedChange = { recurrenceUnitExpanded = it },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            OutlinedTextField(
-                                value = recurrenceUnit?.name?.lowercase()
-                                    ?.replaceFirstChar { it.uppercase() } ?: "Default (from frequency)",
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("Interval unit") },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(recurrenceUnitExpanded) },
-                                modifier = Modifier.menuAnchor(),
-                                singleLine = true,
-                                shape = MaterialTheme.shapes.medium
-                            )
-                            ExposedDropdownMenu(
+                if (showAdvancedRecurrence) {
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ExposedDropdownMenuBox(
                                 expanded = recurrenceUnitExpanded,
-                                onDismissRequest = { recurrenceUnitExpanded = false }
+                                onExpandedChange = { recurrenceUnitExpanded = it },
+                                modifier = Modifier.weight(1f)
                             ) {
-                                DropdownMenuItem(
-                                    text = { Text("Default (from frequency)") },
-                                    onClick = {
-                                        recurrenceUnit = null
-                                        recurrenceUnitExpanded = false
-                                    }
+                                OutlinedTextField(
+                                    value = recurrenceUnit?.name?.lowercase()
+                                        ?.replaceFirstChar { it.uppercase() } ?: "Default (from frequency)",
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    label = { Text("Interval unit") },
+                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(recurrenceUnitExpanded) },
+                                    modifier = Modifier.menuAnchor(),
+                                    singleLine = true,
+                                    shape = MaterialTheme.shapes.medium
                                 )
-                                BillRecurrenceUnit.entries.forEach { unit ->
+                                ExposedDropdownMenu(
+                                    expanded = recurrenceUnitExpanded,
+                                    onDismissRequest = { recurrenceUnitExpanded = false }
+                                ) {
                                     DropdownMenuItem(
-                                        text = { Text(unit.name.lowercase().replaceFirstChar { it.uppercase() }) },
+                                        text = { Text("Default (from frequency)") },
                                         onClick = {
-                                            recurrenceUnit = unit
+                                            recurrenceUnit = null
                                             recurrenceUnitExpanded = false
                                         }
                                     )
+                                    BillRecurrenceUnit.entries.forEach { unit ->
+                                        DropdownMenuItem(
+                                            text = { Text(unit.name.lowercase().replaceFirstChar { it.uppercase() }) },
+                                            onClick = {
+                                                recurrenceUnit = unit
+                                                recurrenceUnitExpanded = false
+                                            }
+                                        )
+                                    }
                                 }
                             }
+                            OutlinedTextField(
+                                value = recurrenceIntervalCount,
+                                onValueChange = { recurrenceIntervalCount = it.filter { c -> c.isDigit() }.take(3) },
+                                label = { Text("Interval") },
+                                modifier = Modifier.weight(0.5f),
+                                singleLine = true,
+                                shape = MaterialTheme.shapes.medium
+                            )
                         }
+                    }
+                    item {
                         OutlinedTextField(
-                            value = recurrenceIntervalCount,
-                            onValueChange = { recurrenceIntervalCount = it.filter { c -> c.isDigit() }.take(3) },
-                            label = { Text("Interval") },
-                            modifier = Modifier.weight(0.5f),
+                            value = recurrenceTimezone,
+                            onValueChange = { recurrenceTimezone = it },
+                            label = { Text("Timezone (optional)") },
+                            placeholder = { Text("America/New_York") },
+                            modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             shape = MaterialTheme.shapes.medium
                         )
                     }
-                }
-                item {
-                    OutlinedTextField(
-                        value = recurrenceTimezone,
-                        onValueChange = { recurrenceTimezone = it },
-                        label = { Text("Timezone (optional)") },
-                        placeholder = { Text("America/New_York") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        shape = MaterialTheme.shapes.medium
-                    )
                 }
                 item {
                     OutlinedTextField(
@@ -1068,7 +1071,6 @@ internal fun BillDialog(
                     } else null
                     val effectiveAmount = ccDetails?.minimumDue(ccDetails.currentBalance) ?: (amount.toDoubleOrNull() ?: 0.0)
                     val showInCypherLogArg = if (showInCypherLogVisible) showInCypherLog else null
-                    val renewalDateMillis = parseIsoDate(renewalDate)
                     val initialPurchaseDateMillis = parseIsoDate(initialPurchaseDate)
                     val intervalCount = recurrenceIntervalCount.toIntOrNull()?.coerceAtLeast(1) ?: 1
                     onSave(
@@ -1081,7 +1083,7 @@ internal fun BillDialog(
                             frequency = frequency,
                             dueDay = dueDay.toIntOrNull() ?: 1,
                             autoPay = autoPay,
-                            renewalDateMillis = renewalDateMillis,
+                            renewalDateMillis = bill?.renewalDateMillis,
                             initialPurchaseDateMillis = initialPurchaseDateMillis,
                             recurrenceUnit = recurrenceUnit,
                             recurrenceIntervalCount = intervalCount,

@@ -39,6 +39,9 @@ CypherLog should publish addressable kind `37004` events with at least these tag
 Optional but recommended:
 
 - `currency`
+- `start_date` (recommended recurring anchor date; supports `MM/dd/yyyy` and `yyyy-MM-dd`)
+- `due_day` (1-31; helpful for month/year recurrences)
+- `initial_purchase_date` (compatibility alias; `yyyy-MM-dd`)
 - `company_id` or `company_name`
 - `linked_asset_type`, `linked_asset_id`, `linked_asset_name`
 - `notes`
@@ -56,6 +59,8 @@ Optional but recommended:
     ["subscription_type", "Streaming"],
     ["cost", "15.99"],
     ["currency", "USD"],
+    ["start_date", "01/15/2024"],
+    ["due_day", "15"],
     ["billing_frequency", "monthly"],
     ["company_name", "Netflix"],
     ["notes", "4K plan"]
@@ -80,6 +85,8 @@ Optional but recommended:
    - `cost` as parseable decimal string (e.g. `"15.99"`).
    - `billing_frequency` values: `weekly|monthly|quarterly|semi-annually|annually|one-time`.
    - `subscription_type` examples: `Streaming`, `Software`, `Health/Wellness`, etc.
+   - `start_date` may be `MM/dd/yyyy` (CypherLog style) or `yyyy-MM-dd`; be consistent per client.
+   - If both `start_date` and `initial_purchase_date` are emitted, they should represent the same date.
 
 5. **Round-trip safety**
    - Unknown/custom tags should remain stable across edits.
@@ -92,8 +99,9 @@ FiatLife currently:
 - reads tags case-insensitively,
 - maps `subscription_type` to local subscription categories,
 - supports numeric and string cost parsing,
+- parses recurring anchors from `start_date`, `initial_purchase_date`, `purchase_date`, and `anchor_date`,
 - falls back to tags if content parse/decrypt fails,
-- publishes `alt`, `name`, `subscription_type`, `cost`, `billing_frequency` on writes.
+- publishes `alt`, `name`, `subscription_type`, `cost`, `billing_frequency`, plus recurring date tags (`start_date`, `initial_purchase_date`) on writes.
 
 So remaining blockers are primarily on the event payload/decryption side.
 
