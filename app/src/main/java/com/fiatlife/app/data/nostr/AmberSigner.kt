@@ -34,6 +34,7 @@ class AmberSigner(
     private val pendingDecrypt = AtomicReference<Continuation<String?>?>(null)
     private val pendingEncrypt = AtomicReference<Continuation<String?>?>(null)
     private val pendingSign = AtomicReference<Continuation<String?>?>(null)
+    private val lastSignError = AtomicReference<String?>(null)
 
     private val decryptMutex = Mutex()
     private val encryptMutex = Mutex()
@@ -75,11 +76,22 @@ class AmberSigner(
             Log.w(TAG, "onSignResult: no pending continuation")
             return
         }
-        val signed = if (result.resultCode == android.app.Activity.RESULT_OK) {
-            val event = result.data?.getStringExtra("event")?.takeIf { it.isNotBlank() }
-            val res = result.data?.getStringExtra("result")?.takeIf { it.isNotBlank() }
-            event ?: res
-        } else null
+        val event = result.data?.getStringExtra("event")?.takeIf { it.isNotBlank() }
+        val res = result.data?.getStringExtra("result")?.takeIf { it.isNotBlank() }
+        val err = result.data?.getStringExtra("error")?.takeIf { it.isNotBlank() }
+        val msg = result.data?.getStringExtra("message")?.takeIf { it.isNotBlank() }
+        val candidate = event ?: res
+        val signed = if (result.resultCode == android.app.Activity.RESULT_OK &&
+            candidate != null &&
+            looksLikeSignedEventJson(candidate)
+        ) {
+            lastSignError.set(null)
+            candidate
+        } else {
+            val reason = err ?: msg ?: res ?: event ?: "Signer rejected/cancelled or unsupported request."
+            lastSignError.set(reason)
+            null
+        }
         Log.d(TAG, "onSignResult: got ${if (signed != null) "${signed.length} chars" else "null"}")
         (cont as Continuation<String?>).resume(signed)
     }
@@ -87,11 +99,17 @@ class AmberSigner(
     // ── NostrSigner implementation ──
 
     override suspend fun signEvent(unsignedEventJson: String): String? {
+        lastSignError.set(null)
         val fromResolver = withContext(Dispatchers.IO) { resolverSignEvent(unsignedEventJson) }
-        if (fromResolver != null) return fromResolver
+        if (fromResolver != null && looksLikeSignedEventJson(fromResolver)) return fromResolver
+        if (fromResolver != null) {
+            lastSignError.set(fromResolver)
+        }
         Log.d(TAG, "signEvent: content resolver returned null, falling back to intent")
         return signViaIntent(unsignedEventJson)
     }
+
+    fun consumeLastSignError(): String? = lastSignError.getAndSet(null)
 
     override suspend fun nip44Encrypt(plaintext: String, peerPubkeyHex: String): String? {
         val fromResolver = withContext(Dispatchers.IO) { resolverEncrypt(plaintext, peerPubkeyHex) }
@@ -199,20 +217,43 @@ class AmberSigner(
 
     private suspend fun signViaIntent(unsignedEventJson: String): String? =
         signMutex.withLock {
-            withContext(Dispatchers.Main) {
-                suspendCancellableCoroutine { cont ->
-                    pendingSign.set(cont as Continuation<String?>)
-                    // Some Amber builds handle sign_event better when payload is provided via extras
-                    // instead of only as encoded URI data (especially for custom kinds).
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:"))
-                    intent.`package` = signerPackage
-                    intent.putExtra("type", "sign_event")
-                    intent.putExtra("current_user", pubkeyHex)
-                    intent.putExtra("event", unsignedEventJson)
-                    intent.putExtra("unsigned_event", unsignedEventJson)
-                    intent.putExtra("id", "sign_${System.currentTimeMillis()}")
-                    launchSignRef.get().invoke(intent)
+            val first = requestSignIntent(
+                Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:")).apply {
+                    `package` = signerPackage
+                    putExtra("type", "sign_event")
+                    putExtra("current_user", pubkeyHex)
+                    putExtra("event", unsignedEventJson)
+                    putExtra("unsigned_event", unsignedEventJson)
+                    putExtra("id", "sign_${System.currentTimeMillis()}")
                 }
+            )
+            if (first != null) return@withLock first
+
+            // Fallback for Amber variants expecting encoded payload in URI.
+            requestSignIntent(
+                Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:${Uri.encode(unsignedEventJson)}")).apply {
+                    `package` = signerPackage
+                    putExtra("type", "sign_event")
+                    putExtra("current_user", pubkeyHex)
+                    putExtra("unsigned_event", unsignedEventJson)
+                    putExtra("id", "sign_uri_${System.currentTimeMillis()}")
+                }
+            )
+        }
+
+    private suspend fun requestSignIntent(intent: Intent): String? =
+        withContext(Dispatchers.Main) {
+            suspendCancellableCoroutine { cont ->
+                pendingSign.set(cont as Continuation<String?>)
+                launchSignRef.get().invoke(intent)
             }
         }
+
+    private fun looksLikeSignedEventJson(value: String): Boolean {
+        val trimmed = value.trim()
+        return trimmed.startsWith("{") &&
+            trimmed.contains("\"id\"") &&
+            trimmed.contains("\"sig\"") &&
+            trimmed.contains("\"kind\"")
+    }
 }
