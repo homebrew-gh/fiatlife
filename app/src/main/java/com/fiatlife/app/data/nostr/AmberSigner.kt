@@ -202,10 +202,14 @@ class AmberSigner(
             withContext(Dispatchers.Main) {
                 suspendCancellableCoroutine { cont ->
                     pendingSign.set(cont as Continuation<String?>)
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:${Uri.encode(unsignedEventJson)}"))
+                    // Some Amber builds handle sign_event better when payload is provided via extras
+                    // instead of only as encoded URI data (especially for custom kinds).
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:"))
                     intent.`package` = signerPackage
                     intent.putExtra("type", "sign_event")
                     intent.putExtra("current_user", pubkeyHex)
+                    intent.putExtra("event", unsignedEventJson)
+                    intent.putExtra("unsigned_event", unsignedEventJson)
                     intent.putExtra("id", "sign_${System.currentTimeMillis()}")
                     launchSignRef.get().invoke(intent)
                 }
