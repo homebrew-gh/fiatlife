@@ -40,6 +40,7 @@ private val MAPPED_TAG_KEYS = setOf(
     "renewal_date", "next_due_date", "due_date",
     "initial_purchase_date", "purchase_date", "anchor_date", "start_date",
     "interval_unit", "interval_count", "timezone",
+    "fiatlife_is_recurring", "fiatlife_rate_valid_until",
     "fiatlife_is_paid", "fiatlife_last_paid_date", "fiatlife_payment",
     "fiatlife_pay_from_bank_id", "fiatlife_pay_from_credit_id"
 )
@@ -416,6 +417,8 @@ class CypherLogSubscriptionRepository @Inject constructor(
         val recurrenceUnit: BillRecurrenceUnit?
         val recurrenceIntervalCount: Int
         val recurrenceTimezone: String?
+        val isRecurring: Boolean
+        val rateValidUntilMillis: Long?
         val isPaid: Boolean
         val lastPaidDate: Long?
         val paymentHistory: List<BillPayment>
@@ -467,6 +470,11 @@ class CypherLogSubscriptionRepository @Inject constructor(
             recurrenceIntervalCount = (str("interval_count") ?: tagMap["interval_count"]?.firstOrNull())
                 ?.toIntOrNull()?.coerceAtLeast(1) ?: 1
             recurrenceTimezone = str("timezone") ?: tagMap["timezone"]?.firstOrNull()
+            isRecurring = (str("fiatlife_is_recurring") ?: tagMap["fiatlife_is_recurring"]?.firstOrNull())
+                ?.equals("false", ignoreCase = true) != true
+            rateValidUntilMillis = parseIsoDateToMillis(
+                str("fiatlife_rate_valid_until") ?: tagMap["fiatlife_rate_valid_until"]?.firstOrNull()
+            )
             isPaid = (str("fiatlife_is_paid") ?: tagMap["fiatlife_is_paid"]?.firstOrNull())
                 ?.equals("true", ignoreCase = true) == true
             lastPaidDate = (str("fiatlife_last_paid_date") ?: tagMap["fiatlife_last_paid_date"]?.firstOrNull())
@@ -501,6 +509,8 @@ class CypherLogSubscriptionRepository @Inject constructor(
             recurrenceUnit = recurrenceUnit,
             recurrenceIntervalCount = recurrenceIntervalCount,
             recurrenceTimezone = recurrenceTimezone,
+            isRecurring = isRecurring,
+            rateValidUntilMillis = rateValidUntilMillis,
             paymentHistory = paymentHistory,
             isPaid = isPaid,
             lastPaidDate = lastPaidDate,
@@ -536,6 +546,8 @@ class CypherLogSubscriptionRepository @Inject constructor(
         val recurrenceUnit = intervalUnitFromCypherLog(first("interval_unit"))
         val recurrenceIntervalCount = first("interval_count")?.toIntOrNull()?.coerceAtLeast(1) ?: 1
         val recurrenceTimezone = first("timezone")
+        val isRecurring = first("fiatlife_is_recurring")?.equals("false", ignoreCase = true) != true
+        val rateValidUntilMillis = parseIsoDateToMillis(first("fiatlife_rate_valid_until"))
         val isPaid = first("fiatlife_is_paid")?.equals("true", ignoreCase = true) == true
         val lastPaidDate = first("fiatlife_last_paid_date")?.toLongOrNull()
         val paymentHistory = (tagMap["fiatlife_payment"] ?: emptyList())
@@ -558,6 +570,8 @@ class CypherLogSubscriptionRepository @Inject constructor(
             recurrenceUnit = recurrenceUnit,
             recurrenceIntervalCount = recurrenceIntervalCount,
             recurrenceTimezone = recurrenceTimezone,
+            isRecurring = isRecurring,
+            rateValidUntilMillis = rateValidUntilMillis,
             paymentHistory = paymentHistory,
             isPaid = isPaid,
             lastPaidDate = lastPaidDate,
@@ -613,6 +627,8 @@ class CypherLogSubscriptionRepository @Inject constructor(
         intervalUnitToCypherLog(bill.recurrenceUnit)?.let { list.add(listOf("interval_unit", it)) }
         if (bill.recurrenceIntervalCount > 1) list.add(listOf("interval_count", bill.recurrenceIntervalCount.toString()))
         if (!bill.recurrenceTimezone.isNullOrBlank()) list.add(listOf("timezone", bill.recurrenceTimezone))
+        if (!bill.isRecurring) list.add(listOf("fiatlife_is_recurring", "false"))
+        bill.rateValidUntilMillis?.let { list.add(listOf("fiatlife_rate_valid_until", formatIsoDate(it))) }
         if (bill.isPaid) list.add(listOf("fiatlife_is_paid", "true"))
         bill.lastPaidDate?.let { list.add(listOf("fiatlife_last_paid_date", it.toString())) }
         bill.paymentHistory.forEach { p ->

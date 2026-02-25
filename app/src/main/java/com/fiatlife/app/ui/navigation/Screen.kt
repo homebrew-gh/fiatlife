@@ -70,6 +70,28 @@ sealed class Screen(
         fun routeWithId(billId: String) = "bill_detail/$billId"
     }
 
+    data object CompanyHistory : Screen(
+        route = "company_history",
+        title = "Company History",
+        subtitle = "Paid bill history by company",
+        selectedIcon = Icons.Filled.Business,
+        unselectedIcon = Icons.Outlined.Business
+    )
+
+    data object CompanyHistoryDetail : Screen(
+        route = "company_history/{companyKey}/{companyName}",
+        title = "Company",
+        subtitle = "Paid invoices and bills",
+        selectedIcon = Icons.Filled.Business,
+        unselectedIcon = Icons.Outlined.Business
+    ) {
+        fun routeWith(companyKey: String, companyName: String): String {
+            val encodedKey = android.net.Uri.encode(companyKey)
+            val encodedName = android.net.Uri.encode(companyName)
+            return "company_history/$encodedKey/$encodedName"
+        }
+    }
+
     data object DebtDetail : Screen(
         route = "debt_detail/{accountId}",
         title = "Account",
@@ -92,6 +114,8 @@ sealed class Screen(
             route == Goals.route -> Goals
             route == Settings.route -> Settings
             route?.startsWith("bill_detail") == true -> BillDetail
+            route?.startsWith("company_history/") == true -> CompanyHistoryDetail
+            route == CompanyHistory.route -> CompanyHistory
             route?.startsWith("debt_detail") == true -> DebtDetail
             else -> null
         }

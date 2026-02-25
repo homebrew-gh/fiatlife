@@ -94,6 +94,10 @@ class BillsViewModel @Inject constructor(
                     val linkedId = item.bill.linkedCreditAccountId ?: return@filter true
                     val account = accountsById[linkedId] ?: return@filter true
                     account.currentBalance > 0.0
+                }.filter { item ->
+                    // Utilities are variable bills; once paid for current cycle, hide until next cycle/update.
+                    !(item.bill.effectiveGeneralCategory == BillGeneralCategory.UTILITIES &&
+                        item.bill.isPaidForCurrentCycle())
                 }
 
                 val allBills = visibleBills.map { it.bill }
@@ -116,7 +120,7 @@ class BillsViewModel @Inject constructor(
                 val todayStart = cal.timeInMillis
                 val todayEnd = todayStart + 86_400_000L - 1
                 val dueIn7Days = visibleBills.filter { item ->
-                    if (item.isCypherLog || item.bill.isPaid) return@filter false
+                    if (item.isCypherLog || item.bill.isPaidForCurrentCycle()) return@filter false
                     if (!item.bill.autoPay || item.bill.isCreditOrLoan()) {
                         val nextDue = item.bill.nextDueDateMillis()
                         val inWindow = nextDue != null && nextDue <= now + sevenDaysMs

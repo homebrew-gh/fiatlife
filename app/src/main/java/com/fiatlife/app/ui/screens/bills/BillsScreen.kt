@@ -15,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -115,6 +116,11 @@ fun BillsScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                         )
+                        TextButton(
+                            onClick = { navController.navigate(Screen.CompanyHistory.route) }
+                        ) {
+                            Text("View company history")
+                        }
                         // Category totals in header (under monthly total)
                         if (state.categoryTotals.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(12.dp))
@@ -147,6 +153,8 @@ fun BillsScreen(
                             }
                         }
                         if (state.paymentBreakdown.isNotEmpty()) {
+                            val bankRows = state.paymentBreakdown.filter { !it.isCredit }
+                            val creditRows = state.paymentBreakdown.filter { it.isCredit }
                             Spacer(modifier = Modifier.height(12.dp))
                             HorizontalDivider(color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f))
                             Spacer(modifier = Modifier.height(8.dp))
@@ -155,30 +163,79 @@ fun BillsScreen(
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
                             )
-                            state.paymentBreakdown.filter { !it.isCredit }.forEach { row ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = row.name,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
-                                    )
-                                    Text(
-                                        text = row.monthlyTotal.formatCurrency(),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                                    )
+                            if (bankRows.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Accounts",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.95f)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                bankRows.forEach { row ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = row.name,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
+                                        )
+                                        Text(
+                                            text = row.monthlyTotal.formatCurrency(),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(2.dp))
                                 }
                             }
+                            if (creditRows.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Credit cards",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.95f)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                creditRows.forEach { row ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = row.name,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
+                                        )
+                                        Text(
+                                            text = row.monthlyTotal.formatCurrency(),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            HorizontalDivider(color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f))
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Subtotals",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.95f)
+                            )
                             if (state.paymentSubtotalBanks > 0) {
+                                Spacer(modifier = Modifier.height(4.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Text(
-                                        text = "Banks subtotal",
+                                        text = "Accounts subtotal",
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Medium,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -191,24 +248,8 @@ fun BillsScreen(
                                     )
                                 }
                             }
-                            state.paymentBreakdown.filter { it.isCredit }.forEach { row ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = row.name,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
-                                    )
-                                    Text(
-                                        text = row.monthlyTotal.formatCurrency(),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                                    )
-                                }
-                            }
                             if (state.paymentSubtotalCredit > 0) {
+                                Spacer(modifier = Modifier.height(4.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween
@@ -576,6 +617,7 @@ private fun BillCard(
     onCreditClick: (() -> Unit)? = null
 ) {
     val bill = item.bill
+    val isPaidForCycle = bill.isPaidForCurrentCycle()
     val now = System.currentTimeMillis()
     val dueMillis = if (bill.isPastDue()) bill.lastDueDateMillis() else bill.nextDueDateMillis()
     val dueDateText = dueMillis?.let { SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(it)) }
@@ -596,7 +638,7 @@ private fun BillCard(
         ((dueCal.timeInMillis - nowCal.timeInMillis) / 86_400_000L).toInt()
     }
     val countdownLabel = when {
-        bill.isPaid -> "Paid"
+        isPaidForCycle -> "Paid"
         dueMillis == null -> null
         bill.isPastDue() -> {
             val daysOverdue = (((now - dueMillis) / 86_400_000L).toInt() + 1).coerceAtLeast(1)
@@ -611,11 +653,11 @@ private fun BillCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
-            containerColor = if (bill.isPaid)
+            containerColor = if (isPaidForCycle)
                 MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
             else MaterialTheme.colorScheme.surface
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (bill.isPaid) 0.dp else 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isPaidForCycle) 0.dp else 2.dp)
     ) {
         Row(
             modifier = Modifier
@@ -623,7 +665,7 @@ private fun BillCard(
                 .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (!bill.isPaid) {
+            if (!isPaidForCycle) {
                 Button(
                     onClick = { onMarkPaid() },
                     modifier = Modifier.height(32.dp),
@@ -634,7 +676,7 @@ private fun BillCard(
                     Text("Paid", style = MaterialTheme.typography.labelLarge)
                 }
                 Spacer(modifier = Modifier.width(12.dp))
-            } else if (bill.isPaid) {
+            } else if (isPaidForCycle) {
                 Surface(
                     shape = MaterialTheme.shapes.small,
                     color = ProfitGreen.copy(alpha = 0.15f)
@@ -649,41 +691,46 @@ private fun BillCard(
                 Spacer(modifier = Modifier.width(12.dp))
             }
             Column(modifier = Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        text = bill.name,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    if (item.isCypherLog) {
-                        Surface(
-                            shape = MaterialTheme.shapes.small,
-                            color = MaterialTheme.colorScheme.tertiaryContainer
-                        ) {
-                            Text(
-                                text = "CypherLog",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
+                Text(
+                    text = bill.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (item.isCypherLog || countdownLabel != null) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (item.isCypherLog) {
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.tertiaryContainer
+                            ) {
+                                Text(
+                                    text = "CypherLog",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
                         }
-                    }
-                    if (countdownLabel != null) {
-                        Surface(
-                            shape = MaterialTheme.shapes.small,
-                            color = if (bill.isPastDue()) MaterialTheme.colorScheme.errorContainer
-                            else MaterialTheme.colorScheme.primaryContainer
-                        ) {
-                            Text(
-                                text = countdownLabel,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (bill.isPastDue()) MaterialTheme.colorScheme.onErrorContainer
-                                else MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
+                        if (countdownLabel != null) {
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = if (bill.isPastDue()) MaterialTheme.colorScheme.errorContainer
+                                else MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Text(
+                                    text = countdownLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (bill.isPastDue()) MaterialTheme.colorScheme.onErrorContainer
+                                    else MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -825,7 +872,13 @@ internal fun BillDialog(
     val showInCypherLogVisible = bill == null && generalCategory == BillGeneralCategory.SUBSCRIPTION
     var showInCypherLog by remember { mutableStateOf(false) }
     var frequency by remember { mutableStateOf(bill?.frequency ?: BillFrequency.MONTHLY) }
+    var isRecurring by remember { mutableStateOf(bill?.isRecurring ?: true) }
     var dueDay by remember { mutableStateOf(bill?.dueDay?.toString() ?: "1") }
+    var oneTimeDueDate by remember {
+        mutableStateOf(
+            bill?.takeIf { !it.isRecurring }?.renewalDateMillis?.let { formatIsoDate(it) } ?: ""
+        )
+    }
     var initialPurchaseDate by remember { mutableStateOf(bill?.initialPurchaseDateMillis?.let { formatIsoDate(it) } ?: "") }
     var recurrenceUnit by remember { mutableStateOf(bill?.recurrenceUnit) }
     var recurrenceUnitExpanded by remember { mutableStateOf(false) }
@@ -833,6 +886,7 @@ internal fun BillDialog(
     var recurrenceTimezone by remember { mutableStateOf(bill?.recurrenceTimezone ?: "") }
     var showAdvancedRecurrence by remember { mutableStateOf(false) }
     var autoPay by remember { mutableStateOf(bill?.autoPay ?: false) }
+    var rateValidUntil by remember { mutableStateOf(bill?.rateValidUntilMillis?.let { formatIsoDate(it) } ?: "") }
     var accountName by remember { mutableStateOf(bill?.accountName ?: "") }
     var billerName by remember { mutableStateOf(bill?.billerName ?: "") }
     var payFromBankAccountId by remember { mutableStateOf(bill?.payFromBankAccountId ?: "") }
@@ -1078,79 +1132,120 @@ internal fun BillDialog(
                     }
                 }
                 item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ExposedDropdownMenuBox(
-                            expanded = frequencyExpanded,
-                            onExpandedChange = { frequencyExpanded = it },
-                            modifier = Modifier.weight(1f)
-                        ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Recurring bill")
+                        Switch(
+                            checked = isRecurring,
+                            onCheckedChange = {
+                                isRecurring = it
+                                if (!it) showAdvancedRecurrence = false
+                            }
+                        )
+                    }
+                }
+                if (isRecurring) {
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ExposedDropdownMenuBox(
+                                expanded = frequencyExpanded,
+                                onExpandedChange = { frequencyExpanded = it },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                OutlinedTextField(
+                                    value = frequency.displayName,
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    label = { Text("Frequency") },
+                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(frequencyExpanded) },
+                                    modifier = Modifier.menuAnchor(),
+                                    singleLine = true,
+                                    shape = MaterialTheme.shapes.medium
+                                )
+                                ExposedDropdownMenu(
+                                    expanded = frequencyExpanded,
+                                    onDismissRequest = { frequencyExpanded = false }
+                                ) {
+                                    BillFrequency.entries.forEach { freq ->
+                                        DropdownMenuItem(
+                                            text = { Text(freq.displayName) },
+                                            onClick = {
+                                                frequency = freq
+                                                frequencyExpanded = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
                             OutlinedTextField(
-                                value = frequency.displayName,
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("Frequency") },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(frequencyExpanded) },
-                                modifier = Modifier.menuAnchor(),
+                                value = dueDay,
+                                onValueChange = { dueDay = it.filter { c -> c.isDigit() }.take(2) },
+                                label = { Text("Due Day") },
+                                modifier = Modifier.weight(0.5f),
                                 singleLine = true,
                                 shape = MaterialTheme.shapes.medium
                             )
-                            ExposedDropdownMenu(
-                                expanded = frequencyExpanded,
-                                onDismissRequest = { frequencyExpanded = false }
-                            ) {
-                                BillFrequency.entries.forEach { freq ->
-                                    DropdownMenuItem(
-                                        text = { Text(freq.displayName) },
-                                        onClick = {
-                                            frequency = freq
-                                            frequencyExpanded = false
-                                        }
-                                    )
-                                }
-                            }
                         }
+                    }
+                    item {
+                        HorizontalDivider()
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showAdvancedRecurrence = !showAdvancedRecurrence },
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Custom schedule (advanced)",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Icon(
+                                imageVector = if (showAdvancedRecurrence) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                contentDescription = if (showAdvancedRecurrence) "Collapse advanced recurrence" else "Expand advanced recurrence"
+                            )
+                        }
+                    }
+                    item {
                         OutlinedTextField(
-                            value = dueDay,
-                            onValueChange = { dueDay = it.filter { c -> c.isDigit() }.take(2) },
-                            label = { Text("Due Day") },
-                            modifier = Modifier.weight(0.5f),
+                            value = initialPurchaseDate,
+                            onValueChange = { initialPurchaseDate = it.take(10) },
+                            label = { Text("Initial purchase date (YYYY-MM-DD)") },
+                            placeholder = { Text("2025-03-15") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            shape = MaterialTheme.shapes.medium
+                        )
+                    }
+                } else {
+                    item {
+                        OutlinedTextField(
+                            value = oneTimeDueDate,
+                            onValueChange = { oneTimeDueDate = it.take(10) },
+                            label = { Text("Due date (YYYY-MM-DD)") },
+                            placeholder = { Text("2026-03-01") },
+                            modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             shape = MaterialTheme.shapes.medium
                         )
                     }
                 }
                 item {
-                    HorizontalDivider()
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showAdvancedRecurrence = !showAdvancedRecurrence },
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = "Advanced recurrence (optional)",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Icon(
-                            imageVector = if (showAdvancedRecurrence) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                            contentDescription = if (showAdvancedRecurrence) "Collapse advanced recurrence" else "Expand advanced recurrence"
-                        )
-                    }
-                }
-                item {
                     OutlinedTextField(
-                        value = initialPurchaseDate,
-                        onValueChange = { initialPurchaseDate = it.take(10) },
-                        label = { Text("Initial purchase date (YYYY-MM-DD)") },
-                        placeholder = { Text("2025-03-15") },
+                        value = rateValidUntil,
+                        onValueChange = { rateValidUntil = it.take(10) },
+                        label = { Text("Rate valid until (optional)") },
+                        placeholder = { Text("2026-12-31") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         shape = MaterialTheme.shapes.medium
                     )
                 }
-                if (showAdvancedRecurrence) {
+                if (isRecurring && showAdvancedRecurrence) {
                     item {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             ExposedDropdownMenuBox(
@@ -1392,8 +1487,10 @@ internal fun BillDialog(
                     } else null
                     val effectiveAmount = ccDetails?.minimumDue(ccDetails.currentBalance) ?: (amount.toDoubleOrNull() ?: 0.0)
                     val showInCypherLogArg = if (showInCypherLogVisible) showInCypherLog else null
-                    val initialPurchaseDateMillis = parseIsoDate(initialPurchaseDate)
+                    val initialPurchaseDateMillis = if (isRecurring) parseIsoDate(initialPurchaseDate) else null
+                    val oneTimeDueDateMillis = if (!isRecurring) parseIsoDate(oneTimeDueDate) else null
                     val intervalCount = recurrenceIntervalCount.toIntOrNull()?.coerceAtLeast(1) ?: 1
+                    val rateValidUntilMillis = parseIsoDate(rateValidUntil)
                     val originalBillerName = bill?.billerName?.trim().orEmpty()
                     val normalizedInputBiller = billerName.trim()
                     val linkedBillerIdForSave = if (
@@ -1409,11 +1506,13 @@ internal fun BillDialog(
                             frequency = frequency,
                             dueDay = dueDay.toIntOrNull() ?: 1,
                             autoPay = autoPay,
-                            renewalDateMillis = bill?.renewalDateMillis,
+                            renewalDateMillis = if (isRecurring) bill?.renewalDateMillis else oneTimeDueDateMillis,
                             initialPurchaseDateMillis = initialPurchaseDateMillis,
-                            recurrenceUnit = recurrenceUnit,
-                            recurrenceIntervalCount = intervalCount,
-                            recurrenceTimezone = recurrenceTimezone.trim().takeIf { it.isNotBlank() },
+                            recurrenceUnit = if (isRecurring) recurrenceUnit else null,
+                            recurrenceIntervalCount = if (isRecurring) intervalCount else 1,
+                            recurrenceTimezone = if (isRecurring) recurrenceTimezone.trim().takeIf { it.isNotBlank() } else null,
+                            isRecurring = isRecurring,
+                            rateValidUntilMillis = rateValidUntilMillis,
                             accountName = accountName,
                             billerName = normalizedInputBiller,
                             notes = notes,
@@ -1433,10 +1532,9 @@ internal fun BillDialog(
                         showInCypherLogArg
                     )
                 },
-                enabled = name.isNotBlank() && (
-                    if (subcategory == BillSubcategory.CREDIT_CARD) true
-                    else (amount.toDoubleOrNull() ?: 0.0) > 0
-                )
+                enabled = name.isNotBlank() &&
+                    (if (subcategory == BillSubcategory.CREDIT_CARD) true else (amount.toDoubleOrNull() ?: 0.0) > 0) &&
+                    (if (isRecurring) true else parseIsoDate(oneTimeDueDate) != null)
             ) {
                 Text("Save")
             }

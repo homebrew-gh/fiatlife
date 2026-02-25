@@ -32,6 +32,8 @@ import com.fiatlife.app.ui.components.AppBanner
 import com.fiatlife.app.ui.navigation.Screen
 import com.fiatlife.app.ui.screens.bills.BillDetailScreen
 import com.fiatlife.app.ui.screens.bills.BillsScreen
+import com.fiatlife.app.ui.screens.bills.CompanyHistoryDetailScreen
+import com.fiatlife.app.ui.screens.bills.CompanyHistoryScreen
 import com.fiatlife.app.ui.screens.dashboard.DashboardScreen
 import com.fiatlife.app.ui.screens.debt.DebtDetailScreen
 import com.fiatlife.app.ui.screens.debt.DebtScreen
@@ -146,6 +148,9 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
             composable(Screen.Bills.route) {
                 BillsScreen(navController = navController)
             }
+            composable(Screen.CompanyHistory.route) {
+                CompanyHistoryScreen(navController = navController)
+            }
             composable(Screen.Debt.route) {
                 DebtScreen(navController = navController)
             }
@@ -166,6 +171,25 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
                 arguments = listOf(navArgument("accountId") { type = NavType.StringType })
             ) {
                 DebtDetailScreen(navController = navController)
+            }
+            composable(
+                route = Screen.CompanyHistoryDetail.route,
+                arguments = listOf(
+                    navArgument("companyKey") { type = NavType.StringType },
+                    navArgument("companyName") { type = NavType.StringType }
+                )
+            ) { backStackEntry ->
+                val companyKey = android.net.Uri.decode(
+                    backStackEntry.arguments?.getString("companyKey").orEmpty()
+                )
+                val companyName = android.net.Uri.decode(
+                    backStackEntry.arguments?.getString("companyName").orEmpty()
+                )
+                CompanyHistoryDetailScreen(
+                    navController = navController,
+                    companyKey = companyKey,
+                    companyName = companyName
+                )
             }
         }
     }

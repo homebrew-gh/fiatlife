@@ -123,15 +123,34 @@ fun BillDetailScreen(
                             style = MaterialTheme.typography.headlineMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
+                        val shortDateFormat = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
                         val renewalText = b.renewalDateMillis?.let {
-                            "Renews ${SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(it))}"
+                            "Renews ${shortDateFormat.format(Date(it))}"
                         }
                         Text(
-                            text = if (b.isCreditCard()) "Minimum due · Due day ${b.dueDay}"
-                            else renewalText ?: "${b.frequency.displayName} · Due day ${b.dueDay}",
+                            text = when {
+                                b.isCreditCard() -> "Minimum due · Due day ${b.dueDay}"
+                                !b.isRecurring -> b.renewalDateMillis?.let { "One-time bill · Due ${shortDateFormat.format(Date(it))}" }
+                                    ?: "One-time bill"
+                                else -> renewalText ?: "${b.frequency.displayName} · Due day ${b.dueDay}"
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                         )
+                        if (!b.isRecurring) {
+                            Text(
+                                text = "Non-recurring",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                            )
+                        }
+                        b.rateValidUntilMillis?.let { validUntil ->
+                            Text(
+                                text = "Rate valid until ${shortDateFormat.format(Date(validUntil))}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                            )
+                        }
                         val payFromName = when {
                             !b.payFromBankAccountId.isNullOrBlank() ->
                                 bankAccounts.find { it.id == b.payFromBankAccountId }?.name
@@ -149,7 +168,7 @@ fun BillDetailScreen(
                         }
                         b.initialPurchaseDateMillis?.let { started ->
                             Text(
-                                text = "Started ${SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(started))}",
+                                text = "Started ${shortDateFormat.format(Date(started))}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                             )
@@ -283,7 +302,7 @@ fun BillDetailScreen(
                             )
                         }
                     }
-                    if (!b.isPaid) {
+                    if (!b.isPaidForCurrentCycle()) {
                         Spacer(modifier = Modifier.height(12.dp))
                         Button(
                             onClick = {

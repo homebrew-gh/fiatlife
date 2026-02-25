@@ -233,6 +233,10 @@ data class Bill(
     val recurrenceIntervalCount: Int = 1,
     /** Optional timezone identifier for external systems; currently informational. */
     val recurrenceTimezone: String? = null,
+    /** Explicit recurrence toggle. False means one-time/non-recurring bill. */
+    val isRecurring: Boolean = true,
+    /** Optional date until this price/schedule is valid (useful for fixed-rate terms). */
+    val rateValidUntilMillis: Long? = null,
     val accountName: String = "",
     val notes: String = "",
     val attachmentHashes: List<String> = emptyList(),
@@ -298,6 +302,7 @@ data class Bill(
 
     /** Next due date (start of day) in ms. Handles MONTHLY; other frequencies use similar logic. */
     fun nextDueDateMillis(): Long? {
+        if (!isRecurring) return oneTimeDueDateMillis()
         val explicitRenewal = renewalDateMillis ?: return nextDueFromFrequency()
         run {
             val (unit, interval) = recurrenceConfig()
@@ -377,6 +382,10 @@ data class Bill(
 
     /** Most recent due date (start of day) that is <= now; null if none. Used to detect past due. */
     fun lastDueDateMillis(): Long? {
+        if (!isRecurring) {
+            val due = oneTimeDueDateMillis() ?: return null
+            return if (due <= System.currentTimeMillis()) due else null
+        }
         if (renewalDateMillis != null) {
             if (!isPaid) {
                 val due = renewalDateMillis
@@ -406,7 +415,12 @@ data class Bill(
 
     /** True if this bill is not paid and the due date (end of due day) has passed. */
     fun isPastDue(): Boolean {
-        if (isPaid) return false
+        if (isPaidForCurrentCycle()) return false
+        if (!isRecurring) {
+            val due = oneTimeDueDateMillis() ?: return false
+            val endOfDueDay = due + 86_400_000L - 1
+            return System.currentTimeMillis() > endOfDueDay
+        }
         // For anchored recurrence, bill cannot be overdue before the first cycle due date.
         initialPurchaseDateMillis?.let { anchor ->
             val firstDue = firstDueDateFromAnchor(anchor)
@@ -419,6 +433,25 @@ data class Bill(
         if (startAnchor != null && lastDue < startOfDayMillis(startAnchor)) return false
         val endOfDueDay = lastDue + 86400_000L - 1
         return System.currentTimeMillis() > endOfDueDay
+    }
+
+    /**
+     * UI-level paid state for recurring bills.
+     * A recurring bill marked paid is re-armed 14 days before its next due date so
+     * countdown + "Paid" action become active for the upcoming cycle.
+     */
+    fun isPaidForCurrentCycle(now: Long = System.currentTimeMillis()): Boolean {
+        if (!isRecurring) return isPaid
+        if (!isPaid) return false
+        val nextDue = nextDueDateMillis() ?: return true
+        val resetAt = nextDue - (14L * 24L * 60L * 60L * 1000L)
+        return now < resetAt
+    }
+
+    private fun oneTimeDueDateMillis(): Long? {
+        renewalDateMillis?.let { return it }
+        initialPurchaseDateMillis?.let { return startOfDayMillis(it) }
+        return null
     }
 
     private fun recurrenceConfig(): Pair<BillRecurrenceUnit, Int> {

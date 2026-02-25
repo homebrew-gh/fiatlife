@@ -58,7 +58,11 @@ class DashboardViewModel @Inject constructor(
                 goalRepository.getAllGoals(),
                 nostrClient.connectionState
             ) { salary, nativeBills, cypherLogBills, goals, connected ->
-                val bills = nativeBills + cypherLogBills.map { it.bill }
+                val bills = (nativeBills + cypherLogBills.map { it.bill }).filterNot { bill ->
+                    // Match Bills tab behavior: hide paid utilities from dashboard until next cycle/update.
+                    bill.effectiveGeneralCategory == BillGeneralCategory.UTILITIES &&
+                        bill.isPaidForCurrentCycle()
+                }
                 val calculation = salary?.let { PaycheckCalculator.calculate(it) }
                 val monthlyBills = bills.sumOf { b ->
                     b.effectiveAmountDue() * b.frequency.timesPerYear / 12.0
@@ -69,9 +73,9 @@ class DashboardViewModel @Inject constructor(
                     }
                 val now = System.currentTimeMillis()
                 val sevenDaysMs = 7L * 24 * 60 * 60 * 1000
-                val overdueCount = bills.count { !it.isPaid && it.isPastDue() }
+                val overdueCount = bills.count { !it.isPaidForCurrentCycle() && it.isPastDue() }
                 val comingDueCount = bills.count { bill ->
-                    !bill.isPaid && !bill.isPastDue() && bill.nextDueDateMillis() != null &&
+                    !bill.isPaidForCurrentCycle() && !bill.isPastDue() && bill.nextDueDateMillis() != null &&
                         bill.nextDueDateMillis()!! <= now + sevenDaysMs
                 }
                 val totalSaved = goals.sumOf { it.currentAmount }
@@ -103,7 +107,7 @@ class DashboardViewModel @Inject constructor(
                     topGoals = goals.sortedByDescending { it.progressPercent }.take(3),
                     upcomingBills = bills
                         .filter { bill ->
-                            !bill.isPaid && (
+                            !bill.isPaidForCurrentCycle() && (
                                 bill.isPastDue() ||
                                 (bill.nextDueDateMillis() != null && bill.nextDueDateMillis()!! <= now + sevenDaysMs)
                             )
