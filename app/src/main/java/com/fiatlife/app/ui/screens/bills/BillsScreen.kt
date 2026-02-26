@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -58,6 +59,7 @@ fun BillsScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val subscriptionExpandedBySubcategory = remember { mutableStateMapOf<String, Boolean>() }
+    var summaryExpanded by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.showPastDueAutopayDialogIfNeeded()
@@ -70,6 +72,7 @@ fun BillsScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         floatingActionButton = {
             FloatingActionButton(
                 onClick = { viewModel.showAddBill() },
@@ -116,13 +119,18 @@ fun BillsScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                         )
-                        TextButton(
+                        Button(
                             onClick = { navController.navigate(Screen.CompanyHistory.route) }
                         ) {
-                            Text("View company history")
+                            Text("View Companies")
+                        }
+                        TextButton(
+                            onClick = { summaryExpanded = !summaryExpanded }
+                        ) {
+                            Text(if (summaryExpanded) "Hide summary details" else "Show summary details")
                         }
                         // Category totals in header (under monthly total)
-                        if (state.categoryTotals.isNotEmpty()) {
+                        if (summaryExpanded && state.categoryTotals.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(12.dp))
                             Row(
                                 modifier = Modifier
@@ -152,7 +160,7 @@ fun BillsScreen(
                                     }
                             }
                         }
-                        if (state.paymentBreakdown.isNotEmpty()) {
+                        if (summaryExpanded && state.paymentBreakdown.isNotEmpty()) {
                             val bankRows = state.paymentBreakdown.filter { !it.isCredit }
                             val creditRows = state.paymentBreakdown.filter { it.isCredit }
                             Spacer(modifier = Modifier.height(12.dp))
@@ -286,15 +294,27 @@ fun BillsScreen(
                 items(state.billsDueInNext7Days, key = { it.id }) { item ->
                     val linkedId = item.bill.linkedCreditAccountId
                     val linkedAccount = state.creditAccounts.find { it.id == linkedId }
+                    val companyName = item.bill.billerName.ifBlank { item.bill.accountName }.trim().takeIf { it.isNotBlank() }
                     BillCard(
                         item = item,
                         linkedAccountName = linkedAccount?.name,
                         linkedAccountId = linkedId,
+                        companyName = companyName,
                         onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
                         onMarkPaid = { viewModel.recordPayment(item) },
                         onCreditClick = if (linkedId != null) {
                             { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
-                        } else null
+                        } else null,
+                        onCompanyClick = companyName?.let {
+                            {
+                                navController.navigate(
+                                    Screen.CompanyHistoryDetail.routeWith(
+                                        companyKey = companyKeyForBill(item.bill),
+                                        companyName = it
+                                    )
+                                )
+                            }
+                        }
                     )
                 }
                 item { Spacer(modifier = Modifier.height(8.dp)) }
@@ -328,8 +348,13 @@ fun BillsScreen(
                                 }.thenBy { it.bill.name.lowercase() }
                             )
                             val subcategoryKey = subcategory.name
-                            val isExpanded = subscriptionExpandedBySubcategory
-                                .getOrPut(subcategoryKey) { sortedSubBills.size <= 2 }
+                            val isCollapsible = sortedSubBills.size > 1
+                            val isExpanded = if (isCollapsible) {
+                                subscriptionExpandedBySubcategory
+                                    .getOrPut(subcategoryKey) { sortedSubBills.size <= 2 }
+                            } else {
+                                true
+                            }
                             val subtotal = sortedSubBills.sumOf { it.bill.effectiveAmountDue() }
 
                             item(key = "sub_header_${subcategory.name}") {
@@ -338,7 +363,12 @@ fun BillsScreen(
                                     billCount = sortedSubBills.size,
                                     subtotal = subtotal,
                                     expanded = isExpanded,
-                                    onToggle = { subscriptionExpandedBySubcategory[subcategoryKey] = !isExpanded }
+                                    collapsible = isCollapsible,
+                                    onToggle = {
+                                        if (isCollapsible) {
+                                            subscriptionExpandedBySubcategory[subcategoryKey] = !isExpanded
+                                        }
+                                    }
                                 )
                             }
 
@@ -346,15 +376,27 @@ fun BillsScreen(
                                 items(sortedSubBills, key = { it.id }) { item ->
                                     val linkedId = item.bill.linkedCreditAccountId
                                     val linkedAccount = state.creditAccounts.find { it.id == linkedId }
+                                    val companyName = item.bill.billerName.ifBlank { item.bill.accountName }.trim().takeIf { it.isNotBlank() }
                                     BillCard(
                                         item = item,
                                         linkedAccountName = linkedAccount?.name,
                                         linkedAccountId = linkedId,
+                                        companyName = companyName,
                                         onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
                                         onMarkPaid = { viewModel.recordPayment(item) },
                                         onCreditClick = if (linkedId != null) {
                                             { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
-                                        } else null
+                                        } else null,
+                                        onCompanyClick = companyName?.let {
+                                            {
+                                                navController.navigate(
+                                                    Screen.CompanyHistoryDetail.routeWith(
+                                                        companyKey = companyKeyForBill(item.bill),
+                                                        companyName = it
+                                                    )
+                                                )
+                                            }
+                                        }
                                     )
                                 }
                             }
@@ -363,15 +405,27 @@ fun BillsScreen(
                         items(categoryBills, key = { it.id }) { item ->
                             val linkedId = item.bill.linkedCreditAccountId
                             val linkedAccount = state.creditAccounts.find { it.id == linkedId }
+                            val companyName = item.bill.billerName.ifBlank { item.bill.accountName }.trim().takeIf { it.isNotBlank() }
                             BillCard(
                                 item = item,
                                 linkedAccountName = linkedAccount?.name,
                                 linkedAccountId = linkedId,
+                                companyName = companyName,
                                 onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
                                 onMarkPaid = { viewModel.recordPayment(item) },
                                 onCreditClick = if (linkedId != null) {
                                     { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
-                                } else null
+                                } else null,
+                                onCompanyClick = companyName?.let {
+                                    {
+                                        navController.navigate(
+                                            Screen.CompanyHistoryDetail.routeWith(
+                                                companyKey = companyKeyForBill(item.bill),
+                                                companyName = it
+                                            )
+                                        )
+                                    }
+                                }
                             )
                         }
                     }
@@ -612,9 +666,11 @@ private fun BillCard(
     item: BillWithSource,
     linkedAccountName: String? = null,
     linkedAccountId: String? = null,
+    companyName: String? = null,
     onClick: () -> Unit,
     onMarkPaid: () -> Unit,
-    onCreditClick: (() -> Unit)? = null
+    onCreditClick: (() -> Unit)? = null,
+    onCompanyClick: (() -> Unit)? = null
 ) {
     val bill = item.bill
     val isPaidForCycle = bill.isPaidForCurrentCycle()
@@ -787,6 +843,19 @@ private fun BillCard(
                         )
                     }
                 }
+                if (companyName != null && onCompanyClick != null) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    TextButton(
+                        onClick = onCompanyClick,
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                        modifier = Modifier.height(24.dp)
+                    ) {
+                        Text(
+                            text = "Company: $companyName",
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                }
             }
             MoneyText(
                 amount = bill.effectiveAmountDue(),
@@ -809,12 +878,13 @@ private fun SubscriptionSubcategoryHeader(
     billCount: Int,
     subtotal: Double,
     expanded: Boolean,
+    collapsible: Boolean,
     onToggle: () -> Unit
 ) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onToggle() },
+            .clickable(enabled = collapsible) { onToggle() },
         shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     ) {
@@ -824,12 +894,14 @@ private fun SubscriptionSubcategoryHeader(
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                contentDescription = if (expanded) "Collapse ${subcategory.displayName}" else "Expand ${subcategory.displayName}",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.width(8.dp))
+            if (collapsible) {
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "Collapse ${subcategory.displayName}" else "Expand ${subcategory.displayName}",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+            }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = subcategory.displayName,
@@ -837,7 +909,7 @@ private fun SubscriptionSubcategoryHeader(
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "$billCount subscription(s)",
+                    text = if (billCount == 1) "1 subscription" else "$billCount subscriptions",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1562,6 +1634,14 @@ private fun parseIsoDate(input: String): Long? {
     cal.set(Calendar.SECOND, 0)
     cal.set(Calendar.MILLISECOND, 0)
     return cal.timeInMillis
+}
+
+private fun companyKeyForBill(bill: Bill): String {
+    val billerId = bill.linkedBillerId?.takeIf { it.isNotBlank() }
+    if (billerId != null) return "id:$billerId"
+    val label = bill.billerName.ifBlank { bill.accountName }.trim()
+    val normalized = label.lowercase(Locale.US).replace(Regex("[^a-z0-9]+"), " ").trim()
+    return "name:$normalized"
 }
 
 private fun formatIsoDate(millis: Long): String {

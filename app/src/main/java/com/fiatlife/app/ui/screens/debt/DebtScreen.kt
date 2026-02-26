@@ -37,6 +37,7 @@ fun DebtScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         floatingActionButton = {
             FloatingActionButton(
                 onClick = { viewModel.showAddAccount() },

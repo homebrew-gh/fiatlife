@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Business
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -50,7 +51,7 @@ fun CompanyHistoryScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Company History") },
+                title = { Text("Companies") },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
@@ -66,12 +67,19 @@ fun CompanyHistoryScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            item {
+                FilterChip(
+                    selected = state.showArchived,
+                    onClick = { viewModel.setShowArchived(!state.showArchived) },
+                    label = { Text(if (state.showArchived) "Showing archived" else "Active companies") }
+                )
+            }
             if (state.companies.isEmpty()) {
                 item {
                     EmptyState(
                         icon = Icons.Filled.Business,
-                        title = "No company history yet",
-                        subtitle = "Paid bills with company names will appear here."
+                        title = if (state.showArchived) "No archived companies" else "No companies yet",
+                        subtitle = "Bills with a company name will appear here."
                     )
                 }
             } else {
@@ -100,7 +108,7 @@ fun CompanyHistoryScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = "Total paid: ${company.totalPaid.formatCurrency()}",
+                                    text = "${company.billCount} bill(s)",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -112,10 +120,17 @@ fun CompanyHistoryScreen(
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Last paid: ${dateFormat.format(Date(company.lastPaidDate))}",
+                                text = "Total paid: ${company.totalPaid.formatCurrency()}",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            company.lastPaidDate?.let {
+                                Text(
+                                    text = "Last paid: ${dateFormat.format(Date(it))}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }

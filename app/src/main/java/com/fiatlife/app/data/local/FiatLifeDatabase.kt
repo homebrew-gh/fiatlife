@@ -27,7 +27,7 @@ import com.fiatlife.app.data.local.entity.SalaryEntity
         BankAccountEntity::class,
         BillerEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class FiatLifeDatabase : RoomDatabase() {

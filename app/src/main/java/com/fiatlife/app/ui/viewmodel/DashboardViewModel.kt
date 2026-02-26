@@ -59,6 +59,7 @@ class DashboardViewModel @Inject constructor(
                 nostrClient.connectionState
             ) { salary, nativeBills, cypherLogBills, goals, connected ->
                 val bills = (nativeBills + cypherLogBills.map { it.bill }).filterNot { bill ->
+                    if (bill.isCancelled) return@filterNot true
                     // Match Bills tab behavior: hide paid utilities from dashboard until next cycle/update.
                     bill.effectiveGeneralCategory == BillGeneralCategory.UTILITIES &&
                         bill.isPaidForCurrentCycle()

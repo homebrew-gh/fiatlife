@@ -10,5 +10,6 @@ data class BillerEntity(
     val name: String,
     val normalizedName: String,
     val linkedBillId: String?,
+    val isArchived: Boolean = false,
     val updatedAt: Long = System.currentTimeMillis()
 )

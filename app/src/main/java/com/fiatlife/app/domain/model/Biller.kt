@@ -10,5 +10,6 @@ data class Biller(
     val normalizedName: String = "",
     /** Optional currently linked bill record for upsert-by-company flows. */
     val linkedBillId: String? = null,
+    val isArchived: Boolean = false,
     val updatedAt: Long = 0L
 )

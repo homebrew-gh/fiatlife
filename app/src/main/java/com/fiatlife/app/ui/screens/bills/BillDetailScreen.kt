@@ -268,6 +268,42 @@ fun BillDetailScreen(
                 }
             }
 
+            val companyName = b.billerName.ifBlank { b.accountName }.trim().takeIf { it.isNotBlank() }
+            if (companyName != null) {
+                item {
+                    SectionCard(title = "Company", icon = Icons.Filled.Business) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    navController.navigate(
+                                        Screen.CompanyHistoryDetail.routeWith(
+                                            companyKey = companyKeyForBill(b),
+                                            companyName = companyName
+                                        )
+                                    )
+                                },
+                            shape = MaterialTheme.shapes.medium,
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = companyName,
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                                Icon(Icons.Filled.ChevronRight, contentDescription = "View", modifier = Modifier.size(20.dp))
+                            }
+                        }
+                    }
+                }
+            }
+
             item {
                 SectionCard(title = "This year", icon = Icons.Filled.CalendarToday) {
                     Row(
@@ -528,6 +564,14 @@ fun BillDetailScreen(
             }
         )
     }
+}
+
+private fun companyKeyForBill(bill: Bill): String {
+    val billerId = bill.linkedBillerId?.takeIf { it.isNotBlank() }
+    if (billerId != null) return "id:$billerId"
+    val label = bill.billerName.ifBlank { bill.accountName }.trim()
+    val normalized = label.lowercase(Locale.US).replace(Regex("[^a-z0-9]+"), " ").trim()
+    return "name:$normalized"
 }
 
 @Composable

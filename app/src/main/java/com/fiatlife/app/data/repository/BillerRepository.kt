@@ -38,6 +38,7 @@ class BillerRepository @Inject constructor(
                     name = it.name,
                     normalizedName = it.normalizedName,
                     linkedBillId = it.linkedBillId,
+                    isArchived = it.isArchived,
                     updatedAt = it.updatedAt
                 )
             }
@@ -45,6 +46,9 @@ class BillerRepository @Inject constructor(
 
     suspend fun getById(id: String): Biller? =
         dao.getById(id)?.toDomain()
+
+    suspend fun getByNormalizedName(normalizedName: String): Biller? =
+        dao.getByNormalizedName(normalizedName)?.toDomain()
 
     suspend fun getOrCreateByName(name: String): Biller {
         val normalized = normalize(name)
@@ -68,6 +72,7 @@ class BillerRepository @Inject constructor(
         val normalized = withId.copy(
             name = withId.name.trim(),
             normalizedName = normalizedName,
+                isArchived = withId.isArchived,
             updatedAt = System.currentTimeMillis()
         )
         dao.upsert(normalized.toEntity())
@@ -85,6 +90,17 @@ class BillerRepository @Inject constructor(
         val current = dao.getById(billerId) ?: return
         if (current.linkedBillId != billId) return
         saveBiller(current.toDomain().copy(linkedBillId = null))
+    }
+
+    suspend fun deleteById(id: String) {
+        dao.deleteById(id)
+        if (!nostrClient.hasSigner) return
+        val dTag = "$NOSTR_D_TAG_PREFIX$id"
+        runCatching {
+            nostrClient.publishEncryptedAppData(dTag, """{"deleted":true}""")
+        }.onFailure {
+            Log.w(TAG, "Failed to publish biller tombstone $id: ${it.message}")
+        }
     }
 
     suspend fun syncFromNostr() {
@@ -140,6 +156,7 @@ class BillerRepository @Inject constructor(
             name = name,
             normalizedName = normalizedName,
             linkedBillId = linkedBillId,
+            isArchived = isArchived,
             updatedAt = updatedAt
         )
 
@@ -149,6 +166,7 @@ class BillerRepository @Inject constructor(
             name = name,
             normalizedName = normalizedName,
             linkedBillId = linkedBillId,
+            isArchived = isArchived,
             updatedAt = updatedAt
         )
 }

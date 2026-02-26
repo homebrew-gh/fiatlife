@@ -72,8 +72,8 @@ sealed class Screen(
 
     data object CompanyHistory : Screen(
         route = "company_history",
-        title = "Company History",
-        subtitle = "Paid bill history by company",
+        title = "Companies",
+        subtitle = "Bills, payments, and statements",
         selectedIcon = Icons.Filled.Business,
         unselectedIcon = Icons.Outlined.Business
     )

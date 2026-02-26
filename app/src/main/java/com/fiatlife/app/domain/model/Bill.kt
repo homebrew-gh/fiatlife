@@ -15,6 +15,14 @@ data class StatementEntry(
     val label: String = ""
 )
 
+@Serializable
+data class BillStatusEvent(
+    val date: Long = 0L,
+    /** e.g. cancelled, activated, skipped_interval */
+    val type: String = "",
+    val note: String = ""
+)
+
 /** How the credit card minimum payment is determined. */
 @Serializable
 enum class CreditCardMinPaymentType {
@@ -237,6 +245,10 @@ data class Bill(
     val isRecurring: Boolean = true,
     /** Optional date until this price/schedule is valid (useful for fixed-rate terms). */
     val rateValidUntilMillis: Long? = null,
+    /** Subscription currently cancelled/inactive. */
+    val isCancelled: Boolean = false,
+    val cancelledAt: Long? = null,
+    val statusHistory: List<BillStatusEvent> = emptyList(),
     val accountName: String = "",
     val notes: String = "",
     val attachmentHashes: List<String> = emptyList(),
@@ -271,6 +283,12 @@ data class Bill(
 
     /** True if this bill is a credit card or linked to a credit/loan account (Debt tab). */
     fun isCreditOrLoan(): Boolean = isCreditCard() || linkedCreditAccountId != null
+
+    fun canSkipInterval(): Boolean =
+        isRecurring &&
+            !isCancelled &&
+            effectiveGeneralCategory == BillGeneralCategory.SUBSCRIPTION &&
+            (effectiveSubcategory == BillSubcategory.FOOD || effectiveSubcategory == BillSubcategory.HEALTH_WELLNESS)
 
     /** Amount due this period: for credit cards, computed minimum due; otherwise bill.amount. */
     fun effectiveAmountDue(): Double = creditCardDetails?.let { cc ->
@@ -415,6 +433,7 @@ data class Bill(
 
     /** True if this bill is not paid and the due date (end of due day) has passed. */
     fun isPastDue(): Boolean {
+        if (isCancelled) return false
         if (isPaidForCurrentCycle()) return false
         if (!isRecurring) {
             val due = oneTimeDueDateMillis() ?: return false
@@ -441,6 +460,7 @@ data class Bill(
      * countdown + "Paid" action become active for the upcoming cycle.
      */
     fun isPaidForCurrentCycle(now: Long = System.currentTimeMillis()): Boolean {
+        if (isCancelled) return true
         if (!isRecurring) return isPaid
         if (!isPaid) return false
         val nextDue = nextDueDateMillis() ?: return true
@@ -452,6 +472,16 @@ data class Bill(
         renewalDateMillis?.let { return it }
         initialPurchaseDateMillis?.let { return startOfDayMillis(it) }
         return null
+    }
+
+    /** Returns the due date after skipping the current interval, or null if unavailable. */
+    fun skippedNextDueDateMillis(): Long? {
+        if (!isRecurring) return null
+        val nextDue = nextDueDateMillis() ?: return null
+        val (unit, interval) = recurrenceConfig()
+        var skipped = addRecurrence(nextDue, unit, interval)
+        skipped = applyDueDayForMonthBased(skipped, dueDay.coerceIn(1, 31), unit)
+        return skipped
     }
 
     private fun recurrenceConfig(): Pair<BillRecurrenceUnit, Int> {
