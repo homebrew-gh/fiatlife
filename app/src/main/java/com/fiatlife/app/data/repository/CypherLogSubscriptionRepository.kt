@@ -524,6 +524,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
             isPaid = isPaid,
             lastPaidDate = lastPaidDate,
             accountName = companyName,
+            billerName = companyName,
             notes = notes,
             updatedAt = 0L,
             payFromBankAccountId = tagMap["fiatlife_pay_from_bank_id"]?.firstOrNull()?.takeIf { it.isNotBlank() },
@@ -589,6 +590,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
             isPaid = isPaid,
             lastPaidDate = lastPaidDate,
             accountName = companyName,
+            billerName = companyName,
             notes = notes,
             updatedAt = 0L,
             payFromBankAccountId = first("fiatlife_pay_from_bank_id")?.takeIf { it.isNotBlank() },
@@ -650,7 +652,8 @@ class CypherLogSubscriptionRepository @Inject constructor(
             list.add(listOf("fiatlife_payment", "${p.date}|${p.amount}"))
         }
         if (bill.notes.isNotBlank()) list.add(listOf("notes", bill.notes))
-        if (bill.accountName.isNotBlank()) list.add(listOf("company_name", bill.accountName))
+        val companyName = bill.billerName.ifBlank { bill.accountName }
+        if (companyName.isNotBlank()) list.add(listOf("company_name", companyName))
         bill.payFromBankAccountId?.takeIf { it.isNotBlank() }?.let { list.add(listOf("fiatlife_pay_from_bank_id", it)) }
         bill.payFromCreditAccountId?.takeIf { it.isNotBlank() }?.let { list.add(listOf("fiatlife_pay_from_credit_id", it)) }
         preservedTags?.forEach { (key, values) ->
