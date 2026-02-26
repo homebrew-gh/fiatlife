@@ -294,27 +294,15 @@ fun BillsScreen(
                 items(state.billsDueInNext7Days, key = { it.id }) { item ->
                     val linkedId = item.bill.linkedCreditAccountId
                     val linkedAccount = state.creditAccounts.find { it.id == linkedId }
-                    val companyName = item.bill.billerName.ifBlank { item.bill.accountName }.trim().takeIf { it.isNotBlank() }
                     BillCard(
                         item = item,
                         linkedAccountName = linkedAccount?.name,
                         linkedAccountId = linkedId,
-                        companyName = companyName,
                         onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
                         onMarkPaid = { viewModel.recordPayment(item) },
                         onCreditClick = if (linkedId != null) {
                             { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
-                        } else null,
-                        onCompanyClick = companyName?.let {
-                            {
-                                navController.navigate(
-                                    Screen.CompanyHistoryDetail.routeWith(
-                                        companyKey = companyKeyForBill(item.bill),
-                                        companyName = it
-                                    )
-                                )
-                            }
-                        }
+                        } else null
                     )
                 }
                 item { Spacer(modifier = Modifier.height(8.dp)) }
@@ -376,27 +364,15 @@ fun BillsScreen(
                                 items(sortedSubBills, key = { it.id }) { item ->
                                     val linkedId = item.bill.linkedCreditAccountId
                                     val linkedAccount = state.creditAccounts.find { it.id == linkedId }
-                                    val companyName = item.bill.billerName.ifBlank { item.bill.accountName }.trim().takeIf { it.isNotBlank() }
                                     BillCard(
                                         item = item,
                                         linkedAccountName = linkedAccount?.name,
                                         linkedAccountId = linkedId,
-                                        companyName = companyName,
                                         onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
                                         onMarkPaid = { viewModel.recordPayment(item) },
                                         onCreditClick = if (linkedId != null) {
                                             { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
-                                        } else null,
-                                        onCompanyClick = companyName?.let {
-                                            {
-                                                navController.navigate(
-                                                    Screen.CompanyHistoryDetail.routeWith(
-                                                        companyKey = companyKeyForBill(item.bill),
-                                                        companyName = it
-                                                    )
-                                                )
-                                            }
-                                        }
+                                        } else null
                                     )
                                 }
                             }
@@ -405,27 +381,15 @@ fun BillsScreen(
                         items(categoryBills, key = { it.id }) { item ->
                             val linkedId = item.bill.linkedCreditAccountId
                             val linkedAccount = state.creditAccounts.find { it.id == linkedId }
-                            val companyName = item.bill.billerName.ifBlank { item.bill.accountName }.trim().takeIf { it.isNotBlank() }
                             BillCard(
                                 item = item,
                                 linkedAccountName = linkedAccount?.name,
                                 linkedAccountId = linkedId,
-                                companyName = companyName,
                                 onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
                                 onMarkPaid = { viewModel.recordPayment(item) },
                                 onCreditClick = if (linkedId != null) {
                                     { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
-                                } else null,
-                                onCompanyClick = companyName?.let {
-                                    {
-                                        navController.navigate(
-                                            Screen.CompanyHistoryDetail.routeWith(
-                                                companyKey = companyKeyForBill(item.bill),
-                                                companyName = it
-                                            )
-                                        )
-                                    }
-                                }
+                                } else null
                             )
                         }
                     }
@@ -666,11 +630,9 @@ private fun BillCard(
     item: BillWithSource,
     linkedAccountName: String? = null,
     linkedAccountId: String? = null,
-    companyName: String? = null,
     onClick: () -> Unit,
     onMarkPaid: () -> Unit,
-    onCreditClick: (() -> Unit)? = null,
-    onCompanyClick: (() -> Unit)? = null
+    onCreditClick: (() -> Unit)? = null
 ) {
     val bill = item.bill
     val isPaidForCycle = bill.isPaidForCurrentCycle()
@@ -840,19 +802,6 @@ private fun BillCard(
                             text = "$count",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                if (companyName != null && onCompanyClick != null) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    TextButton(
-                        onClick = onCompanyClick,
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                        modifier = Modifier.height(24.dp)
-                    ) {
-                        Text(
-                            text = "Company: $companyName",
-                            style = MaterialTheme.typography.labelSmall
                         )
                     }
                 }
@@ -1429,7 +1378,6 @@ internal fun BillDialog(
                                 onClick = {
                                     payFromBankAccountId = ""
                                     payFromCreditAccountId = ""
-                                    accountName = ""
                                     payFromExpanded = false
                                 }
                             )
@@ -1439,7 +1387,6 @@ internal fun BillDialog(
                                     onClick = {
                                         payFromBankAccountId = acc.id
                                         payFromCreditAccountId = ""
-                                        accountName = acc.name
                                         payFromExpanded = false
                                     }
                                 )
@@ -1450,7 +1397,6 @@ internal fun BillDialog(
                                     onClick = {
                                         payFromBankAccountId = ""
                                         payFromCreditAccountId = acc.id
-                                        accountName = acc.name
                                         payFromExpanded = false
                                     }
                                 )
@@ -1634,14 +1580,6 @@ private fun parseIsoDate(input: String): Long? {
     cal.set(Calendar.SECOND, 0)
     cal.set(Calendar.MILLISECOND, 0)
     return cal.timeInMillis
-}
-
-private fun companyKeyForBill(bill: Bill): String {
-    val billerId = bill.linkedBillerId?.takeIf { it.isNotBlank() }
-    if (billerId != null) return "id:$billerId"
-    val label = bill.billerName.ifBlank { bill.accountName }.trim()
-    val normalized = label.lowercase(Locale.US).replace(Regex("[^a-z0-9]+"), " ").trim()
-    return "name:$normalized"
 }
 
 private fun formatIsoDate(millis: Long): String {
