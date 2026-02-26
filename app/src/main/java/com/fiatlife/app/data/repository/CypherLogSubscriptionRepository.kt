@@ -41,6 +41,7 @@ private val MAPPED_TAG_KEYS = setOf(
     "initial_purchase_date", "purchase_date", "anchor_date", "start_date",
     "interval_unit", "interval_count", "timezone",
     "fiatlife_is_recurring", "fiatlife_rate_valid_until",
+    "fiatlife_is_cancelled", "fiatlife_cancelled_at",
     "fiatlife_is_paid", "fiatlife_last_paid_date", "fiatlife_payment",
     "fiatlife_pay_from_bank_id", "fiatlife_pay_from_credit_id"
 )
@@ -422,6 +423,8 @@ class CypherLogSubscriptionRepository @Inject constructor(
         val isPaid: Boolean
         val lastPaidDate: Long?
         val paymentHistory: List<BillPayment>
+        val isCancelled: Boolean
+        val cancelledAt: Long?
         try {
             val root = json.parseToJsonElement(contentJson)
             val obj: JsonObject = when {
@@ -475,6 +478,10 @@ class CypherLogSubscriptionRepository @Inject constructor(
             rateValidUntilMillis = parseIsoDateToMillis(
                 str("fiatlife_rate_valid_until") ?: tagMap["fiatlife_rate_valid_until"]?.firstOrNull()
             )
+            isCancelled = (str("fiatlife_is_cancelled") ?: tagMap["fiatlife_is_cancelled"]?.firstOrNull())
+                ?.equals("true", ignoreCase = true) == true
+            cancelledAt = (str("fiatlife_cancelled_at") ?: tagMap["fiatlife_cancelled_at"]?.firstOrNull())
+                ?.toLongOrNull()
             isPaid = (str("fiatlife_is_paid") ?: tagMap["fiatlife_is_paid"]?.firstOrNull())
                 ?.equals("true", ignoreCase = true) == true
             lastPaidDate = (str("fiatlife_last_paid_date") ?: tagMap["fiatlife_last_paid_date"]?.firstOrNull())
@@ -511,6 +518,8 @@ class CypherLogSubscriptionRepository @Inject constructor(
             recurrenceTimezone = recurrenceTimezone,
             isRecurring = isRecurring,
             rateValidUntilMillis = rateValidUntilMillis,
+            isCancelled = isCancelled,
+            cancelledAt = cancelledAt,
             paymentHistory = paymentHistory,
             isPaid = isPaid,
             lastPaidDate = lastPaidDate,
@@ -548,6 +557,8 @@ class CypherLogSubscriptionRepository @Inject constructor(
         val recurrenceTimezone = first("timezone")
         val isRecurring = first("fiatlife_is_recurring")?.equals("false", ignoreCase = true) != true
         val rateValidUntilMillis = parseIsoDateToMillis(first("fiatlife_rate_valid_until"))
+        val isCancelled = first("fiatlife_is_cancelled")?.equals("true", ignoreCase = true) == true
+        val cancelledAt = first("fiatlife_cancelled_at")?.toLongOrNull()
         val isPaid = first("fiatlife_is_paid")?.equals("true", ignoreCase = true) == true
         val lastPaidDate = first("fiatlife_last_paid_date")?.toLongOrNull()
         val paymentHistory = (tagMap["fiatlife_payment"] ?: emptyList())
@@ -572,6 +583,8 @@ class CypherLogSubscriptionRepository @Inject constructor(
             recurrenceTimezone = recurrenceTimezone,
             isRecurring = isRecurring,
             rateValidUntilMillis = rateValidUntilMillis,
+            isCancelled = isCancelled,
+            cancelledAt = cancelledAt,
             paymentHistory = paymentHistory,
             isPaid = isPaid,
             lastPaidDate = lastPaidDate,
@@ -629,6 +642,8 @@ class CypherLogSubscriptionRepository @Inject constructor(
         if (!bill.recurrenceTimezone.isNullOrBlank()) list.add(listOf("timezone", bill.recurrenceTimezone))
         if (!bill.isRecurring) list.add(listOf("fiatlife_is_recurring", "false"))
         bill.rateValidUntilMillis?.let { list.add(listOf("fiatlife_rate_valid_until", formatIsoDate(it))) }
+        if (bill.isCancelled) list.add(listOf("fiatlife_is_cancelled", "true"))
+        bill.cancelledAt?.let { list.add(listOf("fiatlife_cancelled_at", it.toString())) }
         if (bill.isPaid) list.add(listOf("fiatlife_is_paid", "true"))
         bill.lastPaidDate?.let { list.add(listOf("fiatlife_last_paid_date", it.toString())) }
         bill.paymentHistory.forEach { p ->
