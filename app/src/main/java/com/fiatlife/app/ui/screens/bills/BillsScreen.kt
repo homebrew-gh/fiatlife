@@ -938,11 +938,14 @@ internal fun BillDialog(
         )
     }
     var initialPurchaseDate by remember { mutableStateOf(bill?.initialPurchaseDateMillis?.let { formatIsoDate(it) } ?: "") }
-    var recurrenceUnit by remember { mutableStateOf(bill?.recurrenceUnit) }
-    var recurrenceUnitExpanded by remember { mutableStateOf(false) }
-    var recurrenceIntervalCount by remember { mutableStateOf((bill?.recurrenceIntervalCount ?: 1).toString()) }
-    var recurrenceTimezone by remember { mutableStateOf(bill?.recurrenceTimezone ?: "") }
-    var showAdvancedRecurrence by remember { mutableStateOf(false) }
+    var annualYearsPerCycle by remember {
+        mutableStateOf(
+            (bill?.takeIf {
+                it.frequency == BillFrequency.ANNUALLY &&
+                    (it.recurrenceUnit == com.fiatlife.app.domain.model.BillRecurrenceUnit.YEAR || it.recurrenceIntervalCount > 1)
+            }?.recurrenceIntervalCount ?: 1).toString()
+        )
+    }
     var autoPay by remember { mutableStateOf(bill?.autoPay ?: false) }
     var rateValidUntil by remember { mutableStateOf(bill?.rateValidUntilMillis?.let { formatIsoDate(it) } ?: "") }
     var accountName by remember { mutableStateOf(bill?.accountName ?: "") }
@@ -984,8 +987,6 @@ internal fun BillDialog(
         )
     }
     var minPaymentTypeExpanded by remember { mutableStateOf(false) }
-    var linkedCreditAccountId by remember { mutableStateOf(bill?.linkedCreditAccountId ?: "") }
-    var linkedCreditAccountExpanded by remember { mutableStateOf(false) }
 
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -1200,7 +1201,6 @@ internal fun BillDialog(
                             checked = isRecurring,
                             onCheckedChange = {
                                 isRecurring = it
-                                if (!it) showAdvancedRecurrence = false
                             }
                         )
                     }
@@ -1249,26 +1249,6 @@ internal fun BillDialog(
                         }
                     }
                     item {
-                        HorizontalDivider()
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showAdvancedRecurrence = !showAdvancedRecurrence },
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "Custom schedule (advanced)",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Icon(
-                                imageVector = if (showAdvancedRecurrence) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                                contentDescription = if (showAdvancedRecurrence) "Collapse advanced recurrence" else "Expand advanced recurrence"
-                            )
-                        }
-                    }
-                    item {
                         OutlinedTextField(
                             value = initialPurchaseDate,
                             onValueChange = { initialPurchaseDate = it.take(10) },
@@ -1278,6 +1258,19 @@ internal fun BillDialog(
                             singleLine = true,
                             shape = MaterialTheme.shapes.medium
                         )
+                    }
+                    if (frequency == BillFrequency.ANNUALLY) {
+                        item {
+                            OutlinedTextField(
+                                value = annualYearsPerCycle,
+                                onValueChange = { annualYearsPerCycle = it.filter { c -> c.isDigit() }.take(2) },
+                                label = { Text("Years per cycle (1+)") },
+                                placeholder = { Text("1") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                shape = MaterialTheme.shapes.medium
+                            )
+                        }
                     }
                 } else {
                     item {
@@ -1302,69 +1295,6 @@ internal fun BillDialog(
                         singleLine = true,
                         shape = MaterialTheme.shapes.medium
                     )
-                }
-                if (isRecurring && showAdvancedRecurrence) {
-                    item {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            ExposedDropdownMenuBox(
-                                expanded = recurrenceUnitExpanded,
-                                onExpandedChange = { recurrenceUnitExpanded = it },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                OutlinedTextField(
-                                    value = recurrenceUnit?.name?.lowercase()
-                                        ?.replaceFirstChar { it.uppercase() } ?: "Default (from frequency)",
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text("Interval unit") },
-                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(recurrenceUnitExpanded) },
-                                    modifier = Modifier.menuAnchor(),
-                                    singleLine = true,
-                                    shape = MaterialTheme.shapes.medium
-                                )
-                                ExposedDropdownMenu(
-                                    expanded = recurrenceUnitExpanded,
-                                    onDismissRequest = { recurrenceUnitExpanded = false }
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text("Default (from frequency)") },
-                                        onClick = {
-                                            recurrenceUnit = null
-                                            recurrenceUnitExpanded = false
-                                        }
-                                    )
-                                    BillRecurrenceUnit.entries.forEach { unit ->
-                                        DropdownMenuItem(
-                                            text = { Text(unit.name.lowercase().replaceFirstChar { it.uppercase() }) },
-                                            onClick = {
-                                                recurrenceUnit = unit
-                                                recurrenceUnitExpanded = false
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                            OutlinedTextField(
-                                value = recurrenceIntervalCount,
-                                onValueChange = { recurrenceIntervalCount = it.filter { c -> c.isDigit() }.take(3) },
-                                label = { Text("Interval") },
-                                modifier = Modifier.weight(0.5f),
-                                singleLine = true,
-                                shape = MaterialTheme.shapes.medium
-                            )
-                        }
-                    }
-                    item {
-                        OutlinedTextField(
-                            value = recurrenceTimezone,
-                            onValueChange = { recurrenceTimezone = it },
-                            label = { Text("Timezone (optional)") },
-                            placeholder = { Text("America/New_York") },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = MaterialTheme.shapes.medium
-                        )
-                    }
                 }
                 item {
                     val suggestedBillerNames = billers.map { it.name }.distinct()
@@ -1461,47 +1391,6 @@ internal fun BillDialog(
                         shape = MaterialTheme.shapes.medium
                     )
                 }
-                if (!isEditingCypherLog && creditAccounts.isNotEmpty()) {
-                    item {
-                        ExposedDropdownMenuBox(
-                            expanded = linkedCreditAccountExpanded,
-                            onExpandedChange = { linkedCreditAccountExpanded = it }
-                        ) {
-                            OutlinedTextField(
-                                value = linkedCreditAccountId.let { id ->
-                                    if (id.isBlank()) "None" else creditAccounts.find { it.id == id }?.name ?: "…"
-                                },
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("Link to credit/loan") },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(linkedCreditAccountExpanded) },
-                                modifier = Modifier.fillMaxWidth().menuAnchor(),
-                                shape = MaterialTheme.shapes.medium
-                            )
-                            ExposedDropdownMenu(
-                                expanded = linkedCreditAccountExpanded,
-                                onDismissRequest = { linkedCreditAccountExpanded = false }
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text("None") },
-                                    onClick = {
-                                        linkedCreditAccountId = ""
-                                        linkedCreditAccountExpanded = false
-                                    }
-                                )
-                                creditAccounts.forEach { acc ->
-                                    DropdownMenuItem(
-                                        text = { Text("${acc.name} (${acc.type.displayName})") },
-                                        onClick = {
-                                            linkedCreditAccountId = acc.id
-                                            linkedCreditAccountExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
                 item {
                     OutlinedButton(
                         onClick = { filePicker.launch("*/*") },
@@ -1544,7 +1433,11 @@ internal fun BillDialog(
                     val showInCypherLogArg = if (showInCypherLogVisible) showInCypherLog else null
                     val initialPurchaseDateMillis = if (isRecurring) parseIsoDate(initialPurchaseDate) else null
                     val oneTimeDueDateMillis = if (!isRecurring) parseIsoDate(oneTimeDueDate) else null
-                    val intervalCount = recurrenceIntervalCount.toIntOrNull()?.coerceAtLeast(1) ?: 1
+                    val annualInterval = annualYearsPerCycle.toIntOrNull()?.coerceAtLeast(1) ?: 1
+                    val recurrenceUnit = if (isRecurring && frequency == BillFrequency.ANNUALLY && annualInterval > 1) {
+                        com.fiatlife.app.domain.model.BillRecurrenceUnit.YEAR
+                    } else null
+                    val intervalCount = if (isRecurring && frequency == BillFrequency.ANNUALLY) annualInterval else 1
                     val rateValidUntilMillis = parseIsoDate(rateValidUntil)
                     val originalBillerName = bill?.billerName?.trim().orEmpty()
                     val normalizedInputBiller = billerName.trim()
@@ -1565,7 +1458,7 @@ internal fun BillDialog(
                             initialPurchaseDateMillis = initialPurchaseDateMillis,
                             recurrenceUnit = if (isRecurring) recurrenceUnit else null,
                             recurrenceIntervalCount = if (isRecurring) intervalCount else 1,
-                            recurrenceTimezone = if (isRecurring) recurrenceTimezone.trim().takeIf { it.isNotBlank() } else null,
+                            recurrenceTimezone = null,
                             isRecurring = isRecurring,
                             rateValidUntilMillis = rateValidUntilMillis,
                             accountName = accountName,
@@ -1579,7 +1472,7 @@ internal fun BillDialog(
                             createdAt = bill?.createdAt ?: 0L,
                             updatedAt = 0L,
                             creditCardDetails = ccDetails,
-                            linkedCreditAccountId = linkedCreditAccountId.takeIf { it.isNotBlank() },
+                            linkedCreditAccountId = bill?.linkedCreditAccountId,
                             linkedBillerId = linkedBillerIdForSave,
                             payFromBankAccountId = payFromBankAccountId.takeIf { it.isNotBlank() },
                             payFromCreditAccountId = payFromCreditAccountId.takeIf { it.isNotBlank() }
