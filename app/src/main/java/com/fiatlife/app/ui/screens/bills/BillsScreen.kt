@@ -116,7 +116,6 @@ fun BillsScreen(
                                 onDrag = { change, dragAmount ->
                                     dragX += dragAmount.x
                                     dragY += dragAmount.y
-                                    change.consumePositionChange()
                                 },
                                 onDragEnd = {
                                     if (abs(dragX) > 72f && abs(dragX) > abs(dragY)) {
