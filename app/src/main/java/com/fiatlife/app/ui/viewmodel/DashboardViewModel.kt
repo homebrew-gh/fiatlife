@@ -54,14 +54,20 @@ class DashboardViewModel @Inject constructor(
     init {
         startMonthAnchorUpdates()
         viewModelScope.launch {
-            combine(
+            val baseFlow = combine(
                 salaryRepository.getSalaryConfig(),
                 billRepository.getAllBills(),
                 cypherLogSubscriptionRepository.getAllAsBills(),
                 goalRepository.getAllGoals(),
-                nostrClient.connectionState,
-                monthAnchor
-            ) { salary, nativeBills, cypherLogBills, goals, connected, currentMonthAnchor ->
+                nostrClient.connectionState
+            ) { salary, nativeBills, cypherLogBills, goals, connected ->
+                DashboardInputs(salary, nativeBills, cypherLogBills, goals, connected)
+            }
+
+            combine(baseFlow, monthAnchor) { inputs, currentMonthAnchor ->
+                inputs to currentMonthAnchor
+            }.collect { (inputs, currentMonthAnchor) ->
+                val (salary, nativeBills, cypherLogBills, goals, connected) = inputs
                 val allBills = (nativeBills + cypherLogBills.map { it.bill }).filterNot { bill ->
                     bill.isCancelled
                 }
@@ -90,7 +96,7 @@ class DashboardViewModel @Inject constructor(
                         (salary?.payFrequency?.periodsPerYear ?: 26) / 12.0
                 val monthlyDisposable = monthlyTakeHome - monthlyBills
 
-                DashboardState(
+                _state.value = DashboardState(
                     takeHomePay = calculation?.netPay ?: 0.0,
                     grossPay = calculation?.grossPay ?: 0.0,
                     totalTaxes = calculation?.totalTaxes ?: 0.0,
@@ -122,8 +128,6 @@ class DashboardViewModel @Inject constructor(
                             else bill.nextDueDateMillis() ?: Long.MAX_VALUE
                         }
                 )
-            }.collect { state ->
-                _state.value = state
             }
         }
 
@@ -152,3 +156,11 @@ class DashboardViewModel @Inject constructor(
         return (cal.timeInMillis - now).coerceAtLeast(60_000L)
     }
 }
+
+private data class DashboardInputs(
+    val salary: SalaryConfig?,
+    val nativeBills: List<Bill>,
+    val cypherLogBills: List<BillWithSource>,
+    val goals: List<FinancialGoal>,
+    val connected: Boolean
+)

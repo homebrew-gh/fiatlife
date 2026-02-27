@@ -80,19 +80,23 @@ class BillsViewModel @Inject constructor(
     init {
         startMonthAnchorUpdates()
         viewModelScope.launch {
-            combine(
+            val baseFlow = combine(
                 repository.getAllBills(),
                 cypherLogSubscriptionRepository.getAllAsBills(),
                 creditAccountRepository.getAllCreditAccounts(),
                 bankAccountRepository.getAllBankAccounts(),
-                billerRepository.getAllBillers(),
-                monthAnchor
-            ) { nativeBills, cypherLogBills, creditAccounts, bankAccounts, billers, currentMonthAnchor ->
+                billerRepository.getAllBillers()
+            ) { nativeBills, cypherLogBills, creditAccounts, bankAccounts, billers ->
                 val merged = nativeBills.map { BillWithSource(it, com.fiatlife.app.domain.model.BillSource.NATIVE, null) } +
                     cypherLogBills
                 val sortedMerged = merged.sortedBy { it.bill.name.lowercase() }
-                Quintuple(sortedMerged, creditAccounts, bankAccounts, billers, currentMonthAnchor)
-            }.collect { (mergedBills, creditAccounts, bankAccounts, billers, currentMonthAnchor) ->
+                Quadruple(sortedMerged, creditAccounts, bankAccounts, billers)
+            }
+
+            combine(baseFlow, monthAnchor) { base, currentMonthAnchor ->
+                base to currentMonthAnchor
+            }.collect { (base, currentMonthAnchor) ->
+                val (mergedBills, creditAccounts, bankAccounts, billers) = base
                 val accountsById = creditAccounts.associateBy { it.id }
                 val costBasisBills = mergedBills.filter { item ->
                     if (item.bill.isCancelled) return@filter false
@@ -526,12 +530,4 @@ private data class Quadruple<A, B, C, D>(
     val second: B,
     val third: C,
     val fourth: D
-)
-
-private data class Quintuple<A, B, C, D, E>(
-    val first: A,
-    val second: B,
-    val third: C,
-    val fourth: D,
-    val fifth: E
 )
