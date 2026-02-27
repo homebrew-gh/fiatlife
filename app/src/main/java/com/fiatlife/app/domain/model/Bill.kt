@@ -392,6 +392,10 @@ data class Bill(
     /** Next due date (start of day) in ms. Handles MONTHLY; other frequencies use similar logic. */
     fun nextDueDateMillis(): Long? {
         if (!isRecurring) return oneTimeDueDateMillis()
+        if (isCreditOrLoan()) {
+            val cycleDue = creditLoanCurrentCycleDue(System.currentTimeMillis()) ?: return null
+            return if (hasQualifyingPaymentForCycle(cycleDue)) shiftCreditLoanCycle(cycleDue, 1) else cycleDue
+        }
         val explicitRenewal = renewalDateMillis ?: return nextDueFromFrequency()
         run {
             val (unit, interval) = recurrenceConfig()
@@ -505,6 +509,12 @@ data class Bill(
     /** True if this bill is not paid and the due date (end of due day) has passed. */
     fun isPastDue(): Boolean {
         if (isCancelled) return false
+        if (isCreditOrLoan()) {
+            val now = System.currentTimeMillis()
+            val cycleDue = creditLoanCurrentCycleDue(now) ?: return false
+            if (hasQualifyingPaymentForCycle(cycleDue)) return false
+            return now > endOfDayMillis(cycleDue)
+        }
         if (isPaidForCurrentCycle()) return false
         if (!isRecurring) {
             val due = oneTimeDueDateMillis() ?: return false
@@ -532,6 +542,10 @@ data class Bill(
      */
     fun isPaidForCurrentCycle(now: Long = System.currentTimeMillis()): Boolean {
         if (isCancelled) return true
+        if (isCreditOrLoan()) {
+            val cycleDue = creditLoanCurrentCycleDue(now) ?: return false
+            return hasQualifyingPaymentForCycle(cycleDue)
+        }
         if (!isRecurring) return isPaid
         if (!isPaid) return false
         val paidAt = lastPaidDate ?: return true
@@ -632,6 +646,79 @@ data class Bill(
         cal.set(java.util.Calendar.MILLISECOND, 0)
         return cal.timeInMillis - 1
     }
+
+    /**
+     * For credit/loan bills, keep the bill "paid" through the official due date
+     * when a qualifying payment is recorded in that cycle. After due day, it
+     * advances to the next cycle only if current cycle was paid.
+     */
+    private fun creditLoanCurrentCycleDue(now: Long): Long? {
+        val currentMonthDue = dueDateForMonth(now)
+        val currentMonthDueEnd = endOfDayMillis(currentMonthDue)
+        if (now <= currentMonthDueEnd) return currentMonthDue
+        val priorCycleDue = shiftCreditLoanCycle(currentMonthDue, -1)
+        val paidCurrentCycle = hasQualifyingPaymentBetween(
+            startExclusive = priorCycleDue,
+            endInclusive = currentMonthDue,
+            minimumAmount = qualifyingPaymentMinimum()
+        )
+        return if (paidCurrentCycle) shiftCreditLoanCycle(currentMonthDue, 1) else currentMonthDue
+    }
+
+    private fun hasQualifyingPaymentForCycle(cycleDue: Long): Boolean {
+        val previousCycleDue = shiftCreditLoanCycle(cycleDue, -1)
+        return hasQualifyingPaymentBetween(
+            startExclusive = previousCycleDue,
+            endInclusive = cycleDue,
+            minimumAmount = qualifyingPaymentMinimum()
+        )
+    }
+
+    private fun hasQualifyingPaymentBetween(
+        startExclusive: Long,
+        endInclusive: Long,
+        minimumAmount: Double
+    ): Boolean {
+        if (minimumAmount <= 0.0) return false
+        return paymentHistory.any { payment ->
+            payment.date > startExclusive &&
+                payment.date <= endOfDayMillis(endInclusive) &&
+                payment.amount + 0.0001 >= minimumAmount
+        }
+    }
+
+    private fun qualifyingPaymentMinimum(): Double {
+        val explicit = amount.coerceAtLeast(0.0)
+        if (explicit > 0.0) return explicit
+        return effectiveAmountDue().coerceAtLeast(0.0)
+    }
+
+    private fun dueDateForMonth(anchorMillis: Long): Long {
+        val cal = java.util.Calendar.getInstance().apply {
+            timeInMillis = anchorMillis
+            set(java.util.Calendar.DAY_OF_MONTH, dueDay.coerceIn(1, getActualMaximum(java.util.Calendar.DAY_OF_MONTH)))
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        return cal.timeInMillis
+    }
+
+    private fun shiftCreditLoanCycle(baseDue: Long, months: Int): Long {
+        val cal = java.util.Calendar.getInstance().apply {
+            timeInMillis = baseDue
+            add(java.util.Calendar.MONTH, months)
+            set(java.util.Calendar.DAY_OF_MONTH, dueDay.coerceIn(1, getActualMaximum(java.util.Calendar.DAY_OF_MONTH)))
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        return cal.timeInMillis
+    }
+
+    private fun endOfDayMillis(dayStartMillis: Long): Long = dayStartMillis + 86_400_000L - 1
 }
 
 private fun fromLegacyCategory(category: BillCategory): BillSubcategory = when (category) {
