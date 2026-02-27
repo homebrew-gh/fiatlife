@@ -124,6 +124,16 @@ fun BillDetailScreen(
                             style = MaterialTheme.typography.headlineMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
+                        if (b.effectiveSubcategory == com.fiatlife.app.domain.model.BillSubcategory.CREDIT_CARD) {
+                            val totalBalance = linkedCreditAccount?.currentBalance ?: b.creditCardDetails?.currentBalance
+                            totalBalance?.let {
+                                Text(
+                                    text = "Total balance ${it.formatCurrency()}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
+                                )
+                            }
+                        }
                         val shortDateFormat = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
                         val renewalText = b.renewalDateMillis?.let {
                             "Renews ${shortDateFormat.format(Date(it))}"
