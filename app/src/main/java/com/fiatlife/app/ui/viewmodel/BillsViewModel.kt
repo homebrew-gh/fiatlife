@@ -28,7 +28,7 @@ data class PaymentBreakdownRow(
     val id: String,
     val name: String,
     val isCredit: Boolean,
-    val monthlyTotal: Double
+    val total: Double
 )
 
 data class BillsState(
@@ -41,6 +41,9 @@ data class BillsState(
     val paymentBreakdown: List<PaymentBreakdownRow> = emptyList(),
     val paymentSubtotalBanks: Double = 0.0,
     val paymentSubtotalCredit: Double = 0.0,
+    val annualPaymentBreakdown: List<PaymentBreakdownRow> = emptyList(),
+    val annualPaymentSubtotalBanks: Double = 0.0,
+    val annualPaymentSubtotalCredit: Double = 0.0,
     val selectedGeneralCategory: BillGeneralCategory? = null,
     val showAddDialog: Boolean = false,
     val editingBill: Bill? = null,
@@ -50,6 +53,8 @@ data class BillsState(
     val navigateToBillId: String? = null,
     val totalMonthly: Double = 0.0,
     val categoryTotals: Map<BillGeneralCategory, Double> = emptyMap(),
+    val totalAnnual: Double = 0.0,
+    val annualCategoryTotals: Map<BillGeneralCategory, Double> = emptyMap(),
     val isSaving: Boolean = false,
     val message: String = "",
     /** Bills due in the next 7 days: non-autopay, or credit/loan (always show if due in 7 days). Credit/loan first. */
@@ -116,6 +121,11 @@ class BillsViewModel @Inject constructor(
                     .mapValues { (_, list) ->
                         list.sumOf { b -> b.dueAmountInMonth(currentMonthAnchor) }
                     }
+                val annualTotal = allBills.sumOf { b -> b.dueAmountInYear(currentMonthAnchor) }
+                val annualCategoryTotals = allBills.groupBy { it.effectiveGeneralCategory }
+                    .mapValues { (_, list) ->
+                        list.sumOf { b -> b.dueAmountInYear(currentMonthAnchor) }
+                    }
 
                 val now = System.currentTimeMillis()
                 val sevenDaysMs = 7L * 24 * 60 * 60 * 1000
@@ -153,13 +163,18 @@ class BillsViewModel @Inject constructor(
 
                 val bankTotals = mutableMapOf<String, Double>()
                 val creditTotals = mutableMapOf<String, Double>()
+                val annualBankTotals = mutableMapOf<String, Double>()
+                val annualCreditTotals = mutableMapOf<String, Double>()
                 costBasisBills.forEach { item ->
                     val monthly = item.bill.dueAmountInMonth(currentMonthAnchor)
+                    val annual = item.bill.dueAmountInYear(currentMonthAnchor)
                     item.bill.payFromBankAccountId?.let { id ->
                         bankTotals[id] = (bankTotals[id] ?: 0.0) + monthly
+                        annualBankTotals[id] = (annualBankTotals[id] ?: 0.0) + annual
                     }
                     item.bill.payFromCreditAccountId?.let { id ->
                         creditTotals[id] = (creditTotals[id] ?: 0.0) + monthly
+                        annualCreditTotals[id] = (annualCreditTotals[id] ?: 0.0) + annual
                     }
                 }
                 val breakdown = buildList {
@@ -174,8 +189,22 @@ class BillsViewModel @Inject constructor(
                         }
                     }
                 }
-                val subtotalBanks = breakdown.filter { !it.isCredit }.sumOf { it.monthlyTotal }
-                val subtotalCredit = breakdown.filter { it.isCredit }.sumOf { it.monthlyTotal }
+                val annualBreakdown = buildList {
+                    bankAccounts.forEach { acc ->
+                        (annualBankTotals[acc.id] ?: 0.0).takeIf { it > 0 }?.let { total ->
+                            add(PaymentBreakdownRow(acc.id, acc.name, false, total))
+                        }
+                    }
+                    creditAccounts.forEach { acc ->
+                        (annualCreditTotals[acc.id] ?: 0.0).takeIf { it > 0 }?.let { total ->
+                            add(PaymentBreakdownRow(acc.id, acc.name, true, total))
+                        }
+                    }
+                }
+                val subtotalBanks = breakdown.filter { !it.isCredit }.sumOf { it.total }
+                val subtotalCredit = breakdown.filter { it.isCredit }.sumOf { it.total }
+                val annualSubtotalBanks = annualBreakdown.filter { !it.isCredit }.sumOf { it.total }
+                val annualSubtotalCredit = annualBreakdown.filter { it.isCredit }.sumOf { it.total }
 
                 _state.update { state ->
                     state.copy(
@@ -187,8 +216,13 @@ class BillsViewModel @Inject constructor(
                         paymentBreakdown = breakdown,
                         paymentSubtotalBanks = subtotalBanks,
                         paymentSubtotalCredit = subtotalCredit,
+                        annualPaymentBreakdown = annualBreakdown,
+                        annualPaymentSubtotalBanks = annualSubtotalBanks,
+                        annualPaymentSubtotalCredit = annualSubtotalCredit,
                         totalMonthly = monthlyTotal,
                         categoryTotals = categoryTotals,
+                        totalAnnual = annualTotal,
+                        annualCategoryTotals = annualCategoryTotals,
                         billsDueInNext7Days = dueIn7Days,
                         otherBillsByCategory = otherByCategory,
                         pastDueAutopayBills = pastDueAutopay

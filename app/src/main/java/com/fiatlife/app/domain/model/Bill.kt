@@ -329,6 +329,27 @@ data class Bill(
         effectiveAmountDue() * dueOccurrencesInMonth(monthAnchorMillis)
 
     /**
+     * Amount due for this bill in the calendar year containing [yearAnchorMillis].
+     */
+    fun dueAmountInYear(yearAnchorMillis: Long): Double {
+        val cal = java.util.Calendar.getInstance().apply {
+            timeInMillis = yearAnchorMillis
+            set(java.util.Calendar.MONTH, java.util.Calendar.JANUARY)
+            set(java.util.Calendar.DAY_OF_MONTH, 1)
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        var total = 0.0
+        repeat(12) {
+            total += dueAmountInMonth(cal.timeInMillis)
+            cal.add(java.util.Calendar.MONTH, 1)
+        }
+        return total
+    }
+
+    /**
      * Number of due occurrences in the month containing [monthAnchorMillis].
      */
     fun dueOccurrencesInMonth(monthAnchorMillis: Long): Int {

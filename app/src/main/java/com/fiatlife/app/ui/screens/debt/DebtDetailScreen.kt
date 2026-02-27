@@ -68,6 +68,7 @@ fun DebtDetailScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = { Text(account?.name ?: "Account") },

@@ -54,6 +54,10 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
     val context = LocalContext.current
     var manualSyncStarted by remember { mutableStateOf(false) }
     val currentScreen = Screen.fromRoute(currentDestination?.route)
+    val hideGlobalTopBar = currentScreen == Screen.BillDetail ||
+        currentScreen == Screen.DebtDetail ||
+        currentScreen == Screen.CompanyHistory ||
+        currentScreen == Screen.CompanyHistoryDetail
 
     LaunchedEffect(mainState.isManualSyncing) {
         if (mainState.isManualSyncing) {
@@ -66,25 +70,28 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            Surface(
-                modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
-                color = MaterialTheme.colorScheme.surface,
-                shadowElevation = 2.dp
-            ) {
-                AppBanner(
-                    title = currentScreen?.title ?: "FiatLife",
-                    subtitle = currentScreen?.subtitle?.takeIf { it.isNotBlank() } ?: "Your financial dashboard",
-                    isConnected = mainState.isConnected,
-                    hasData = mainState.hasData,
-                    isSyncing = mainState.isManualSyncing,
-                    onSyncClick = { mainViewModel.manualSyncFromRelay() },
-                    actions = {
-                        IconButton(onClick = { navController.navigate(Screen.Settings.route) }) {
-                            Icon(Icons.Filled.Settings, contentDescription = "Settings")
+            if (!hideGlobalTopBar) {
+                Surface(
+                    modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
+                    color = MaterialTheme.colorScheme.surface,
+                    shadowElevation = 2.dp
+                ) {
+                    AppBanner(
+                        title = currentScreen?.title ?: "FiatLife",
+                        subtitle = currentScreen?.subtitle?.takeIf { it.isNotBlank() } ?: "Your financial dashboard",
+                        isConnected = mainState.isConnected,
+                        hasData = mainState.hasData,
+                        isSyncing = mainState.isManualSyncing,
+                        onSyncClick = { mainViewModel.manualSyncFromRelay() },
+                        actions = {
+                            IconButton(onClick = { navController.navigate(Screen.Settings.route) }) {
+                                Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                            }
                         }
-                    }
-                )
+                    )
+                }
             }
         },
         bottomBar = {

@@ -15,6 +15,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.consume
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
@@ -37,6 +39,7 @@ import com.fiatlife.app.domain.model.BillSubcategory
 import com.fiatlife.app.domain.model.BillWithSource
 import com.fiatlife.app.ui.navigation.Screen
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import com.fiatlife.app.ui.components.CurrencyTextField
 import com.fiatlife.app.ui.components.MoneyText
 import com.fiatlife.app.ui.components.EmptyState
@@ -49,6 +52,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,6 +64,14 @@ fun BillsScreen(
     val context = LocalContext.current
     val subscriptionExpandedBySubcategory = remember { mutableStateMapOf<String, Boolean>() }
     var summaryExpanded by rememberSaveable { mutableStateOf(false) }
+    var summaryMode by rememberSaveable { mutableStateOf("monthly") }
+    val showingAnnual = summaryMode == "annual"
+    val summaryTitle = if (showingAnnual) "Annual Summary" else "Monthly Total"
+    val summaryTotal = if (showingAnnual) state.totalAnnual else state.totalMonthly
+    val summaryCategoryTotals = if (showingAnnual) state.annualCategoryTotals else state.categoryTotals
+    val summaryPaymentBreakdown = if (showingAnnual) state.annualPaymentBreakdown else state.paymentBreakdown
+    val summaryPaymentSubtotalBanks = if (showingAnnual) state.annualPaymentSubtotalBanks else state.paymentSubtotalBanks
+    val summaryPaymentSubtotalCredit = if (showingAnnual) state.annualPaymentSubtotalCredit else state.paymentSubtotalCredit
 
     LaunchedEffect(Unit) {
         viewModel.showPastDueAutopayDialogIfNeeded()
@@ -92,7 +104,28 @@ fun BillsScreen(
             // Monthly total card with category totals in header
             item {
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pointerInput(summaryMode) {
+                            var dragX = 0f
+                            var dragY = 0f
+                            detectDragGestures(
+                                onDragStart = {
+                                    dragX = 0f
+                                    dragY = 0f
+                                },
+                                onDrag = { change, dragAmount ->
+                                    dragX += dragAmount.x
+                                    dragY += dragAmount.y
+                                    change.consume()
+                                },
+                                onDragEnd = {
+                                    if (abs(dragX) > 72f && abs(dragX) > abs(dragY)) {
+                                        summaryMode = if (summaryMode == "monthly") "annual" else "monthly"
+                                    }
+                                }
+                            )
+                        },
                     shape = MaterialTheme.shapes.extraLarge,
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.primaryContainer
@@ -105,12 +138,12 @@ fun BillsScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "Monthly Total",
+                            text = summaryTitle,
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                         MoneyText(
-                            amount = state.totalMonthly,
+                            amount = summaryTotal,
                             style = MaterialTheme.typography.displaySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
@@ -119,6 +152,16 @@ fun BillsScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                         )
+                        Text(
+                            text = "Swipe left/right to switch monthly/annual",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                        )
+                        TextButton(onClick = {
+                            summaryMode = if (summaryMode == "monthly") "annual" else "monthly"
+                        }) {
+                            Text(if (showingAnnual) "Switch to monthly" else "Switch to annual")
+                        }
                         Button(
                             onClick = { navController.navigate(Screen.CompanyHistory.route) }
                         ) {
@@ -130,7 +173,7 @@ fun BillsScreen(
                             Text(if (summaryExpanded) "Hide summary details" else "Show summary details")
                         }
                         // Category totals in header (under monthly total)
-                        if (summaryExpanded && state.categoryTotals.isNotEmpty()) {
+                        if (summaryExpanded && summaryCategoryTotals.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(12.dp))
                             Row(
                                 modifier = Modifier
@@ -138,7 +181,7 @@ fun BillsScreen(
                                     .horizontalScroll(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                state.categoryTotals.entries
+                                summaryCategoryTotals.entries
                                     .sortedBy { it.key.displayName }
                                     .forEach { (generalCategory, total) ->
                                         Column(
@@ -160,9 +203,9 @@ fun BillsScreen(
                                     }
                             }
                         }
-                        if (summaryExpanded && state.paymentBreakdown.isNotEmpty()) {
-                            val bankRows = state.paymentBreakdown.filter { !it.isCredit }
-                            val creditRows = state.paymentBreakdown.filter { it.isCredit }
+                        if (summaryExpanded && summaryPaymentBreakdown.isNotEmpty()) {
+                            val bankRows = summaryPaymentBreakdown.filter { !it.isCredit }
+                            val creditRows = summaryPaymentBreakdown.filter { it.isCredit }
                             Spacer(modifier = Modifier.height(12.dp))
                             HorizontalDivider(color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f))
                             Spacer(modifier = Modifier.height(8.dp))
@@ -191,7 +234,7 @@ fun BillsScreen(
                                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
                                         )
                                         Text(
-                                            text = row.monthlyTotal.formatCurrency(),
+                                            text = row.total.formatCurrency(),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onPrimaryContainer
                                         )
@@ -219,7 +262,7 @@ fun BillsScreen(
                                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
                                         )
                                         Text(
-                                            text = row.monthlyTotal.formatCurrency(),
+                                            text = row.total.formatCurrency(),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onPrimaryContainer
                                         )
@@ -236,7 +279,7 @@ fun BillsScreen(
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.95f)
                             )
-                            if (state.paymentSubtotalBanks > 0) {
+                            if (summaryPaymentSubtotalBanks > 0) {
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -249,14 +292,14 @@ fun BillsScreen(
                                         color = MaterialTheme.colorScheme.onPrimaryContainer
                                     )
                                     Text(
-                                        text = state.paymentSubtotalBanks.formatCurrency(),
+                                        text = summaryPaymentSubtotalBanks.formatCurrency(),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Medium,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer
                                     )
                                 }
                             }
-                            if (state.paymentSubtotalCredit > 0) {
+                            if (summaryPaymentSubtotalCredit > 0) {
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -269,7 +312,7 @@ fun BillsScreen(
                                         color = MaterialTheme.colorScheme.onPrimaryContainer
                                     )
                                     Text(
-                                        text = state.paymentSubtotalCredit.formatCurrency(),
+                                        text = summaryPaymentSubtotalCredit.formatCurrency(),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Medium,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer
