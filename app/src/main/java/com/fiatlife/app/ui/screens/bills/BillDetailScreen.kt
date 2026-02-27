@@ -71,6 +71,7 @@ fun BillDetailScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = { Text(bill?.name ?: "Bill") },
