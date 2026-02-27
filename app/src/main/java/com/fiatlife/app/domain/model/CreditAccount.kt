@@ -51,6 +51,7 @@ data class CreditAccount(
     val currentBalance: Double = 0.0,
     val dueDay: Int = 1,
     val linkedBillId: String? = null,
+    val annualFeeLinkedBillId: String? = null,
     val notes: String = "",
     val createdAt: Long = 0L,
     val updatedAt: Long = 0L,
@@ -65,7 +66,11 @@ data class CreditAccount(
     val termMonths: Int? = null,
     val monthlyPaymentAmount: Double? = null,
     val startDate: Long? = null,
-    val endDate: Long? = null
+    val endDate: Long? = null,
+    // Credit card annual membership fee
+    val annualFeeAmount: Double = 0.0,
+    val annualFeeRenewalDateMillis: Long? = null,
+    val annualFeeFrequency: BillFrequency = BillFrequency.ANNUALLY
 ) {
     /** Minimum payment due (revolving). */
     fun minimumDue(): Double = when (minimumPaymentType) {

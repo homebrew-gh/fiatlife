@@ -79,8 +79,14 @@ class CreditAccountRepository @Inject constructor(
         return ensureBillForAccount(withId)
     }
 
-    /** When balance > 0, ensure a linked bill exists (create or update). When balance == 0, set bill amount to 0. */
+    /** Ensure account-linked bills are in sync (monthly payment + optional annual fee bill). */
     private suspend fun ensureBillForAccount(account: CreditAccount): CreditAccount {
+        val primaryUpdated = ensurePrimaryBillForAccount(account)
+        return ensureAnnualFeeBill(primaryUpdated)
+    }
+
+    /** When balance > 0, ensure a linked monthly payment bill exists. When balance == 0, keep linked bill with amount 0. */
+    private suspend fun ensurePrimaryBillForAccount(account: CreditAccount): CreditAccount {
         val subcategory = when (account.type) {
             CreditAccountType.CREDIT_CARD -> BillSubcategory.CREDIT_CARD
             CreditAccountType.STUDENT_LOAN -> BillSubcategory.STUDENT_LOAN
@@ -136,6 +142,89 @@ class CreditAccountRepository @Inject constructor(
         return account
     }
 
+    /** For credit cards with annual fee configured, ensure a separate recurring fee bill exists and is linked. */
+    private suspend fun ensureAnnualFeeBill(account: CreditAccount): CreditAccount {
+        val hasAnnualFee = account.type == CreditAccountType.CREDIT_CARD &&
+            account.annualFeeAmount > 0.0 &&
+            account.annualFeeRenewalDateMillis != null
+
+        if (!hasAnnualFee) {
+            val linkedFeeId = account.annualFeeLinkedBillId
+            if (linkedFeeId != null) {
+                billRepository.getBillById(linkedFeeId).first()?.let { existing ->
+                    billRepository.deleteBill(existing)
+                }
+                val cleared = account.copy(annualFeeLinkedBillId = null)
+                persistAccountWithoutEnsure(cleared)
+                return cleared
+            }
+            return account
+        }
+
+        val renewal = account.annualFeeRenewalDateMillis ?: return account
+        val dueDay = dayOfMonthFromMillis(renewal)
+        val billName = "${account.name} Annual Fee"
+
+        val updateBill: (Bill) -> Bill = { existing ->
+            existing.copy(
+                name = billName,
+                amount = account.annualFeeAmount,
+                frequency = account.annualFeeFrequency,
+                dueDay = dueDay,
+                subcategory = BillSubcategory.FINANCE,
+                isRecurring = true,
+                renewalDateMillis = renewal,
+                initialPurchaseDateMillis = renewal,
+                linkedCreditAccountId = null,
+                accountName = account.name,
+                billerName = account.name,
+                updatedAt = System.currentTimeMillis()
+            )
+        }
+
+        val linkedFeeId = account.annualFeeLinkedBillId
+        if (linkedFeeId != null) {
+            val existingLinked = billRepository.getBillById(linkedFeeId).first()
+            if (existingLinked != null) {
+                billRepository.saveBill(updateBill(existingLinked))
+                return account
+            }
+        }
+
+        val existingByName = billRepository.getAllBills().first().firstOrNull { b ->
+            b.linkedCreditAccountId == null &&
+                b.name.equals(billName, ignoreCase = true) &&
+                b.billerName.equals(account.name, ignoreCase = true)
+        }
+        if (existingByName != null) {
+            billRepository.saveBill(updateBill(existingByName))
+            val relinked = account.copy(annualFeeLinkedBillId = existingByName.id)
+            persistAccountWithoutEnsure(relinked)
+            return relinked
+        }
+
+        val feeBillId = UUID.randomUUID().toString()
+        val feeBill = Bill(
+            id = feeBillId,
+            name = billName,
+            amount = account.annualFeeAmount,
+            subcategory = BillSubcategory.FINANCE,
+            frequency = account.annualFeeFrequency,
+            dueDay = dueDay,
+            renewalDateMillis = renewal,
+            initialPurchaseDateMillis = renewal,
+            isRecurring = true,
+            accountName = account.name,
+            billerName = account.name,
+            createdAt = System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis()
+        )
+        billRepository.saveBill(feeBill)
+        val linked = account.copy(annualFeeLinkedBillId = feeBillId)
+        persistAccountWithoutEnsure(linked)
+        return linked
+    }
+
     private suspend fun createAndLinkBill(account: CreditAccount, billSubcategory: BillSubcategory): CreditAccount {
         val billId = UUID.randomUUID().toString()
         val bill = Bill(
@@ -151,22 +240,7 @@ class CreditAccountRepository @Inject constructor(
         )
         billRepository.saveBill(bill)
         val updated = account.copy(linkedBillId = billId)
-        val jsonStr = json.encodeToString(CreditAccount.serializer(), updated)
-        creditAccountDao.upsert(
-            CreditAccountEntity(
-                id = updated.id,
-                jsonData = jsonStr,
-                type = updated.type.name,
-                updatedAt = updated.updatedAt
-            )
-        )
-        if (nostrClient.hasSigner) {
-            try {
-                nostrClient.publishEncryptedAppData("$NOSTR_D_TAG_PREFIX${updated.id}", jsonStr)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to publish credit account after linking bill: ${e.message}")
-            }
-        }
+        persistAccountWithoutEnsure(updated)
         return updated
     }
 
@@ -183,6 +257,11 @@ class CreditAccountRepository @Inject constructor(
     }
 
     suspend fun deleteCreditAccount(account: CreditAccount) {
+        account.annualFeeLinkedBillId?.let { feeBillId ->
+            billRepository.getBillById(feeBillId).first()?.let { feeBill ->
+                billRepository.deleteBill(feeBill)
+            }
+        }
         creditAccountDao.delete(
             CreditAccountEntity(id = account.id, jsonData = "", type = account.type.name)
         )
@@ -276,6 +355,10 @@ class CreditAccountRepository @Inject constructor(
             createAndLinkBill(account, subcategory)
             created++
         }
+        // Ensure annual fee bills exist even when balance is zero.
+        accounts.forEach { account ->
+            ensureAnnualFeeBill(account)
+        }
         return created
     }
 
@@ -302,5 +385,30 @@ class CreditAccountRepository @Inject constructor(
             }
         }
         return removed
+    }
+
+    private suspend fun persistAccountWithoutEnsure(account: CreditAccount) {
+        val jsonStr = json.encodeToString(CreditAccount.serializer(), account)
+        creditAccountDao.upsert(
+            CreditAccountEntity(
+                id = account.id,
+                jsonData = jsonStr,
+                type = account.type.name,
+                updatedAt = account.updatedAt
+            )
+        )
+        if (nostrClient.hasSigner) {
+            try {
+                nostrClient.publishEncryptedAppData("$NOSTR_D_TAG_PREFIX${account.id}", jsonStr)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to publish credit account update: ${e.message}")
+            }
+        }
+    }
+
+    private fun dayOfMonthFromMillis(millis: Long): Int {
+        val cal = java.util.Calendar.getInstance()
+        cal.timeInMillis = millis
+        return cal.get(java.util.Calendar.DAY_OF_MONTH).coerceIn(1, 31)
     }
 }

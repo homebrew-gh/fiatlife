@@ -670,12 +670,8 @@ private fun BillCard(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(
-            containerColor = if (isPaidForCycle)
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-            else MaterialTheme.colorScheme.surface
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (isPaidForCycle) 0.dp else 2.dp)
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Row(
             modifier = Modifier
@@ -779,7 +775,7 @@ private fun BillCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "Due $dueDateText",
+                            text = dueDateText,
                             style = MaterialTheme.typography.bodySmall,
                             color = if (bill.isPastDue()) MaterialTheme.colorScheme.error
                             else MaterialTheme.colorScheme.onSurfaceVariant

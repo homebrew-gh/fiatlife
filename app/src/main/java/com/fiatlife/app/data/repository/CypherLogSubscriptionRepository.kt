@@ -96,6 +96,7 @@ private fun subscriptionTypeToSubcategory(value: String?): BillSubcategory {
         "pet care", "petcare" -> BillSubcategory.PET_CARE
         "education" -> BillSubcategory.EDUCATION
         "travel" -> BillSubcategory.TRAVEL
+        "firearm", "firearms", "2a", "gun", "guns" -> BillSubcategory.FIREARM
         else -> BillSubcategory.OTHER_SUBSCRIPTION
     }
 }
@@ -614,6 +615,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
         BillSubcategory.PET_CARE -> "Pet Care"
         BillSubcategory.EDUCATION -> "Education"
         BillSubcategory.TRAVEL -> "Travel"
+        BillSubcategory.FIREARM -> "Firearm"
         else -> "Other"
     }
 

@@ -128,6 +128,7 @@ enum class BillSubcategory(val generalCategory: BillGeneralCategory) {
     SHOPPING(BillGeneralCategory.SUBSCRIPTION),
     SOFTWARE(BillGeneralCategory.SUBSCRIPTION),
     STREAMING(BillGeneralCategory.SUBSCRIPTION),
+    FIREARM(BillGeneralCategory.SUBSCRIPTION),
     VEHICLE(BillGeneralCategory.SUBSCRIPTION),
     OTHER_SUBSCRIPTION(BillGeneralCategory.SUBSCRIPTION),
     // Health
@@ -170,8 +171,9 @@ enum class BillSubcategory(val generalCategory: BillGeneralCategory) {
             SHOPPING -> "Shopping"
             SOFTWARE -> "Software"
             STREAMING -> "Streaming"
+            FIREARM -> "Firearm"
             VEHICLE -> "Vehicle"
-            OTHER_SUBSCRIPTION -> "Other Subscription"
+            OTHER_SUBSCRIPTION -> "Other"
             GYM_FITNESS -> "Gym/Fitness"
             MEDICAL -> "Medical"
             GROCERIES -> "Groceries"
@@ -210,6 +212,7 @@ enum class BillSubcategory(val generalCategory: BillGeneralCategory) {
             SHOPPING -> "shopping_cart"
             SOFTWARE -> "computer"
             STREAMING -> "tv"
+            FIREARM -> "shield"
             VEHICLE -> "directions_car"
             OTHER_SUBSCRIPTION -> "subscriptions"
             GYM_FITNESS -> "fitness_center"
@@ -316,6 +319,53 @@ data class Bill(
         cal.set(java.util.Calendar.MILLISECOND, 0)
         val yearStart = cal.timeInMillis
         return paymentHistory.filter { it.date >= yearStart }.sumOf { it.amount }
+    }
+
+    /**
+     * Amount due for this bill in the month containing [monthAnchorMillis].
+     * Counts all due occurrences in that month (e.g. weekly may occur 4-5 times).
+     */
+    fun dueAmountInMonth(monthAnchorMillis: Long): Double =
+        effectiveAmountDue() * dueOccurrencesInMonth(monthAnchorMillis)
+
+    /**
+     * Number of due occurrences in the month containing [monthAnchorMillis].
+     */
+    fun dueOccurrencesInMonth(monthAnchorMillis: Long): Int {
+        if (isCancelled) return 0
+        val monthStart = startOfMonthMillis(monthAnchorMillis)
+        val monthEnd = endOfMonthMillis(monthAnchorMillis)
+
+        if (!isRecurring) {
+            val oneTimeDue = oneTimeDueDateMillis() ?: return 0
+            return if (oneTimeDue in monthStart..monthEnd) 1 else 0
+        }
+
+        val (unit, interval) = recurrenceConfig()
+        val seed = when {
+            renewalDateMillis != null -> renewalDateMillis
+            initialPurchaseDateMillis != null -> firstDueDateFromAnchor(initialPurchaseDateMillis)
+            else -> lastDueDateMillis() ?: nextDueDateMillis()
+        } ?: return 0
+
+        var occurrence = seed
+        while (occurrence > monthEnd) {
+            occurrence = addRecurrence(occurrence, unit, -interval)
+            occurrence = applyDueDayForMonthBased(occurrence, dueDay.coerceIn(1, 31), unit)
+        }
+        while (occurrence < monthStart) {
+            occurrence = addRecurrence(occurrence, unit, interval)
+            occurrence = applyDueDayForMonthBased(occurrence, dueDay.coerceIn(1, 31), unit)
+        }
+
+        var count = 0
+        var cursor = occurrence
+        while (cursor in monthStart..monthEnd) {
+            count++
+            cursor = addRecurrence(cursor, unit, interval)
+            cursor = applyDueDayForMonthBased(cursor, dueDay.coerceIn(1, 31), unit)
+        }
+        return count
     }
 
     /** Next due date (start of day) in ms. Handles MONTHLY; other frequencies use similar logic. */
@@ -456,15 +506,15 @@ data class Bill(
 
     /**
      * UI-level paid state for recurring bills.
-     * A recurring bill marked paid is re-armed 14 days before its next due date so
-     * countdown + "Paid" action become active for the upcoming cycle.
+     * A recurring bill marked paid is re-armed 7 days after payment so
+     * countdown + "Paid" action become active again for the next cycle.
      */
     fun isPaidForCurrentCycle(now: Long = System.currentTimeMillis()): Boolean {
         if (isCancelled) return true
         if (!isRecurring) return isPaid
         if (!isPaid) return false
-        val nextDue = nextDueDateMillis() ?: return true
-        val resetAt = nextDue - (14L * 24L * 60L * 60L * 1000L)
+        val paidAt = lastPaidDate ?: return true
+        val resetAt = paidAt + (7L * 24L * 60L * 60L * 1000L)
         return now < resetAt
     }
 
@@ -537,6 +587,29 @@ data class Bill(
         cal.set(java.util.Calendar.SECOND, 0)
         cal.set(java.util.Calendar.MILLISECOND, 0)
         return cal.timeInMillis
+    }
+
+    private fun startOfMonthMillis(millis: Long): Long {
+        val cal = java.util.Calendar.getInstance()
+        cal.timeInMillis = millis
+        cal.set(java.util.Calendar.DAY_OF_MONTH, 1)
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+        cal.set(java.util.Calendar.MINUTE, 0)
+        cal.set(java.util.Calendar.SECOND, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
+    }
+
+    private fun endOfMonthMillis(millis: Long): Long {
+        val cal = java.util.Calendar.getInstance()
+        cal.timeInMillis = millis
+        cal.set(java.util.Calendar.DAY_OF_MONTH, 1)
+        cal.add(java.util.Calendar.MONTH, 1)
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+        cal.set(java.util.Calendar.MINUTE, 0)
+        cal.set(java.util.Calendar.SECOND, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        return cal.timeInMillis - 1
     }
 }
 

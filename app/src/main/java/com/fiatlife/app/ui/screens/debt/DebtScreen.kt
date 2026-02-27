@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
+import com.fiatlife.app.domain.model.BillFrequency
 import com.fiatlife.app.domain.model.CreditAccount
 import com.fiatlife.app.domain.model.CreditAccountType
 import com.fiatlife.app.domain.model.CreditCardMinPaymentType
@@ -26,6 +27,7 @@ import com.fiatlife.app.ui.components.PercentageTextField
 import com.fiatlife.app.ui.components.formatCurrency
 import com.fiatlife.app.ui.navigation.Screen
 import com.fiatlife.app.ui.viewmodel.DebtViewModel
+import java.util.Calendar
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -274,6 +276,12 @@ internal fun CreditAccountDialog(
     var originalPrincipal by remember { mutableStateOf(account?.originalPrincipal?.toString()?.takeIf { it != "0.0" } ?: "") }
     var termMonths by remember { mutableStateOf(account?.termMonths?.toString() ?: "") }
     var monthlyPaymentAmount by remember { mutableStateOf(account?.monthlyPaymentAmount?.toString() ?: "") }
+    var annualFeeAmount by remember { mutableStateOf(account?.annualFeeAmount?.toString()?.takeIf { it != "0.0" } ?: "") }
+    var annualFeeRenewalDate by remember {
+        mutableStateOf(account?.annualFeeRenewalDateMillis?.let { formatIsoDate(it) } ?: "")
+    }
+    var annualFeeFrequency by remember { mutableStateOf(account?.annualFeeFrequency ?: BillFrequency.ANNUALLY) }
+    var annualFeeFrequencyExpanded by remember { mutableStateOf(false) }
 
     val isRevolving = type.isRevolving
     val isAmortizing = type.isAmortizing
@@ -441,6 +449,57 @@ internal fun CreditAccountDialog(
                         enabled = minimumPaymentType != CreditCardMinPaymentType.FULL_BALANCE
                     )
                 }
+                if (type == CreditAccountType.CREDIT_CARD) {
+                    HorizontalDivider()
+                    Text(
+                        text = "Membership fee (optional)",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    CurrencyTextField(
+                        value = annualFeeAmount,
+                        onValueChange = { annualFeeAmount = it },
+                        label = "Fee amount",
+                        placeholder = "0"
+                    )
+                    OutlinedTextField(
+                        value = annualFeeRenewalDate,
+                        onValueChange = { annualFeeRenewalDate = it.take(10) },
+                        label = { Text("Renewal date (YYYY-MM-DD)") },
+                        placeholder = { Text("2026-01-15") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = MaterialTheme.shapes.medium
+                    )
+                    ExposedDropdownMenuBox(
+                        expanded = annualFeeFrequencyExpanded,
+                        onExpandedChange = { annualFeeFrequencyExpanded = it }
+                    ) {
+                        OutlinedTextField(
+                            value = annualFeeFrequency.displayName,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Fee frequency") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(annualFeeFrequencyExpanded) },
+                            modifier = Modifier.fillMaxWidth().menuAnchor(),
+                            shape = MaterialTheme.shapes.medium
+                        )
+                        ExposedDropdownMenu(
+                            expanded = annualFeeFrequencyExpanded,
+                            onDismissRequest = { annualFeeFrequencyExpanded = false }
+                        ) {
+                            BillFrequency.entries.forEach { freq ->
+                                DropdownMenuItem(
+                                    text = { Text(freq.displayName) },
+                                    onClick = {
+                                        annualFeeFrequency = freq
+                                        annualFeeFrequencyExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
                 if (isAmortizing) {
                     CurrencyTextField(
                         value = originalPrincipal,
@@ -486,6 +545,8 @@ internal fun CreditAccountDialog(
                         CreditCardMinPaymentType.PERCENT_OF_BALANCE -> 2.0
                         else -> 0.0
                     }
+                    val feeAmount = annualFeeAmount.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
+                    val feeDateMillis = parseIsoDate(annualFeeRenewalDate)
                     onSave(
                         CreditAccount(
                             id = id,
@@ -506,7 +567,11 @@ internal fun CreditAccountDialog(
                             termMonths = termMonths.toIntOrNull()?.takeIf { it > 0 },
                             monthlyPaymentAmount = monthlyPaymentAmount.toDoubleOrNull()?.takeIf { it >= 0 },
                             startDate = account?.startDate,
-                            endDate = account?.endDate
+                            endDate = account?.endDate,
+                            annualFeeLinkedBillId = account?.annualFeeLinkedBillId,
+                            annualFeeAmount = if (type == CreditAccountType.CREDIT_CARD) feeAmount else 0.0,
+                            annualFeeRenewalDateMillis = if (type == CreditAccountType.CREDIT_CARD && feeAmount > 0.0) feeDateMillis else null,
+                            annualFeeFrequency = if (type == CreditAccountType.CREDIT_CARD) annualFeeFrequency else BillFrequency.ANNUALLY
                         )
                     )
                 },
@@ -518,5 +583,35 @@ internal fun CreditAccountDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
+    )
+}
+
+private fun parseIsoDate(input: String): Long? {
+    val value = input.trim()
+    if (value.isEmpty()) return null
+    val parts = value.split("-")
+    if (parts.size != 3) return null
+    val year = parts[0].toIntOrNull() ?: return null
+    val month = parts[1].toIntOrNull() ?: return null
+    val day = parts[2].toIntOrNull() ?: return null
+    val cal = Calendar.getInstance()
+    cal.set(Calendar.YEAR, year)
+    cal.set(Calendar.MONTH, (month - 1).coerceIn(0, 11))
+    cal.set(Calendar.DAY_OF_MONTH, day.coerceAtLeast(1))
+    cal.set(Calendar.HOUR_OF_DAY, 0)
+    cal.set(Calendar.MINUTE, 0)
+    cal.set(Calendar.SECOND, 0)
+    cal.set(Calendar.MILLISECOND, 0)
+    return cal.timeInMillis
+}
+
+private fun formatIsoDate(millis: Long): String {
+    val cal = Calendar.getInstance().apply { timeInMillis = millis }
+    return String.format(
+        java.util.Locale.US,
+        "%04d-%02d-%02d",
+        cal.get(Calendar.YEAR),
+        cal.get(Calendar.MONTH) + 1,
+        cal.get(Calendar.DAY_OF_MONTH)
     )
 }

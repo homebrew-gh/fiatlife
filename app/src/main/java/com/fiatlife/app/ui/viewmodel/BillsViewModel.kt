@@ -17,6 +17,7 @@ import com.fiatlife.app.domain.model.BillPayment
 import com.fiatlife.app.domain.model.BillWithSource
 import com.fiatlife.app.domain.model.StatementEntry
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -74,40 +75,42 @@ class BillsViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(BillsState())
     val state: StateFlow<BillsState> = _state.asStateFlow()
+    private val monthAnchor = MutableStateFlow(System.currentTimeMillis())
 
     init {
+        startMonthAnchorUpdates()
         viewModelScope.launch {
             combine(
                 repository.getAllBills(),
                 cypherLogSubscriptionRepository.getAllAsBills(),
                 creditAccountRepository.getAllCreditAccounts(),
                 bankAccountRepository.getAllBankAccounts(),
-                billerRepository.getAllBillers()
-            ) { nativeBills, cypherLogBills, creditAccounts, bankAccounts, billers ->
+                billerRepository.getAllBillers(),
+                monthAnchor
+            ) { nativeBills, cypherLogBills, creditAccounts, bankAccounts, billers, currentMonthAnchor ->
                 val merged = nativeBills.map { BillWithSource(it, com.fiatlife.app.domain.model.BillSource.NATIVE, null) } +
                     cypherLogBills
                 val sortedMerged = merged.sortedBy { it.bill.name.lowercase() }
-                Quadruple(sortedMerged, creditAccounts, bankAccounts, billers)
-            }.collect { (mergedBills, creditAccounts, bankAccounts, billers) ->
+                Quintuple(sortedMerged, creditAccounts, bankAccounts, billers, currentMonthAnchor)
+            }.collect { (mergedBills, creditAccounts, bankAccounts, billers, currentMonthAnchor) ->
                 val accountsById = creditAccounts.associateBy { it.id }
-                val visibleBills = mergedBills.filter { item ->
+                val costBasisBills = mergedBills.filter { item ->
                     if (item.bill.isCancelled) return@filter false
                     val linkedId = item.bill.linkedCreditAccountId ?: return@filter true
                     val account = accountsById[linkedId] ?: return@filter true
                     account.currentBalance > 0.0
-                }.filter { item ->
+                }
+                val visibleBills = costBasisBills.filter { item ->
                     // Utilities are variable bills; once paid for current cycle, hide until next cycle/update.
                     !(item.bill.effectiveGeneralCategory == BillGeneralCategory.UTILITIES &&
                         item.bill.isPaidForCurrentCycle())
                 }
 
-                val allBills = visibleBills.map { it.bill }
-                val monthlyTotal = allBills.sumOf { b ->
-                    b.effectiveAmountDue() * b.frequency.timesPerYear / 12.0
-                }
+                val allBills = costBasisBills.map { it.bill }
+                val monthlyTotal = allBills.sumOf { b -> b.dueAmountInMonth(currentMonthAnchor) }
                 val categoryTotals = allBills.groupBy { it.effectiveGeneralCategory }
                     .mapValues { (_, list) ->
-                        list.sumOf { b -> b.effectiveAmountDue() * b.frequency.timesPerYear / 12.0 }
+                        list.sumOf { b -> b.dueAmountInMonth(currentMonthAnchor) }
                     }
 
                 val now = System.currentTimeMillis()
@@ -146,8 +149,8 @@ class BillsViewModel @Inject constructor(
 
                 val bankTotals = mutableMapOf<String, Double>()
                 val creditTotals = mutableMapOf<String, Double>()
-                visibleBills.forEach { item ->
-                    val monthly = item.bill.effectiveAmountDue() * item.bill.frequency.timesPerYear / 12.0
+                costBasisBills.forEach { item ->
+                    val monthly = item.bill.dueAmountInMonth(currentMonthAnchor)
                     item.bill.payFromBankAccountId?.let { id ->
                         bankTotals[id] = (bankTotals[id] ?: 0.0) + monthly
                     }
@@ -190,6 +193,29 @@ class BillsViewModel @Inject constructor(
             }
         }
         syncOnConnect()
+    }
+
+    private fun startMonthAnchorUpdates() {
+        viewModelScope.launch {
+            while (true) {
+                val now = System.currentTimeMillis()
+                monthAnchor.value = now
+                delay(millisUntilNextMonth(now))
+            }
+        }
+    }
+
+    private fun millisUntilNextMonth(now: Long): Long {
+        val cal = java.util.Calendar.getInstance().apply {
+            timeInMillis = now
+            set(java.util.Calendar.DAY_OF_MONTH, 1)
+            add(java.util.Calendar.MONTH, 1)
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        return (cal.timeInMillis - now).coerceAtLeast(60_000L)
     }
 
     private fun syncOnConnect() {
@@ -500,4 +526,12 @@ private data class Quadruple<A, B, C, D>(
     val second: B,
     val third: C,
     val fourth: D
+)
+
+private data class Quintuple<A, B, C, D, E>(
+    val first: A,
+    val second: B,
+    val third: C,
+    val fourth: D,
+    val fifth: E
 )

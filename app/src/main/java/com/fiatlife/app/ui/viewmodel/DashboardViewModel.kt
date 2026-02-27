@@ -9,6 +9,7 @@ import com.fiatlife.app.data.repository.GoalRepository
 import com.fiatlife.app.data.repository.SalaryRepository
 import com.fiatlife.app.domain.model.*
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -48,34 +49,37 @@ class DashboardViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(DashboardState())
     val state: StateFlow<DashboardState> = _state.asStateFlow()
+    private val monthAnchor = MutableStateFlow(System.currentTimeMillis())
 
     init {
+        startMonthAnchorUpdates()
         viewModelScope.launch {
             combine(
                 salaryRepository.getSalaryConfig(),
                 billRepository.getAllBills(),
                 cypherLogSubscriptionRepository.getAllAsBills(),
                 goalRepository.getAllGoals(),
-                nostrClient.connectionState
-            ) { salary, nativeBills, cypherLogBills, goals, connected ->
-                val bills = (nativeBills + cypherLogBills.map { it.bill }).filterNot { bill ->
-                    if (bill.isCancelled) return@filterNot true
+                nostrClient.connectionState,
+                monthAnchor
+            ) { salary, nativeBills, cypherLogBills, goals, connected, currentMonthAnchor ->
+                val allBills = (nativeBills + cypherLogBills.map { it.bill }).filterNot { bill ->
+                    bill.isCancelled
+                }
+                val visibleBills = allBills.filterNot { bill ->
                     // Match Bills tab behavior: hide paid utilities from dashboard until next cycle/update.
                     bill.effectiveGeneralCategory == BillGeneralCategory.UTILITIES &&
                         bill.isPaidForCurrentCycle()
                 }
                 val calculation = salary?.let { PaycheckCalculator.calculate(it) }
-                val monthlyBills = bills.sumOf { b ->
-                    b.effectiveAmountDue() * b.frequency.timesPerYear / 12.0
-                }
-                val billCategoryTotals = bills.groupBy { it.effectiveGeneralCategory }
+                val monthlyBills = allBills.sumOf { b -> b.dueAmountInMonth(currentMonthAnchor) }
+                val billCategoryTotals = allBills.groupBy { it.effectiveGeneralCategory }
                     .mapValues { (_, list) ->
-                        list.sumOf { b -> b.effectiveAmountDue() * b.frequency.timesPerYear / 12.0 }
+                        list.sumOf { b -> b.dueAmountInMonth(currentMonthAnchor) }
                     }
                 val now = System.currentTimeMillis()
                 val sevenDaysMs = 7L * 24 * 60 * 60 * 1000
-                val overdueCount = bills.count { !it.isPaidForCurrentCycle() && it.isPastDue() }
-                val comingDueCount = bills.count { bill ->
+                val overdueCount = visibleBills.count { !it.isPaidForCurrentCycle() && it.isPastDue() }
+                val comingDueCount = visibleBills.count { bill ->
                     !bill.isPaidForCurrentCycle() && !bill.isPastDue() && bill.nextDueDateMillis() != null &&
                         bill.nextDueDateMillis()!! <= now + sevenDaysMs
                 }
@@ -94,7 +98,7 @@ class DashboardViewModel @Inject constructor(
                             (calculation?.totalPostTaxDeductions ?: 0.0),
                     effectiveTaxRate = calculation?.effectiveTaxRate ?: 0.0,
                     monthlyBills = monthlyBills,
-                    billCount = bills.size,
+                    billCount = visibleBills.size,
                     billsComingDueCount = comingDueCount,
                     overdueBillCount = overdueCount,
                     billCategoryTotals = billCategoryTotals,
@@ -106,7 +110,7 @@ class DashboardViewModel @Inject constructor(
                     isConnected = connected,
                     hasData = salary != null || nativeBills.isNotEmpty() || cypherLogBills.isNotEmpty() || goals.isNotEmpty(),
                     topGoals = goals.sortedByDescending { it.progressPercent }.take(3),
-                    upcomingBills = bills
+                    upcomingBills = visibleBills
                         .filter { bill ->
                             !bill.isPaidForCurrentCycle() && (
                                 bill.isPastDue() ||
@@ -123,5 +127,28 @@ class DashboardViewModel @Inject constructor(
             }
         }
 
+    }
+
+    private fun startMonthAnchorUpdates() {
+        viewModelScope.launch {
+            while (true) {
+                val now = System.currentTimeMillis()
+                monthAnchor.value = now
+                delay(millisUntilNextMonth(now))
+            }
+        }
+    }
+
+    private fun millisUntilNextMonth(now: Long): Long {
+        val cal = java.util.Calendar.getInstance().apply {
+            timeInMillis = now
+            set(java.util.Calendar.DAY_OF_MONTH, 1)
+            add(java.util.Calendar.MONTH, 1)
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        return (cal.timeInMillis - now).coerceAtLeast(60_000L)
     }
 }

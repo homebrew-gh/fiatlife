@@ -289,7 +289,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (!isInMainApp || needsPinUnlock.value) return
+        if (needsPinUnlock.value) return
+        // Run on every foreground return; signer/relay guards inside keep this cheap
+        // and avoid timing issues where isInMainApp is still false during resume.
         ensureRelayReconnect()
     }
 
