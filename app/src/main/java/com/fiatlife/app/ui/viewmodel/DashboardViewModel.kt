@@ -89,7 +89,11 @@ class DashboardViewModel @Inject constructor(
                     timeInMillis = now
                     add(java.util.Calendar.MONTH, 3)
                 }.timeInMillis
-                val overdueCount = visibleBills.count { !it.isPaidForCurrentCycle() && it.isPastDue() }
+                val overdueCount = visibleBills.count {
+                    it.effectiveGeneralCategory != BillGeneralCategory.CREDIT_LOANS &&
+                        !it.isPaidForCurrentCycle() &&
+                        it.isPastDue()
+                }
                 val comingDueCount = visibleBills.count { bill ->
                     !bill.isPaidForCurrentCycle() && !bill.isPastDue() && bill.nextDueDateMillis() != null &&
                         bill.nextDueDateMillis()!! <= now + sevenDaysMs
@@ -129,8 +133,6 @@ class DashboardViewModel @Inject constructor(
                     topGoals = goals.sortedByDescending { it.progressPercent }.take(3),
                     upcomingBills = visibleBills
                         .filter { bill ->
-                            bill.effectiveGeneralCategory != BillGeneralCategory.CREDIT_LOANS &&
-                            !bill.isCreditOrLoan() &&
                             !bill.isPaidForCurrentCycle() &&
                                 (bill.isPastDue() ||
                                     (bill.nextDueDateMillis() != null && bill.nextDueDateMillis()!! <= threeMonthsFromNow))
