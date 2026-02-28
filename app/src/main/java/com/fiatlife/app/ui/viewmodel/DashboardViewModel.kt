@@ -69,8 +69,14 @@ class DashboardViewModel @Inject constructor(
                 inputs to currentMonthAnchor
             }.collect { (inputs, currentMonthAnchor) ->
                 val (salary, nativeBills, cypherLogBills, goals, connected) = inputs
+                val accountsById = (nativeBills + cypherLogBills.map { it.bill })
+                    .mapNotNull { it.linkedCreditAccountId }
+                    .toSet()
                 val allBills = (nativeBills + cypherLogBills.map { it.bill }).filterNot { bill ->
                     bill.isCancelled
+                }.filterNot { bill ->
+                    bill.effectiveGeneralCategory == BillGeneralCategory.CREDIT_LOANS &&
+                        (bill.linkedCreditAccountId == null || bill.linkedCreditAccountId !in accountsById)
                 }
                 val visibleBills = allBills.filterNot { bill ->
                     // Match Bills tab behavior: hide paid utilities from dashboard until next cycle/update.

@@ -475,6 +475,16 @@ data class Bill(
 
     /** Most recent due date (start of day) that is <= now; null if none. Used to detect past due. */
     fun lastDueDateMillis(): Long? {
+        if (isCreditOrLoan()) {
+            val now = System.currentTimeMillis()
+            val cycleDue = creditLoanCurrentCycleDue(now) ?: return null
+            // If this cycle is unpaid and past due, it is the active overdue cycle.
+            if (now > endOfDayMillis(cycleDue) && !hasQualifyingPaymentForCycle(cycleDue)) {
+                return cycleDue
+            }
+            val previous = shiftCreditLoanCycle(cycleDue, -1)
+            return if (previous <= now) previous else null
+        }
         if (!isRecurring) {
             val due = oneTimeDueDateMillis() ?: return null
             return if (due <= System.currentTimeMillis()) due else null

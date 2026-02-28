@@ -108,8 +108,9 @@ class BillsViewModel @Inject constructor(
                 val accountsById = creditAccounts.associateBy { it.id }
                 val costBasisBills = mergedBills.filter { item ->
                     if (item.bill.isCancelled) return@filter false
-                    val linkedId = item.bill.linkedCreditAccountId ?: return@filter true
-                    val account = accountsById[linkedId] ?: return@filter true
+                    if (item.bill.effectiveGeneralCategory != BillGeneralCategory.CREDIT_LOANS) return@filter true
+                    val linkedId = item.bill.linkedCreditAccountId ?: return@filter false
+                    val account = accountsById[linkedId] ?: return@filter false
                     account.currentBalance > 0.0
                 }
                 val visibleBills = costBasisBills.filter { item ->
