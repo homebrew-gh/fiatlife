@@ -21,6 +21,7 @@ data class DashboardState(
     val totalDeductions: Double = 0.0,
     val effectiveTaxRate: Double = 0.0,
     val monthlyBills: Double = 0.0,
+    val monthlyTakeHome: Double = 0.0,
     val billCount: Int = 0,
     /** Unpaid bills with next due date in the next 7 days (not overdue). */
     val billsComingDueCount: Int = 0,
@@ -92,8 +93,11 @@ class DashboardViewModel @Inject constructor(
                 val totalSaved = goals.sumOf { it.currentAmount }
                 val totalTarget = goals.sumOf { it.targetAmount }
                 val goalsProgress = if (totalTarget > 0) totalSaved / totalTarget * 100 else 0.0
-                val monthlyTakeHome = (calculation?.netPay ?: 0.0) *
-                        (salary?.payFrequency?.periodsPerYear ?: 26) / 12.0
+                val monthlyTakeHome = calculateMonthlyTakeHome(
+                    salary = salary,
+                    netPayPerCheck = calculation?.netPay ?: 0.0,
+                    monthAnchorMillis = currentMonthAnchor
+                )
                 val monthlyDisposable = monthlyTakeHome - monthlyBills
 
                 _state.value = DashboardState(
@@ -104,6 +108,7 @@ class DashboardViewModel @Inject constructor(
                             (calculation?.totalPostTaxDeductions ?: 0.0),
                     effectiveTaxRate = calculation?.effectiveTaxRate ?: 0.0,
                     monthlyBills = monthlyBills,
+                    monthlyTakeHome = monthlyTakeHome,
                     billCount = visibleBills.size,
                     billsComingDueCount = comingDueCount,
                     overdueBillCount = overdueCount,
@@ -154,6 +159,73 @@ class DashboardViewModel @Inject constructor(
             set(java.util.Calendar.MILLISECOND, 0)
         }
         return (cal.timeInMillis - now).coerceAtLeast(60_000L)
+    }
+
+    private fun calculateMonthlyTakeHome(
+        salary: SalaryConfig?,
+        netPayPerCheck: Double,
+        monthAnchorMillis: Long
+    ): Double {
+        if (salary == null || netPayPerCheck <= 0.0) return 0.0
+        val anchor = salary.firstPaydayOfYearMillis
+        if (anchor == null) {
+            return netPayPerCheck * (salary.payFrequency.periodsPerYear / 12.0)
+        }
+        val checksInMonth = paycheckCountInMonth(
+            firstPaydayOfYearMillis = anchor,
+            frequency = salary.payFrequency,
+            monthAnchorMillis = monthAnchorMillis
+        )
+        return netPayPerCheck * checksInMonth
+    }
+
+    private fun paycheckCountInMonth(
+        firstPaydayOfYearMillis: Long,
+        frequency: PayFrequency,
+        monthAnchorMillis: Long
+    ): Int {
+        if (frequency == PayFrequency.SEMIMONTHLY) return 2
+        if (frequency == PayFrequency.MONTHLY) return 1
+
+        val monthStart = java.util.Calendar.getInstance().apply {
+            timeInMillis = monthAnchorMillis
+            set(java.util.Calendar.DAY_OF_MONTH, 1)
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val monthEnd = java.util.Calendar.getInstance().apply {
+            timeInMillis = monthStart
+            add(java.util.Calendar.MONTH, 1)
+        }.timeInMillis - 1
+
+        val stepMillis = when (frequency) {
+            PayFrequency.WEEKLY -> 7L * 24L * 60L * 60L * 1000L
+            PayFrequency.BIWEEKLY -> 14L * 24L * 60L * 60L * 1000L
+            else -> return frequency.periodsPerYear / 12
+        }
+
+        var count = 0
+        var payday = startOfDay(firstPaydayOfYearMillis)
+        val maxIterations = 500
+        var i = 0
+        while (payday <= monthEnd && i < maxIterations) {
+            if (payday in monthStart..monthEnd) count++
+            payday += stepMillis
+            i++
+        }
+        return count
+    }
+
+    private fun startOfDay(millis: Long): Long {
+        val cal = java.util.Calendar.getInstance()
+        cal.timeInMillis = millis
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+        cal.set(java.util.Calendar.MINUTE, 0)
+        cal.set(java.util.Calendar.SECOND, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
     }
 }
 

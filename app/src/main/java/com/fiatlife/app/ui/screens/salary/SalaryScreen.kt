@@ -240,6 +240,28 @@ private fun androidx.compose.foundation.lazy.LazyListScope.paycheckContent(
                     }
                 }
             }
+            Spacer(modifier = Modifier.height(8.dp))
+            var firstPaydayOfYear by remember(state.config.firstPaydayOfYearMillis) {
+                mutableStateOf(state.config.firstPaydayOfYearMillis?.let { formatIsoDate(it) } ?: "")
+            }
+            OutlinedTextField(
+                value = firstPaydayOfYear,
+                onValueChange = {
+                    firstPaydayOfYear = it.take(10)
+                    viewModel.updateFirstPaydayOfYear(parseIsoDate(it))
+                },
+                label = { Text("First payday of year (YYYY-MM-DD)") },
+                placeholder = { Text("2026-01-09") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = MaterialTheme.shapes.medium,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
+            Text(
+                text = "Used by Dashboard to count actual paychecks per month (e.g., 3-paycheck months).",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
             if (calc.overtimePay > 0) {
                 Spacer(modifier = Modifier.height(8.dp))
@@ -1331,4 +1353,34 @@ private fun ComparisonRow(label: String, baseValue: Double, withOtValue: Double)
             textAlign = androidx.compose.ui.text.style.TextAlign.End
         )
     }
+}
+
+private fun parseIsoDate(input: String): Long? {
+    val value = input.trim()
+    if (value.isEmpty()) return null
+    val parts = value.split("-")
+    if (parts.size != 3) return null
+    val year = parts[0].toIntOrNull() ?: return null
+    val month = parts[1].toIntOrNull() ?: return null
+    val day = parts[2].toIntOrNull() ?: return null
+    val cal = java.util.Calendar.getInstance()
+    cal.set(java.util.Calendar.YEAR, year)
+    cal.set(java.util.Calendar.MONTH, (month - 1).coerceIn(0, 11))
+    cal.set(java.util.Calendar.DAY_OF_MONTH, day.coerceAtLeast(1))
+    cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+    cal.set(java.util.Calendar.MINUTE, 0)
+    cal.set(java.util.Calendar.SECOND, 0)
+    cal.set(java.util.Calendar.MILLISECOND, 0)
+    return cal.timeInMillis
+}
+
+private fun formatIsoDate(millis: Long): String {
+    val cal = java.util.Calendar.getInstance().apply { timeInMillis = millis }
+    return String.format(
+        java.util.Locale.US,
+        "%04d-%02d-%02d",
+        cal.get(java.util.Calendar.YEAR),
+        cal.get(java.util.Calendar.MONTH) + 1,
+        cal.get(java.util.Calendar.DAY_OF_MONTH)
+    )
 }

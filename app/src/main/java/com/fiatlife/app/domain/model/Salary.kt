@@ -19,6 +19,8 @@ data class SalaryConfig(
     val postTaxDeductions: List<Deduction> = emptyList(),
     val directDeposits: List<DirectDeposit> = emptyList(),
     val taxOverrides: TaxOverrides = TaxOverrides(),
+    /** Optional anchor for exact paycheck counting (first paycheck date in the year). */
+    val firstPaydayOfYearMillis: Long? = null,
     val updatedAt: Long = 0L
 )
 

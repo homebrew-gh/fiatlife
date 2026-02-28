@@ -83,6 +83,7 @@ class MainAppViewModel @Inject constructor(
                     launch { runCatching { billerRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Biller sync failed: ${it.message}") } }
                 )
                 jobs.joinAll()
+                runCatching { billRepository.backfillLegacyCreditLoanPayments() }
             } finally {
                 _isManualSyncing.update { false }
             }

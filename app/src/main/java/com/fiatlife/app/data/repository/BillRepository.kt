@@ -8,7 +8,9 @@ import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.nostr.NostrEvent
 import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.domain.model.BillCategory
+import com.fiatlife.app.domain.model.BillPayment
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -163,8 +165,50 @@ class BillRepository @Inject constructor(
                 }
                 Log.d(TAG, "Synced $count bill(s) from relay")
             }
+            backfillLegacyCreditLoanPayments()
         } catch (e: Exception) {
             Log.e(TAG, "Sync failed: ${e.message}")
         }
+    }
+
+    /**
+     * One-time compatibility backfill for legacy credit/loan bills that have
+     * `isPaid + lastPaidDate` but no matching paymentHistory row.
+     */
+    suspend fun backfillLegacyCreditLoanPayments(): Int {
+        val rows = billDao.getAll().first()
+        if (rows.isEmpty()) return 0
+        var updatedCount = 0
+        val now = System.currentTimeMillis()
+        rows.forEach { entity ->
+            val bill = runCatching { json.decodeFromString<Bill>(entity.jsonData) }.getOrNull() ?: return@forEach
+            if (!bill.isCreditOrLoan() || !bill.isPaid || bill.lastPaidDate == null) return@forEach
+            val paidAt = bill.lastPaidDate
+            val hasMatchingPayment = bill.paymentHistory.any { payment ->
+                kotlin.math.abs(payment.date - paidAt) <= 60_000L
+            }
+            if (hasMatchingPayment) return@forEach
+
+            val inferredAmount = bill.amount.takeIf { it > 0.0 } ?: bill.effectiveAmountDue()
+            val migrated = bill.copy(
+                paymentHistory = bill.paymentHistory + BillPayment(date = paidAt, amount = inferredAmount),
+                updatedAt = now
+            )
+            val migratedJson = json.encodeToString(Bill.serializer(), migrated)
+            billDao.upsert(
+                BillEntity(
+                    id = migrated.id,
+                    jsonData = migratedJson,
+                    category = migrated.effectiveSubcategory.name,
+                    linkedBillerId = migrated.linkedBillerId,
+                    updatedAt = migrated.updatedAt
+                )
+            )
+            updatedCount++
+        }
+        if (updatedCount > 0) {
+            Log.d(TAG, "Backfilled $updatedCount legacy credit/loan payment row(s)")
+        }
+        return updatedCount
     }
 }

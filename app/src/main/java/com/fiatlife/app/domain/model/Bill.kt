@@ -667,11 +667,17 @@ data class Bill(
 
     private fun hasQualifyingPaymentForCycle(cycleDue: Long): Boolean {
         val previousCycleDue = shiftCreditLoanCycle(cycleDue, -1)
-        return hasQualifyingPaymentBetween(
+        val hasPaymentHistoryMatch = hasQualifyingPaymentBetween(
             startExclusive = previousCycleDue,
             endInclusive = cycleDue,
             minimumAmount = qualifyingPaymentMinimum()
         )
+        if (hasPaymentHistoryMatch) return true
+
+        // Backward compatibility: older rows may have only isPaid/lastPaidDate set.
+        val legacyPaidAt = lastPaidDate ?: return false
+        if (!isPaid) return false
+        return legacyPaidAt > previousCycleDue && legacyPaidAt <= endOfDayMillis(cycleDue)
     }
 
     private fun hasQualifyingPaymentBetween(

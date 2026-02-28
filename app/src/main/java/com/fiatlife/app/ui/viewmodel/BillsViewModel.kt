@@ -83,6 +83,9 @@ class BillsViewModel @Inject constructor(
     private val monthAnchor = MutableStateFlow(System.currentTimeMillis())
 
     init {
+        viewModelScope.launch {
+            runCatching { repository.backfillLegacyCreditLoanPayments() }
+        }
         startMonthAnchorUpdates()
         viewModelScope.launch {
             val baseFlow = combine(

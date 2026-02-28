@@ -93,6 +93,10 @@ class SalaryViewModel @Inject constructor(
         updateConfig { it.copy(payFrequency = frequency) }
     }
 
+    fun updateFirstPaydayOfYear(firstPaydayMillis: Long?) {
+        updateConfig { it.copy(firstPaydayOfYearMillis = firstPaydayMillis) }
+    }
+
     fun updateFilingStatus(status: FilingStatus) {
         updateConfig { it.copy(filingStatus = status) }
     }

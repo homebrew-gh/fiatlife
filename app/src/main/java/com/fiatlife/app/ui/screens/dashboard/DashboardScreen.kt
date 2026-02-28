@@ -83,9 +83,9 @@ fun DashboardScreen(
                         value = state.monthlyBills.formatCurrency()
                     )
                     LabeledValue(
-                        label = "Disposable",
-                        value = state.monthlyDisposable.formatCurrency(),
-                        valueColor = if (state.monthlyDisposable >= 0) ProfitGreen else LossRed
+                        label = "Monthly Take Home",
+                        value = state.monthlyTakeHome.formatCurrency(),
+                        valueColor = ProfitGreen
                     )
                 }
                 if (state.billCategoryTotals.isNotEmpty()) {
