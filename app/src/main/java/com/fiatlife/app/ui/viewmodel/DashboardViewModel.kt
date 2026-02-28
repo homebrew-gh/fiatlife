@@ -99,19 +99,21 @@ class DashboardViewModel @Inject constructor(
                 val totalSaved = goals.sumOf { it.currentAmount }
                 val totalTarget = goals.sumOf { it.targetAmount }
                 val goalsProgress = if (totalTarget > 0) totalSaved / totalTarget * 100 else 0.0
-                val monthlyTakeHome = calculateMonthlyTakeHome(
-                    salary = salary,
-                    netPayPerCheck = calculation?.netPay ?: 0.0,
-                    monthAnchorMillis = currentMonthAnchor
-                )
+                val monthlyMultiplier = calculateMonthlyPaycheckMultiplier(salary, currentMonthAnchor)
+                val monthlyTakeHome = (calculation?.netPay ?: 0.0) * monthlyMultiplier
+                val monthlyGross = (calculation?.grossPay ?: 0.0) * monthlyMultiplier
+                val monthlyTaxes = (calculation?.totalTaxes ?: 0.0) * monthlyMultiplier
+                val monthlyDeductions = (
+                    (calculation?.totalPreTaxDeductions ?: 0.0) +
+                        (calculation?.totalPostTaxDeductions ?: 0.0)
+                    ) * monthlyMultiplier
                 val monthlyDisposable = monthlyTakeHome - monthlyBills
 
                 _state.value = DashboardState(
-                    takeHomePay = calculation?.netPay ?: 0.0,
-                    grossPay = calculation?.grossPay ?: 0.0,
-                    totalTaxes = calculation?.totalTaxes ?: 0.0,
-                    totalDeductions = (calculation?.totalPreTaxDeductions ?: 0.0) +
-                            (calculation?.totalPostTaxDeductions ?: 0.0),
+                    takeHomePay = monthlyTakeHome,
+                    grossPay = monthlyGross,
+                    totalTaxes = monthlyTaxes,
+                    totalDeductions = monthlyDeductions,
                     effectiveTaxRate = calculation?.effectiveTaxRate ?: 0.0,
                     monthlyBills = monthlyBills,
                     monthlyTakeHome = monthlyTakeHome,
@@ -167,22 +169,20 @@ class DashboardViewModel @Inject constructor(
         return (cal.timeInMillis - now).coerceAtLeast(60_000L)
     }
 
-    private fun calculateMonthlyTakeHome(
+    private fun calculateMonthlyPaycheckMultiplier(
         salary: SalaryConfig?,
-        netPayPerCheck: Double,
         monthAnchorMillis: Long
     ): Double {
-        if (salary == null || netPayPerCheck <= 0.0) return 0.0
+        if (salary == null) return 0.0
         val anchor = salary.firstPaydayOfYearMillis
         if (anchor == null) {
-            return netPayPerCheck * (salary.payFrequency.periodsPerYear / 12.0)
+            return salary.payFrequency.periodsPerYear / 12.0
         }
-        val checksInMonth = paycheckCountInMonth(
+        return paycheckCountInMonth(
             firstPaydayOfYearMillis = anchor,
             frequency = salary.payFrequency,
             monthAnchorMillis = monthAnchorMillis
-        )
-        return netPayPerCheck * checksInMonth
+        ).toDouble()
     }
 
     private fun paycheckCountInMonth(
@@ -221,7 +221,7 @@ class DashboardViewModel @Inject constructor(
             payday += stepMillis
             i++
         }
-        return count
+        return count.coerceAtLeast(1)
     }
 
     private fun startOfDay(millis: Long): Long {

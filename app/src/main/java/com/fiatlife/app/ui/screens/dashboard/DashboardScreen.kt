@@ -53,14 +53,14 @@ fun DashboardScreen(
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 QuickStatCard(
-                    title = "Taxes",
+                    title = "Monthly Taxes",
                     value = state.totalTaxes.formatCurrency(),
                     icon = Icons.Filled.AccountBalance,
                     color = LossRed,
                     modifier = Modifier.weight(1f)
                 )
                 QuickStatCard(
-                    title = "Deductions",
+                    title = "Monthly Deductions",
                     value = state.totalDeductions.formatCurrency(),
                     icon = Icons.Filled.RemoveCircle,
                     color = WarningAmber,
@@ -83,9 +83,9 @@ fun DashboardScreen(
                         value = state.monthlyBills.formatCurrency()
                     )
                     LabeledValue(
-                        label = "Monthly Take Home",
-                        value = state.monthlyTakeHome.formatCurrency(),
-                        valueColor = ProfitGreen
+                        label = "After Bills",
+                        value = state.monthlyDisposable.formatCurrency(),
+                        valueColor = if (state.monthlyDisposable >= 0) ProfitGreen else LossRed
                     )
                 }
                 if (state.billCategoryTotals.isNotEmpty()) {
@@ -349,7 +349,7 @@ private fun TakeHomeCard(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = "Take Home Pay",
+                text = "Take Home This Month",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
@@ -361,7 +361,7 @@ private fun TakeHomeCard(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "per paycheck",
+                text = "actual monthly combined total",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
             )
@@ -372,7 +372,7 @@ private fun TakeHomeCard(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "Gross",
+                        text = "Monthly Gross",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                     )
