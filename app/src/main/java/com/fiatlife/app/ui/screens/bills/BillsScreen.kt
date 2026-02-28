@@ -677,8 +677,9 @@ private fun BillCard(
 ) {
     val bill = item.bill
     val isPaidForCycle = bill.isPaidForCurrentCycle()
+    val showPastDue = bill.isPastDue() && !isPaidForCycle
     val now = System.currentTimeMillis()
-    val dueMillis = if (bill.isPastDue()) bill.lastDueDateMillis() else bill.nextDueDateMillis()
+    val dueMillis = if (showPastDue) bill.lastDueDateMillis() else bill.nextDueDateMillis()
     val dueDateText = dueMillis?.let { SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(it)) }
     val daysUntilDue = dueMillis?.let { millis ->
         val nowCal = Calendar.getInstance().apply {
@@ -699,7 +700,7 @@ private fun BillCard(
     val countdownLabel = when {
         isPaidForCycle -> "Paid"
         dueMillis == null -> null
-        bill.isPastDue() -> {
+        showPastDue -> {
             val daysOverdue = (((now - dueMillis) / 86_400_000L).toInt() + 1).coerceAtLeast(1)
             "$daysOverdue d overdue"
         }
@@ -775,13 +776,13 @@ private fun BillCard(
                         if (countdownLabel != null) {
                             Surface(
                                 shape = MaterialTheme.shapes.small,
-                                color = if (bill.isPastDue()) MaterialTheme.colorScheme.errorContainer
+                                color = if (showPastDue) MaterialTheme.colorScheme.errorContainer
                                 else MaterialTheme.colorScheme.primaryContainer
                             ) {
                                 Text(
                                     text = countdownLabel,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (bill.isPastDue()) MaterialTheme.colorScheme.onErrorContainer
+                                    color = if (showPastDue) MaterialTheme.colorScheme.onErrorContainer
                                     else MaterialTheme.colorScheme.onPrimaryContainer,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
@@ -818,7 +819,7 @@ private fun BillCard(
                         Text(
                             text = dueDateText,
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (bill.isPastDue()) MaterialTheme.colorScheme.error
+                            color = if (showPastDue) MaterialTheme.colorScheme.error
                             else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
