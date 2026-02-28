@@ -125,6 +125,8 @@ class DashboardViewModel @Inject constructor(
                     topGoals = goals.sortedByDescending { it.progressPercent }.take(3),
                     upcomingBills = visibleBills
                         .filter { bill ->
+                            bill.effectiveGeneralCategory != BillGeneralCategory.CREDIT_LOANS &&
+                            !bill.isCreditOrLoan() &&
                             !bill.isPaidForCurrentCycle() &&
                                 (bill.isPastDue() || bill.nextDueDateMillis() != null)
                         }

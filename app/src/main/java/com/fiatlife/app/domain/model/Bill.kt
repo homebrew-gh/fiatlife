@@ -526,7 +526,14 @@ data class Bill(
             val now = System.currentTimeMillis()
             val currentDue = dueDateForMonth(now)
             if (now <= endOfDayMillis(currentDue)) return false
-            return !hasQualifyingPaymentForCycle(currentDue)
+            if (hasQualifyingPaymentForCycle(currentDue)) return false
+            // Late payment after due date should clear overdue until next due cycle.
+            val paidAfterDue = paymentHistory.any { payment ->
+                payment.amount > 0.0 &&
+                    payment.date > endOfDayMillis(currentDue) &&
+                    payment.date <= now
+            } || (lastPaidDate?.let { it > endOfDayMillis(currentDue) && it <= now } == true)
+            return !paidAfterDue
         }
         if (isPaidForCurrentCycle()) return false
         if (!isRecurring) {
