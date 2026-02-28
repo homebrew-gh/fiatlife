@@ -8,6 +8,7 @@ import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.nostr.NostrEvent
 import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.domain.model.BillFrequency
+import com.fiatlife.app.domain.model.BillGeneralCategory
 import com.fiatlife.app.domain.model.BillSubcategory
 import com.fiatlife.app.domain.model.CreditAccount
 import com.fiatlife.app.domain.model.CreditAccountType
@@ -85,59 +86,62 @@ class CreditAccountRepository @Inject constructor(
         return ensureAnnualFeeBill(primaryUpdated)
     }
 
-    /** When balance > 0, ensure a linked monthly payment bill exists. When balance == 0, keep linked bill with amount 0. */
+    /** When balance > 0, ensure a linked monthly payment bill exists. When balance == 0, remove linked bill(s). */
     private suspend fun ensurePrimaryBillForAccount(account: CreditAccount): CreditAccount {
         val subcategory = when (account.type) {
             CreditAccountType.CREDIT_CARD -> BillSubcategory.CREDIT_CARD
             CreditAccountType.STUDENT_LOAN -> BillSubcategory.STUDENT_LOAN
             else -> BillSubcategory.OTHER_LOAN
         }
+        val allBills = billRepository.getAllBills().first()
         if (account.currentBalance > 0) {
-            val existingByLinkedAccount = billRepository.getAllBills().first()
-                .firstOrNull { it.linkedCreditAccountId == account.id }
+            val existingByLinkedAccount = allBills.firstOrNull { it.linkedCreditAccountId == account.id }
+            val existingLegacyByName = allBills.firstOrNull { bill ->
+                bill.linkedCreditAccountId == null &&
+                    bill.effectiveGeneralCategory == BillGeneralCategory.CREDIT_LOANS &&
+                    bill.name.equals(account.name, ignoreCase = true) &&
+                    bill.effectiveSubcategory == subcategory
+            }
             val billId = account.linkedBillId
             if (billId != null) {
                 val existing = billRepository.getBillById(billId).first()
                 if (existing != null) {
-                    billRepository.saveBill(
-                        existing.copy(
-                            name = account.name,
-                            amount = account.effectiveMonthlyPayment(),
-                            dueDay = account.dueDay,
-                            subcategory = subcategory,
-                            updatedAt = System.currentTimeMillis()
-                        )
-                    )
+                    // Existing linked bill is already present; do not mutate it on balance updates.
                     return account
                 }
             }
-            if (existingByLinkedAccount != null) {
-                billRepository.saveBill(
-                    existingByLinkedAccount.copy(
-                        name = account.name,
-                        amount = account.effectiveMonthlyPayment(),
-                        dueDay = account.dueDay,
-                        subcategory = subcategory,
-                        updatedAt = System.currentTimeMillis()
+            val existingCandidate = existingByLinkedAccount ?: existingLegacyByName
+            if (existingCandidate != null) {
+                // Reuse found bill; only enforce linkage if missing.
+                if (existingCandidate.linkedCreditAccountId != account.id) {
+                    billRepository.saveBill(
+                        existingCandidate.copy(
+                            linkedCreditAccountId = account.id,
+                            updatedAt = System.currentTimeMillis()
+                        )
                     )
-                )
-                if (account.linkedBillId != existingByLinkedAccount.id) {
-                    return saveCreditAccount(account.copy(linkedBillId = existingByLinkedAccount.id))
+                }
+                if (account.linkedBillId != existingCandidate.id) {
+                    val relinked = account.copy(linkedBillId = existingCandidate.id)
+                    persistAccountWithoutEnsure(relinked)
+                    return relinked
                 }
                 return account
             }
             return createAndLinkBill(account, subcategory)
         }
-        val billId = account.linkedBillId
-        if (billId != null) {
-            billRepository.getBillById(billId).first()?.let { existing ->
-                billRepository.saveBill(
-                    existing.copy(
-                        amount = 0.0,
-                        updatedAt = System.currentTimeMillis()
-                    )
-                )
-            }
+        // No balance -> no bill needed.
+        val linkedIdsToDelete = buildSet {
+            account.linkedBillId?.let { add(it) }
+            allBills.filter { it.linkedCreditAccountId == account.id }.forEach { add(it.id) }
+        }
+        linkedIdsToDelete.forEach { id ->
+            billRepository.getBillById(id).first()?.let { existing -> billRepository.deleteBill(existing) }
+        }
+        if (account.linkedBillId != null) {
+            val cleared = account.copy(linkedBillId = null)
+            persistAccountWithoutEnsure(cleared)
+            return cleared
         }
         return account
     }
@@ -233,7 +237,13 @@ class CreditAccountRepository @Inject constructor(
             amount = account.effectiveMonthlyPayment(),
             subcategory = billSubcategory,
             frequency = BillFrequency.MONTHLY,
+            isRecurring = true,
             dueDay = account.dueDay,
+            renewalDateMillis = null,
+            initialPurchaseDateMillis = null,
+            recurrenceUnit = null,
+            recurrenceIntervalCount = 1,
+            recurrenceTimezone = null,
             linkedCreditAccountId = account.id,
             createdAt = System.currentTimeMillis(),
             updatedAt = System.currentTimeMillis()

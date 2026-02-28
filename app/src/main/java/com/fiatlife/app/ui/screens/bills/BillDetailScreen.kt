@@ -349,7 +349,12 @@ fun BillDetailScreen(
                             )
                         }
                     }
-                    if (!b.isPaidForCurrentCycle()) {
+                    val canRecordAnotherPayment = if (b.isCreditOrLoan()) {
+                        (linkedCreditAccount?.currentBalance ?: b.creditCardDetails?.currentBalance ?: 0.0) > 0.0
+                    } else {
+                        !b.isPaidForCurrentCycle()
+                    }
+                    if (canRecordAnotherPayment) {
                         Spacer(modifier = Modifier.height(12.dp))
                         Button(
                             onClick = {
@@ -361,7 +366,7 @@ fun BillDetailScreen(
                         ) {
                             Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Mark as paid")
+                            Text(if (b.isCreditOrLoan()) "Add payment" else "Mark as paid")
                         }
                     }
                 }
@@ -529,7 +534,7 @@ fun BillDetailScreen(
 
     if (showCreditLoanPaymentDialog && bill != null) {
         val b = bill!!
-        val currentBalance = b.creditCardDetails?.currentBalance ?: linkedCreditAccount?.currentBalance ?: 0.0
+        val currentBalance = linkedCreditAccount?.currentBalance ?: b.creditCardDetails?.currentBalance ?: 0.0
         var amountStr by remember(b) { mutableStateOf("%.2f".format(b.effectiveAmountDue())) }
         var newBalanceStr by remember { mutableStateOf("") }
         val amount = amountStr.toDoubleOrNull() ?: 0.0

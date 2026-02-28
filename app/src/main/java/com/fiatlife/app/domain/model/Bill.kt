@@ -397,8 +397,8 @@ data class Bill(
         if (!isRecurring) return oneTimeDueDateMillis()
         if (isCreditOrLoan()) {
             val now = System.currentTimeMillis()
-            val upcomingDue = creditLoanUpcomingDue(now) ?: return null
-            return if (hasQualifyingPaymentForCycle(upcomingDue)) shiftCreditLoanCycle(upcomingDue, 1) else upcomingDue
+            // Revolving debt: date only advances when the prior due date has passed.
+            return creditLoanUpcomingDue(now)
         }
         val explicitRenewal = renewalDateMillis ?: return nextDueFromFrequency()
         run {
@@ -704,6 +704,10 @@ data class Bill(
     }
 
     private fun qualifyingPaymentMinimum(): Double {
+        if (isCreditOrLoan()) {
+            // For revolving debt status, any payment in-cycle counts as activity.
+            return 0.01
+        }
         val explicit = amount.coerceAtLeast(0.0)
         if (explicit > 0.0) return explicit
         return effectiveAmountDue().coerceAtLeast(0.0)

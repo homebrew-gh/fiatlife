@@ -339,6 +339,7 @@ fun BillsScreen(
                         item = item,
                         linkedAccountName = linkedAccount?.name,
                         linkedAccountId = linkedId,
+                        linkedAccountBalance = linkedAccount?.currentBalance,
                         onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
                         onMarkPaid = { viewModel.recordPayment(item) },
                         onCreditClick = if (linkedId != null) {
@@ -409,6 +410,7 @@ fun BillsScreen(
                                         item = item,
                                         linkedAccountName = linkedAccount?.name,
                                         linkedAccountId = linkedId,
+                                        linkedAccountBalance = linkedAccount?.currentBalance,
                                         onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
                                         onMarkPaid = { viewModel.recordPayment(item) },
                                         onCreditClick = if (linkedId != null) {
@@ -426,6 +428,7 @@ fun BillsScreen(
                                 item = item,
                                 linkedAccountName = linkedAccount?.name,
                                 linkedAccountId = linkedId,
+                                linkedAccountBalance = linkedAccount?.currentBalance,
                                 onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
                                 onMarkPaid = { viewModel.recordPayment(item) },
                                 onCreditClick = if (linkedId != null) {
@@ -477,8 +480,8 @@ fun BillsScreen(
     state.showCreditLoanPaymentDialog?.let { item ->
         CreditLoanPaymentDialog(
             item = item,
-            currentBalance = item.bill.creditCardDetails?.currentBalance
-                ?: state.creditAccounts.find { it.id == item.bill.linkedCreditAccountId }?.currentBalance ?: 0.0,
+            currentBalance = state.creditAccounts.find { it.id == item.bill.linkedCreditAccountId }?.currentBalance
+                ?: item.bill.creditCardDetails?.currentBalance ?: 0.0,
             defaultAmount = item.bill.effectiveAmountDue(),
             onDismiss = { viewModel.dismissCreditLoanPaymentDialog() },
             onConfirm = { amount, newBalance ->
@@ -671,6 +674,7 @@ private fun BillCard(
     item: BillWithSource,
     linkedAccountName: String? = null,
     linkedAccountId: String? = null,
+    linkedAccountBalance: Double? = null,
     onClick: () -> Unit,
     onMarkPaid: () -> Unit,
     onCreditClick: (() -> Unit)? = null
@@ -678,6 +682,8 @@ private fun BillCard(
     val bill = item.bill
     val isPaidForCycle = bill.isPaidForCurrentCycle()
     val showPastDue = bill.isPastDue() && !isPaidForCycle
+    val effectiveBalance = linkedAccountBalance ?: bill.creditCardDetails?.currentBalance ?: 0.0
+    val showPayButton = if (bill.isCreditOrLoan()) effectiveBalance > 0.0 else !isPaidForCycle
     val now = System.currentTimeMillis()
     val dueMillis = if (bill.isCreditOrLoan()) {
         bill.nextDueDateMillis()
@@ -727,7 +733,7 @@ private fun BillCard(
                 .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (!isPaidForCycle) {
+            if (showPayButton) {
                 Button(
                     onClick = { onMarkPaid() },
                     modifier = Modifier.height(32.dp),
