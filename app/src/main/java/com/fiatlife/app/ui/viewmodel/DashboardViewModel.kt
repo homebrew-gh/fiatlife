@@ -85,6 +85,10 @@ class DashboardViewModel @Inject constructor(
                     }
                 val now = System.currentTimeMillis()
                 val sevenDaysMs = 7L * 24 * 60 * 60 * 1000
+                val threeMonthsFromNow = java.util.Calendar.getInstance().apply {
+                    timeInMillis = now
+                    add(java.util.Calendar.MONTH, 3)
+                }.timeInMillis
                 val overdueCount = visibleBills.count { !it.isPaidForCurrentCycle() && it.isPastDue() }
                 val comingDueCount = visibleBills.count { bill ->
                     !bill.isPaidForCurrentCycle() && !bill.isPastDue() && bill.nextDueDateMillis() != null &&
@@ -128,7 +132,8 @@ class DashboardViewModel @Inject constructor(
                             bill.effectiveGeneralCategory != BillGeneralCategory.CREDIT_LOANS &&
                             !bill.isCreditOrLoan() &&
                             !bill.isPaidForCurrentCycle() &&
-                                (bill.isPastDue() || bill.nextDueDateMillis() != null)
+                                (bill.isPastDue() ||
+                                    (bill.nextDueDateMillis() != null && bill.nextDueDateMillis()!! <= threeMonthsFromNow))
                         }
                         .sortedWith(
                             compareBy<Bill> { !it.isPastDue() }

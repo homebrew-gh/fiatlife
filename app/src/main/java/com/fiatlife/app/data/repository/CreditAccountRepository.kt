@@ -7,6 +7,7 @@ import com.fiatlife.app.data.local.entity.CreditAccountEntity
 import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.nostr.NostrEvent
 import com.fiatlife.app.domain.model.Bill
+import com.fiatlife.app.domain.model.BillPayment
 import com.fiatlife.app.domain.model.BillFrequency
 import com.fiatlife.app.domain.model.BillGeneralCategory
 import com.fiatlife.app.domain.model.BillSubcategory
@@ -51,6 +52,11 @@ class CreditAccountRepository @Inject constructor(
     }
 
     suspend fun saveCreditAccount(account: CreditAccount): CreditAccount {
+        val previous = account.id.takeIf { it.isNotBlank() }?.let { id ->
+            creditAccountDao.getById(id)?.let { entity ->
+                runCatching { json.decodeFromString<CreditAccount>(entity.jsonData) }.getOrNull()
+            }
+        }
         val withId = if (account.id.isEmpty()) {
             account.copy(
                 id = UUID.randomUUID().toString(),
@@ -77,7 +83,9 @@ class CreditAccountRepository @Inject constructor(
                 Log.e(TAG, "Failed to publish credit account: ${e.message}")
             }
         }
-        return ensureBillForAccount(withId)
+        val ensured = ensureBillForAccount(withId)
+        inferCreditPaymentFromBalanceDrop(previous, ensured)
+        return ensured
     }
 
     /** Ensure account-linked bills are in sync (monthly payment + optional annual fee bill). */
@@ -420,5 +428,27 @@ class CreditAccountRepository @Inject constructor(
         val cal = java.util.Calendar.getInstance()
         cal.timeInMillis = millis
         return cal.get(java.util.Calendar.DAY_OF_MONTH).coerceIn(1, 31)
+    }
+
+    private suspend fun inferCreditPaymentFromBalanceDrop(previous: CreditAccount?, current: CreditAccount) {
+        if (previous == null) return
+        if (!current.type.isRevolving && !current.type.isAmortizing) return
+        val delta = previous.currentBalance - current.currentBalance
+        if (delta <= 0.0) return
+        val linkedBillId = current.linkedBillId ?: return
+        val bill = billRepository.getBillById(linkedBillId).first() ?: return
+        val now = System.currentTimeMillis()
+        val payment = BillPayment(date = now, amount = delta)
+        val hasNearby = bill.paymentHistory.any { existing ->
+            kotlin.math.abs(existing.date - now) <= 90_000L && kotlin.math.abs(existing.amount - delta) <= 0.01
+        }
+        if (hasNearby) return
+        billRepository.saveBill(
+            bill.copy(
+                paymentHistory = bill.paymentHistory + payment,
+                isPaid = true,
+                lastPaidDate = now
+            )
+        )
     }
 }
