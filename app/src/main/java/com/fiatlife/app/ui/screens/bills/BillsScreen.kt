@@ -679,7 +679,12 @@ private fun BillCard(
     val isPaidForCycle = bill.isPaidForCurrentCycle()
     val showPastDue = bill.isPastDue() && !isPaidForCycle
     val now = System.currentTimeMillis()
-    val dueMillis = if (showPastDue) bill.lastDueDateMillis() else bill.nextDueDateMillis()
+    val dueMillis = if (bill.isCreditOrLoan()) {
+        bill.nextDueDateMillis()
+    } else {
+        if (showPastDue) bill.lastDueDateMillis() else bill.nextDueDateMillis()
+    }
+    val overdueReferenceMillis = bill.lastDueDateMillis()
     val dueDateText = dueMillis?.let { SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(it)) }
     val daysUntilDue = dueMillis?.let { millis ->
         val nowCal = Calendar.getInstance().apply {
@@ -701,7 +706,8 @@ private fun BillCard(
         isPaidForCycle -> "Paid"
         dueMillis == null -> null
         showPastDue -> {
-            val daysOverdue = (((now - dueMillis) / 86_400_000L).toInt() + 1).coerceAtLeast(1)
+            val overdueFrom = overdueReferenceMillis ?: dueMillis
+            val daysOverdue = (((now - overdueFrom) / 86_400_000L).toInt() + 1).coerceAtLeast(1)
             "$daysOverdue d overdue"
         }
         daysUntilDue == 0 -> "Due today"
