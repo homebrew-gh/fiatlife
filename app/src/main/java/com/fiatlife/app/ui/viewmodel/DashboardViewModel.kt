@@ -131,15 +131,17 @@ class DashboardViewModel @Inject constructor(
                     topGoals = goals.sortedByDescending { it.progressPercent }.take(3),
                     upcomingBills = visibleBills
                         .filter { bill ->
-                            !bill.isPaidForCurrentCycle() && (
-                                bill.isPastDue() ||
-                                (bill.nextDueDateMillis() != null && bill.nextDueDateMillis()!! <= now + sevenDaysMs)
-                            )
+                            !bill.isPaidForCurrentCycle() &&
+                                (bill.isPastDue() || bill.nextDueDateMillis() != null)
                         }
-                        .sortedBy { bill ->
-                            if (bill.isPastDue()) bill.lastDueDateMillis() ?: 0L
-                            else bill.nextDueDateMillis() ?: Long.MAX_VALUE
-                        }
+                        .sortedWith(
+                            compareBy<Bill> { !it.isPastDue() }
+                                .thenBy { bill ->
+                                    if (bill.isPastDue()) bill.lastDueDateMillis() ?: 0L
+                                    else bill.nextDueDateMillis() ?: Long.MAX_VALUE
+                                }
+                        )
+                        .take(5)
                 )
             }
         }

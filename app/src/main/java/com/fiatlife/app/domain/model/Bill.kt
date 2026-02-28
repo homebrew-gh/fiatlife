@@ -393,8 +393,9 @@ data class Bill(
     fun nextDueDateMillis(): Long? {
         if (!isRecurring) return oneTimeDueDateMillis()
         if (isCreditOrLoan()) {
-            val cycleDue = creditLoanCurrentCycleDue(System.currentTimeMillis()) ?: return null
-            return if (hasQualifyingPaymentForCycle(cycleDue)) shiftCreditLoanCycle(cycleDue, 1) else cycleDue
+            val now = System.currentTimeMillis()
+            val upcomingDue = creditLoanUpcomingDue(now) ?: return null
+            return if (hasQualifyingPaymentForCycle(upcomingDue)) shiftCreditLoanCycle(upcomingDue, 1) else upcomingDue
         }
         val explicitRenewal = renewalDateMillis ?: return nextDueFromFrequency()
         run {
@@ -477,12 +478,8 @@ data class Bill(
     fun lastDueDateMillis(): Long? {
         if (isCreditOrLoan()) {
             val now = System.currentTimeMillis()
-            val cycleDue = creditLoanCurrentCycleDue(now) ?: return null
-            // If this cycle is unpaid and past due, it is the active overdue cycle.
-            if (now > endOfDayMillis(cycleDue) && !hasQualifyingPaymentForCycle(cycleDue)) {
-                return cycleDue
-            }
-            val previous = shiftCreditLoanCycle(cycleDue, -1)
+            val upcomingDue = creditLoanUpcomingDue(now) ?: return null
+            val previous = shiftCreditLoanCycle(upcomingDue, -1)
             return if (previous <= now) previous else null
         }
         if (!isRecurring) {
@@ -521,9 +518,10 @@ data class Bill(
         if (isCancelled) return false
         if (isCreditOrLoan()) {
             val now = System.currentTimeMillis()
-            val cycleDue = creditLoanCurrentCycleDue(now) ?: return false
-            if (hasQualifyingPaymentForCycle(cycleDue)) return false
-            return now > endOfDayMillis(cycleDue)
+            val upcomingDue = creditLoanUpcomingDue(now) ?: return false
+            val lastDue = shiftCreditLoanCycle(upcomingDue, -1)
+            if (hasQualifyingPaymentForCycle(lastDue)) return false
+            return now > endOfDayMillis(lastDue)
         }
         if (isPaidForCurrentCycle()) return false
         if (!isRecurring) {
@@ -553,7 +551,7 @@ data class Bill(
     fun isPaidForCurrentCycle(now: Long = System.currentTimeMillis()): Boolean {
         if (isCancelled) return true
         if (isCreditOrLoan()) {
-            val cycleDue = creditLoanCurrentCycleDue(now) ?: return false
+            val cycleDue = creditLoanDueForStatus(now) ?: return false
             return hasQualifyingPaymentForCycle(cycleDue)
         }
         if (!isRecurring) return isPaid
@@ -657,22 +655,19 @@ data class Bill(
         return cal.timeInMillis - 1
     }
 
-    /**
-     * For credit/loan bills, keep the bill "paid" through the official due date
-     * when a qualifying payment is recorded in that cycle. After due day, it
-     * advances to the next cycle only if current cycle was paid.
-     */
-    private fun creditLoanCurrentCycleDue(now: Long): Long? {
+    private fun creditLoanUpcomingDue(now: Long): Long? {
         val currentMonthDue = dueDateForMonth(now)
-        val currentMonthDueEnd = endOfDayMillis(currentMonthDue)
-        if (now <= currentMonthDueEnd) return currentMonthDue
-        val priorCycleDue = shiftCreditLoanCycle(currentMonthDue, -1)
-        val paidCurrentCycle = hasQualifyingPaymentBetween(
-            startExclusive = priorCycleDue,
-            endInclusive = currentMonthDue,
-            minimumAmount = qualifyingPaymentMinimum()
-        )
-        return if (paidCurrentCycle) shiftCreditLoanCycle(currentMonthDue, 1) else currentMonthDue
+        return if (currentMonthDue > now) currentMonthDue else shiftCreditLoanCycle(currentMonthDue, 1)
+    }
+
+    /**
+     * Payment status cycle:
+     * - before/equal due day: evaluate current month due cycle
+     * - after due day: evaluate next month due cycle
+     */
+    private fun creditLoanDueForStatus(now: Long): Long? {
+        val currentMonthDue = dueDateForMonth(now)
+        return if (now <= endOfDayMillis(currentMonthDue)) currentMonthDue else shiftCreditLoanCycle(currentMonthDue, 1)
     }
 
     private fun hasQualifyingPaymentForCycle(cycleDue: Long): Boolean {
