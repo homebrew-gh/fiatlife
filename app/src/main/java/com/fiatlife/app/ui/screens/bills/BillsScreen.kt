@@ -681,15 +681,17 @@ private fun BillCard(
 ) {
     val bill = item.bill
     val isPaidForCycle = bill.isPaidForCurrentCycle()
-    val showPastDue = bill.isPastDue() && !isPaidForCycle
     val effectiveBalance = linkedAccountBalance ?: bill.creditCardDetails?.currentBalance ?: 0.0
     val showPayButton = if (bill.isCreditOrLoan()) effectiveBalance > 0.0 else !isPaidForCycle
     val now = System.currentTimeMillis()
     val dueMillis = if (bill.isCreditOrLoan()) {
         bill.nextDueDateMillis()
     } else {
-        if (showPastDue) bill.lastDueDateMillis() else bill.nextDueDateMillis()
+        if (bill.isPastDue() && !isPaidForCycle) bill.lastDueDateMillis() else bill.nextDueDateMillis()
     }
+    val showPastDue = bill.isPastDue() &&
+        !isPaidForCycle &&
+        (!bill.isCreditOrLoan() || (dueMillis != null && dueMillis <= now))
     val overdueReferenceMillis = bill.lastDueDateMillis()
     val dueDateText = dueMillis?.let { SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(it)) }
     val daysUntilDue = dueMillis?.let { millis ->
