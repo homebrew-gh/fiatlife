@@ -99,6 +99,7 @@ enum class BillSubcategory(val generalCategory: BillGeneralCategory) {
     MORTGAGE_RENT(BillGeneralCategory.HOME),
     HOME_INSURANCE(BillGeneralCategory.HOME),
     INTERNET(BillGeneralCategory.HOME),
+    PHONE(BillGeneralCategory.HOME),
     HOA(BillGeneralCategory.HOME),
     PROPERTY_TAX(BillGeneralCategory.HOME),
     // Utilities
@@ -146,6 +147,7 @@ enum class BillSubcategory(val generalCategory: BillGeneralCategory) {
             MORTGAGE_RENT -> "Mortgage/Rent"
             HOME_INSURANCE -> "Home Insurance"
             INTERNET -> "Internet"
+            PHONE -> "Phone"
             HOA -> "HOA"
             PROPERTY_TAX -> "Property Tax"
             ELECTRIC -> "Electric"
@@ -187,6 +189,7 @@ enum class BillSubcategory(val generalCategory: BillGeneralCategory) {
             MORTGAGE_RENT -> "home"
             HOME_INSURANCE -> "shield"
             INTERNET -> "wifi"
+            PHONE -> "phone_android"
             HOA -> "apartment"
             PROPERTY_TAX -> "account_balance"
             ELECTRIC -> "bolt"
@@ -478,8 +481,11 @@ data class Bill(
     fun lastDueDateMillis(): Long? {
         if (isCreditOrLoan()) {
             val now = System.currentTimeMillis()
-            val upcomingDue = creditLoanUpcomingDue(now) ?: return null
-            val previous = shiftCreditLoanCycle(upcomingDue, -1)
+            val currentDue = dueDateForMonth(now)
+            if (now > endOfDayMillis(currentDue) && !hasQualifyingPaymentForCycle(currentDue)) {
+                return currentDue
+            }
+            val previous = shiftCreditLoanCycle(currentDue, -1)
             return if (previous <= now) previous else null
         }
         if (!isRecurring) {
@@ -518,10 +524,9 @@ data class Bill(
         if (isCancelled) return false
         if (isCreditOrLoan()) {
             val now = System.currentTimeMillis()
-            val upcomingDue = creditLoanUpcomingDue(now) ?: return false
-            val lastDue = shiftCreditLoanCycle(upcomingDue, -1)
-            if (hasQualifyingPaymentForCycle(lastDue)) return false
-            return now > endOfDayMillis(lastDue)
+            val currentDue = dueDateForMonth(now)
+            if (now <= endOfDayMillis(currentDue)) return false
+            return !hasQualifyingPaymentForCycle(currentDue)
         }
         if (isPaidForCurrentCycle()) return false
         if (!isRecurring) {
@@ -739,7 +744,7 @@ private fun fromLegacyCategory(category: BillCategory): BillSubcategory = when (
     BillCategory.WATER_SEWER -> BillSubcategory.WATER_SEWER
     BillCategory.TRASH -> BillSubcategory.TRASH
     BillCategory.INTERNET -> BillSubcategory.INTERNET
-    BillCategory.PHONE -> BillSubcategory.OTHER_SUBSCRIPTION
+    BillCategory.PHONE -> BillSubcategory.PHONE
     BillCategory.CABLE_STREAMING -> BillSubcategory.STREAMING
     BillCategory.CAR_PAYMENT -> BillSubcategory.CAR_PAYMENT
     BillCategory.CAR_INSURANCE -> BillSubcategory.CAR_INSURANCE

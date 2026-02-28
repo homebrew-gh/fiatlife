@@ -109,9 +109,18 @@ class BillsViewModel @Inject constructor(
                 val costBasisBills = mergedBills.filter { item ->
                     if (item.bill.isCancelled) return@filter false
                     if (item.bill.effectiveGeneralCategory != BillGeneralCategory.CREDIT_LOANS) return@filter true
-                    val linkedId = item.bill.linkedCreditAccountId ?: return@filter false
-                    val account = accountsById[linkedId] ?: return@filter false
-                    account.currentBalance > 0.0
+                    val linkedId = item.bill.linkedCreditAccountId
+                    if (!linkedId.isNullOrBlank()) {
+                        val account = accountsById[linkedId] ?: return@filter false
+                        return@filter account.currentBalance > 0.0
+                    }
+                    // Legacy fallback: old credit-card bills may not have linkedCreditAccountId populated.
+                    val billName = item.bill.name.trim()
+                    val matched = creditAccounts.firstOrNull { acc ->
+                        acc.currentBalance > 0.0 &&
+                            (acc.linkedBillId == item.bill.id || acc.name.equals(billName, ignoreCase = true))
+                    }
+                    matched != null
                 }
                 val visibleBills = costBasisBills.filter { item ->
                     // Utilities are variable bills; once paid for current cycle, hide until next cycle/update.
