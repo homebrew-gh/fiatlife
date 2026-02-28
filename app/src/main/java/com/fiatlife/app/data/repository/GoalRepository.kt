@@ -10,7 +10,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
@@ -31,7 +34,9 @@ class GoalRepository @Inject constructor(
 
     fun getAllGoals(): Flow<List<FinancialGoal>> {
         return goalDao.getAll().map { entities ->
-            entities.map { json.decodeFromString<FinancialGoal>(it.jsonData) }
+            entities.mapNotNull { entity ->
+                decodeGoalSafely(entity.jsonData, source = "db:${entity.id}")
+            }
         }
     }
 
@@ -75,7 +80,7 @@ class GoalRepository @Inject constructor(
         newAmount: Double
     ) {
         val entity = goalDao.getById(goalId) ?: return
-        val goal = json.decodeFromString<FinancialGoal>(entity.jsonData)
+        val goal = decodeGoalSafely(entity.jsonData, source = "db:$goalId") ?: return
         val updated = goal.copy(currentAmount = newAmount)
         saveGoal(updated)
     }
@@ -120,12 +125,13 @@ class GoalRepository @Inject constructor(
                             Log.d(TAG, "Deleted tombstoned goal $goalId")
                             return@collect
                         }
-                        val goal = json.decodeFromString<FinancialGoal>(decrypted)
+                        val goal = decodeGoalSafely(decrypted, source = "relay:$dTag")
                         if (goal.id.isNotEmpty()) {
+                            val canonical = json.encodeToString(FinancialGoal.serializer(), goal)
                             goalDao.upsert(
                                 GoalEntity(
                                     id = goal.id,
-                                    jsonData = decrypted,
+                                    jsonData = canonical,
                                     category = goal.category.name,
                                     updatedAt = goal.updatedAt
                                 )
@@ -140,6 +146,39 @@ class GoalRepository @Inject constructor(
             }
         } catch (e: Exception) {
             Log.e(TAG, "Sync failed: ${e.message}")
+        }
+    }
+
+    private fun decodeGoalSafely(raw: String, source: String): FinancialGoal? {
+        val direct = runCatching { json.decodeFromString<FinancialGoal>(raw) }.getOrNull()
+        if (direct != null) return direct
+
+        // Compatibility path for legacy/unknown enum category values.
+        val repaired = runCatching {
+            val obj = json.parseToJsonElement(raw).jsonObject
+            val categoryRaw = obj["category"]?.jsonPrimitive?.contentOrNull
+            val mappedCategory = mapLegacyGoalCategory(categoryRaw) ?: "OTHER"
+            val mutable = obj.toMutableMap()
+            mutable["category"] = JsonPrimitive(mappedCategory)
+            json.decodeFromJsonElement(FinancialGoal.serializer(), JsonObject(mutable))
+        }.getOrNull()
+
+        if (repaired == null) {
+            Log.w(TAG, "Dropping malformed goal payload from $source")
+        }
+        return repaired
+    }
+
+    /** Maps legacy or unknown category strings to a valid GoalCategory enum name, or null to use OTHER. */
+    private fun mapLegacyGoalCategory(raw: String?): String? {
+        val value = raw?.trim()?.uppercase() ?: return null
+        return when (value) {
+            "HOME_RENOVATION" -> "HOME_IMPROVEMENT"
+            "CAR", "AUTO", "CAR_GOAL", "VEHICLE" -> "CAR_PURCHASE"
+            "EMERGENCY_FUND", "RETIREMENT", "HOUSE_DOWN_PAYMENT", "CAR_PURCHASE",
+            "VACATION", "WEDDING", "EDUCATION", "DEBT_PAYOFF", "GENERAL_SAVINGS",
+            "INVESTMENT", "HOME_IMPROVEMENT", "MEDICAL", "OTHER" -> value
+            else -> null // unknown → caller will use OTHER
         }
     }
 }

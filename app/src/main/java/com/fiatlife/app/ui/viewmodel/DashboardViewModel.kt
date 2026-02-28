@@ -95,8 +95,17 @@ class DashboardViewModel @Inject constructor(
                         it.isPastDue()
                 }
                 val comingDueCount = visibleBills.count { bill ->
-                    !bill.isPaidForCurrentCycle() && !bill.isPastDue() && bill.nextDueDateMillis() != null &&
-                        bill.nextDueDateMillis()!! <= now + sevenDaysMs
+                    val nextDue = bill.nextDueDateMillis() ?: return@count false
+                    if (bill.isCreditOrLoan()) {
+                        // Credit/loan: show as "coming due" if there's a balance and due within 7 days (incl. today).
+                        bill.effectiveAmountDue() > 0.0 &&
+                            !bill.isPastDue() &&
+                            nextDue <= now + sevenDaysMs
+                    } else {
+                        !bill.isPaidForCurrentCycle() &&
+                            !bill.isPastDue() &&
+                            nextDue <= now + sevenDaysMs
+                    }
                 }
                 val totalSaved = goals.sumOf { it.currentAmount }
                 val totalTarget = goals.sumOf { it.targetAmount }
@@ -133,9 +142,14 @@ class DashboardViewModel @Inject constructor(
                     topGoals = goals.sortedByDescending { it.progressPercent }.take(3),
                     upcomingBills = visibleBills
                         .filter { bill ->
-                            !bill.isPaidForCurrentCycle() &&
-                                (bill.isPastDue() ||
-                                    (bill.nextDueDateMillis() != null && bill.nextDueDateMillis()!! <= threeMonthsFromNow))
+                            val nextDue = bill.nextDueDateMillis()
+                            if (bill.isCreditOrLoan()) {
+                                bill.effectiveAmountDue() > 0.0 &&
+                                    (bill.isPastDue() || (nextDue != null && nextDue <= threeMonthsFromNow))
+                            } else {
+                                !bill.isPaidForCurrentCycle() &&
+                                    (bill.isPastDue() || (nextDue != null && nextDue <= threeMonthsFromNow))
+                            }
                         }
                         .sortedWith(
                             compareBy<Bill> { !it.isPastDue() }
