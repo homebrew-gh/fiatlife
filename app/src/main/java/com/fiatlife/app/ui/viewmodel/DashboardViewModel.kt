@@ -116,6 +116,7 @@ class DashboardViewModel @Inject constructor(
                     val nextDue = bill.nextDueDateMillis() ?: return@count false
                     if (bill.isCreditOrLoan()) {
                         linkedCreditBalance(bill) > 0.0 &&
+                            !bill.isPaidForCurrentCycle() &&
                             !bill.isPastDue() &&
                             nextDue <= now + sevenDaysMs
                     } else {
@@ -161,8 +162,9 @@ class DashboardViewModel @Inject constructor(
                         .filter { bill ->
                             val nextDue = bill.nextDueDateMillis()
                             if (bill.isCreditOrLoan()) {
-                                // Exclude credit/loan when linked account balance is 0 (source of truth: credit account).
+                                // Exclude when balance is 0 or already paid for this cycle (e.g. minimum paid).
                                 linkedCreditBalance(bill) > 0.0 &&
+                                    !bill.isPaidForCurrentCycle() &&
                                     (bill.isPastDue() || (nextDue != null && nextDue <= threeMonthsFromNow))
                             } else {
                                 !bill.isPaidForCurrentCycle() &&
