@@ -39,7 +39,8 @@ class NostrClient @Inject constructor(
     private var isAuthenticated = false
     private var authInFlight = false
 
-    private val _messages = MutableSharedFlow<NostrMessage>(extraBufferCapacity = 64)
+    /** Buffer must be large enough to avoid dropping events when relay sends many at once. */
+    private val _messages = MutableSharedFlow<NostrMessage>(extraBufferCapacity = 512)
     val messages: SharedFlow<NostrMessage> = _messages.asSharedFlow()
 
     private val _connectionState = MutableStateFlow(false)
@@ -447,7 +448,8 @@ class NostrClient @Inject constructor(
         val filter = NostrFilter(
             authors = listOf(s.pubkeyHex),
             kinds = listOf(NostrEvent.KIND_APP_SPECIFIC_DATA),
-            tagFilters = tagFilters
+            tagFilters = tagFilters,
+            limit = 5000
         )
 
         val subId = subscribe(filter)

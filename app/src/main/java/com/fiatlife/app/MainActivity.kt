@@ -42,9 +42,7 @@ import com.fiatlife.app.ui.screens.pin.PinLockScreen
 import com.fiatlife.app.ui.theme.FiatLifeTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
@@ -387,35 +385,37 @@ class MainActivity : ComponentActivity() {
      * once the relay is fully ready, so this is safe to call immediately after
      * [NostrClient.connect].
      */
+    /**
+     * Sync all app data from the relay. Runs syncs sequentially to avoid flooding the
+     * message buffer and to reduce relay load, so events are less likely to be dropped.
+     */
     fun syncFromRelay() {
         if (!nostrClient.hasSigner) return
         lifecycleScope.launch {
-            Log.d(TAG, "Starting one-shot sync from relay")
-            launch { runCatching { syncSettingsFromRelay() }.onFailure { Log.w(TAG, "Settings sync: ${it.message}") } }
-            launch { try { salaryRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Salary sync: ${e.message}") } }
-            launch { try { billRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bill sync: ${e.message}") } }
-            launch { try { goalRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Goal sync: ${e.message}") } }
-            launch { try { creditAccountRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Credit account sync: ${e.message}") } }
-            launch { try { bankAccountRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bank account sync: ${e.message}") } }
-            launch { try { billerRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Biller sync: ${e.message}") } }
-            launch { try { cypherLogSubscriptionRepository.syncFromRelay() } catch (e: Exception) { Log.w(TAG, "CypherLog sync: ${e.message}") } }
+            Log.d(TAG, "Starting one-shot sync from relay (sequential)")
+            runCatching { syncSettingsFromRelay() }.onFailure { Log.w(TAG, "Settings sync: ${it.message}") }
+            try { salaryRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Salary sync: ${e.message}") }
+            try { billRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bill sync: ${e.message}") }
+            try { goalRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Goal sync: ${e.message}") }
+            try { creditAccountRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Credit account sync: ${e.message}") }
+            try { bankAccountRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bank account sync: ${e.message}") }
+            try { billerRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Biller sync: ${e.message}") }
+            try { cypherLogSubscriptionRepository.syncFromRelay() } catch (e: Exception) { Log.w(TAG, "CypherLog sync: ${e.message}") }
+            Log.d(TAG, "Sync from relay finished")
         }
     }
 
-    private suspend fun syncFromRelayBlocking() = coroutineScope {
-        if (!nostrClient.hasSigner) return@coroutineScope
-        Log.d(TAG, "Starting blocking one-shot sync from relay")
-        val jobs = listOf(
-            launch { runCatching { syncSettingsFromRelay() }.onFailure { Log.w(TAG, "Settings sync: ${it.message}") } },
-            launch { runCatching { salaryRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Salary sync: ${it.message}") } },
-            launch { runCatching { billRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bill sync: ${it.message}") } },
-            launch { runCatching { goalRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Goal sync: ${it.message}") } },
-            launch { runCatching { creditAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Credit account sync: ${it.message}") } },
-            launch { runCatching { bankAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bank account sync: ${it.message}") } },
-            launch { runCatching { billerRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Biller sync: ${it.message}") } },
-            launch { runCatching { cypherLogSubscriptionRepository.syncFromRelay() }.onFailure { Log.w(TAG, "CypherLog sync: ${it.message}") } }
-        )
-        jobs.joinAll()
+    private suspend fun syncFromRelayBlocking() {
+        if (!nostrClient.hasSigner) return
+        Log.d(TAG, "Starting blocking one-shot sync from relay (sequential)")
+        runCatching { syncSettingsFromRelay() }.onFailure { Log.w(TAG, "Settings sync: ${it.message}") }
+        runCatching { salaryRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Salary sync: ${it.message}") }
+        runCatching { billRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bill sync: ${it.message}") }
+        runCatching { goalRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Goal sync: ${it.message}") }
+        runCatching { creditAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Credit account sync: ${it.message}") }
+        runCatching { bankAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bank account sync: ${it.message}") }
+        runCatching { billerRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Biller sync: ${it.message}") }
+        runCatching { cypherLogSubscriptionRepository.syncFromRelay() }.onFailure { Log.w(TAG, "CypherLog sync: ${it.message}") }
     }
 
     private suspend fun syncSettingsFromRelay() {
