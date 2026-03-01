@@ -55,8 +55,9 @@ class BillNotificationManager @Inject constructor(
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
+        val notificationId = bill.id.hashCode() * 31 + daysUntilDue
         val pending = PendingIntent.getActivity(
-            context, bill.id.hashCode(), intent,
+            context, notificationId, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -90,7 +91,7 @@ class BillNotificationManager @Inject constructor(
             )
             .build()
 
-        NotificationManagerCompat.from(context).notify(bill.id.hashCode(), notification)
+        NotificationManagerCompat.from(context).notify(notificationId, notification)
     }
 
     /** Reminder for a credit/loan payment (when not linked to a bill). */
@@ -101,7 +102,7 @@ class BillNotificationManager @Inject constructor(
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
-        val notificationId = "debt_$accountId".hashCode()
+        val notificationId = "debt_${accountId}_$daysUntilDue".hashCode()
         val pending = PendingIntent.getActivity(
             context, notificationId, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE

@@ -359,26 +359,28 @@ fun SettingsScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                        val options = listOf(1, 3, 7)
-                        options.forEachIndexed { index, days ->
-                            SegmentedButton(
-                                selected = state.billNotifDaysBefore == days,
-                                onClick = { viewModel.setBillNotifDaysBefore(days) },
-                                shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size)
-                            ) {
-                                Text(
-                                    when (days) {
-                                        1 -> "1 day"
-                                        else -> "$days days"
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(1, 3, 7).forEach { days ->
+                            FilterChip(
+                                selected = days in state.billNotifReminderDays,
+                                onClick = { viewModel.toggleBillNotifReminderDay(days) },
+                                label = {
+                                    Text(
+                                        when (days) {
+                                            1 -> "1 day"
+                                            else -> "$days days"
+                                        }
                                     }
                                 )
-                            }
+                            )
                         }
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Days before due date to send reminder",
+                        text = "Send a reminder on each selected day before due date (you can pick more than one)",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

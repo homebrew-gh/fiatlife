@@ -16,6 +16,8 @@ import com.fiatlife.app.data.blossom.BlossomClient
 import com.fiatlife.app.data.notification.BillReminderWorker
 import com.fiatlife.app.data.notification.KEY_NOTIF_DAYS_BEFORE
 import com.fiatlife.app.data.notification.KEY_NOTIF_DETAIL_LEVEL
+import com.fiatlife.app.data.notification.KEY_NOTIF_REMINDER_DAYS
+import com.fiatlife.app.data.notification.parseReminderDays
 import com.fiatlife.app.data.notification.KEY_NOTIF_ENABLED
 import com.fiatlife.app.data.notification.NotifDetailLevel
 import com.fiatlife.app.data.nostr.NostrClient
@@ -50,7 +52,7 @@ data class SettingsState(
     val hasPinSet: Boolean = false,
     val billNotifEnabled: Boolean = false,
     val billNotifDetailLevel: NotifDetailLevel = NotifDetailLevel.PRIVATE,
-    val billNotifDaysBefore: Int = 3,
+    val billNotifReminderDays: Set<Int> = setOf(3),
     val statusMessage: String = "",
     val bankAccounts: List<BankAccount> = emptyList(),
     val editingBankAccount: BankAccount? = null
@@ -101,7 +103,7 @@ class SettingsViewModel @Inject constructor(
                 val notifPrefs = appContext.notifPrefsStore.data.first()
                 val notifEnabled = notifPrefs[KEY_NOTIF_ENABLED] ?: false
                 val detailStr = notifPrefs[KEY_NOTIF_DETAIL_LEVEL] ?: NotifDetailLevel.PRIVATE.name
-                val daysBefore = notifPrefs[KEY_NOTIF_DAYS_BEFORE] ?: 3
+                val reminderDays = parseReminderDays(notifPrefs)
 
                 _state.update {
                     it.copy(
@@ -118,7 +120,7 @@ class SettingsViewModel @Inject constructor(
                         } catch (_: Exception) {
                             NotifDetailLevel.PRIVATE
                         },
-                        billNotifDaysBefore = daysBefore
+                        billNotifReminderDays = reminderDays
                     )
                 }
             }
@@ -232,11 +234,21 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun setBillNotifDaysBefore(days: Int) {
-        val clamped = days.coerceIn(1, 14)
-        _state.update { it.copy(billNotifDaysBefore = clamped) }
+    /** Toggle a reminder day (1, 3, 7). Keeps at least one selected. */
+    fun toggleBillNotifReminderDay(day: Int) {
+        val clamped = day.coerceIn(1, 14)
+        val current = _state.value.billNotifReminderDays
+        val next = if (clamped in current) {
+            if (current.size <= 1) current else current - clamped
+        } else {
+            current + clamped
+        }
+        val toStore = if (next.isEmpty()) setOf(3) else next
+        _state.update { it.copy(billNotifReminderDays = toStore) }
         viewModelScope.launch {
-            appContext.notifPrefsStore.edit { it[KEY_NOTIF_DAYS_BEFORE] = clamped }
+            appContext.notifPrefsStore.edit {
+                it[KEY_NOTIF_REMINDER_DAYS] = toStore.sorted().joinToString(",")
+            }
         }
     }
 

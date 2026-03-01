@@ -400,18 +400,27 @@ data class Bill(
             // Revolving debt: date only advances when the prior due date has passed.
             return creditLoanUpcomingDue(now)
         }
-        val explicitRenewal = renewalDateMillis ?: return nextDueFromFrequency()
-        run {
+        val explicitRenewal = renewalDateMillis
+        if (explicitRenewal != null) {
             val (unit, interval) = recurrenceConfig()
             var next: Long = explicitRenewal
             if (isPaid) {
                 val reference = lastPaidDate ?: System.currentTimeMillis()
                 while (next <= reference) {
                     next = addRecurrence(next, unit, interval)
+                    next = applyDueDayForMonthBased(next, dueDay.coerceIn(1, 31), unit)
                 }
             }
             return next
         }
+        // No explicit renewal: don't advance the displayed due date until user marks paid for current cycle.
+        val next = nextDueFromFrequency() ?: return null
+        val now = System.currentTimeMillis()
+        val (unit, interval) = recurrenceConfig()
+        val previous = addRecurrence(next, unit, -interval)
+        val previousDue = applyDueDayForMonthBased(previous, dueDay.coerceIn(1, 31), unit)
+        val currentCycleDue = if (previousDue <= now) previousDue else next
+        return if (isPaidForCurrentCycle()) next else currentCycleDue
     }
 
     private fun nextDueFromFrequency(): Long? {

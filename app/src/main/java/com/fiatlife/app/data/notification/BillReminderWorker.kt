@@ -1,6 +1,7 @@
 package com.fiatlife.app.data.notification
 
 import android.content.Context
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -24,6 +25,17 @@ private val Context.notifPrefsStore by preferencesDataStore(name = "bill_notif_p
 val KEY_NOTIF_ENABLED = booleanPreferencesKey("bill_notif_enabled")
 val KEY_NOTIF_DETAIL_LEVEL = stringPreferencesKey("bill_notif_detail_level")
 val KEY_NOTIF_DAYS_BEFORE = intPreferencesKey("bill_notif_days_before")
+/** Comma-separated reminder days, e.g. "1,3,7". If missing, falls back to KEY_NOTIF_DAYS_BEFORE. */
+val KEY_NOTIF_REMINDER_DAYS = stringPreferencesKey("bill_notif_reminder_days")
+
+fun parseReminderDays(prefs: Preferences): Set<Int> {
+    val csv = prefs[KEY_NOTIF_REMINDER_DAYS]
+    if (!csv.isNullOrBlank()) {
+        return csv.split(",").mapNotNull { it.trim().toIntOrNull() }.filter { it in 0..30 }.toSet()
+    }
+    val single = prefs[KEY_NOTIF_DAYS_BEFORE] ?: 3
+    return setOf(single.coerceIn(1, 14))
+}
 
 enum class NotifDetailLevel { PRIVATE, DETAILED }
 
@@ -44,7 +56,7 @@ class BillReminderWorker @AssistedInject constructor(
 
         val detailStr = prefs[KEY_NOTIF_DETAIL_LEVEL] ?: NotifDetailLevel.PRIVATE.name
         val detailed = detailStr == NotifDetailLevel.DETAILED.name
-        val daysBefore = prefs[KEY_NOTIF_DAYS_BEFORE] ?: 3
+        val reminderDays = parseReminderDays(prefs)
 
         val bills = billDao.getAll().first()
         val today = LocalDate.now()
@@ -57,7 +69,7 @@ class BillReminderWorker @AssistedInject constructor(
             val nextDueDates = computeNextDueDates(bill, today)
             for (dueDate in nextDueDates) {
                 val daysUntil = java.time.temporal.ChronoUnit.DAYS.between(today, dueDate).toInt()
-                if (daysUntil in 0..daysBefore) {
+                if (daysUntil in reminderDays) {
                     notificationManager.showBillReminder(bill, daysUntil, detailed)
                 }
             }
@@ -75,7 +87,7 @@ class BillReminderWorker @AssistedInject constructor(
             val thisMonth = today.withDayOfMonth(dueDay)
             val nextDue = if (thisMonth.isBefore(today)) thisMonth.plusMonths(1) else thisMonth
             val daysUntil = java.time.temporal.ChronoUnit.DAYS.between(today, nextDue).toInt()
-            if (daysUntil in 0..daysBefore) {
+            if (daysUntil in reminderDays) {
                 notificationManager.showDebtReminder(
                     account.name,
                     account.effectiveMonthlyPayment(),
