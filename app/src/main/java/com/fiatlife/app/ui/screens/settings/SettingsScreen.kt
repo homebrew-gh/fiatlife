@@ -364,17 +364,11 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         listOf(1, 3, 7).forEach { days ->
+                            val labelText = if (days == 1) "1 day" else "$days days"
                             FilterChip(
                                 selected = state.billNotifReminderDays.contains(days),
                                 onClick = { viewModel.toggleBillNotifReminderDay(days) },
-                                label = {
-                                    Text(
-                                        when (days) {
-                                            1 -> "1 day"
-                                            else -> "$days days"
-                                        }
-                                    }
-                                )
+                                label = { Text(labelText) }
                             )
                         }
                     }
