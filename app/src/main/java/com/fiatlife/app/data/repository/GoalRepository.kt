@@ -125,7 +125,7 @@ class GoalRepository @Inject constructor(
                             Log.d(TAG, "Deleted tombstoned goal $goalId")
                             return@collect
                         }
-                        val goal = decodeGoalSafely(decrypted, source = "relay:$dTag")
+                        val goal = decodeGoalSafely(decrypted, source = "relay:$dTag") ?: return@collect
                         if (goal.id.isNotEmpty()) {
                             val canonical = json.encodeToString(FinancialGoal.serializer(), goal)
                             goalDao.upsert(
