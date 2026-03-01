@@ -365,7 +365,7 @@ fun SettingsScreen(
                     ) {
                         listOf(1, 3, 7).forEach { days ->
                             FilterChip(
-                                selected = days in state.billNotifReminderDays,
+                                selected = state.billNotifReminderDays.contains(days),
                                 onClick = { viewModel.toggleBillNotifReminderDay(days) },
                                 label = {
                                     Text(
