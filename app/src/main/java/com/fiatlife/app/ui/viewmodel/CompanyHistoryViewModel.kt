@@ -109,10 +109,13 @@ class CompanyHistoryViewModel @Inject constructor(
             label.isNotBlank() -> "name:${normalizeCompany(label)}"
             else -> return null
         }
+        // Prefer biller entity name; fall back to bill's billerName/accountName when biller is missing or blank.
         val name = when {
-            !bill.linkedBillerId.isNullOrBlank() -> billersById[bill.linkedBillerId]?.name?.ifBlank { label }
+            !bill.linkedBillerId.isNullOrBlank() -> {
+                billersById[bill.linkedBillerId]?.name?.takeIf { it.isNotBlank() } ?: label
+            }
             else -> label
-        }.orEmpty().ifBlank { "Unknown company" }
+        }.ifBlank { "Unknown company" }
         return CompanyRef(key = key, name = name)
     }
 

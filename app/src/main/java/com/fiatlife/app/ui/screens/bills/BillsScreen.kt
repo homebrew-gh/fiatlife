@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -164,35 +165,38 @@ fun BillsScreen(
                         ) {
                             Text("View Companies")
                         }
-                        // Category totals in header (under monthly total)
+                        // Category totals in header (under monthly total), centered when they fit
                         if (summaryExpanded && summaryCategoryTotals.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(12.dp))
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                summaryCategoryTotals.entries
-                                    .sortedBy { it.key.displayName }
-                                    .forEach { (generalCategory, total) ->
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
-                                            modifier = Modifier.padding(vertical = 4.dp)
-                                        ) {
-                                            Text(
-                                                text = generalCategory.displayName,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
-                                            )
-                                            Text(
-                                                text = total.formatCurrency(),
-                                                style = MaterialTheme.typography.labelMedium,
-                                                fontWeight = FontWeight.Medium,
-                                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                                            )
+                            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier
+                                        .widthIn(min = maxWidth)
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    summaryCategoryTotals.entries
+                                        .sortedBy { it.key.displayName }
+                                        .forEach { (generalCategory, total) ->
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                            ) {
+                                                Text(
+                                                    text = generalCategory.displayName,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
+                                                )
+                                                Text(
+                                                    text = total.formatCurrency(),
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Medium,
+                                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                                )
+                                            }
                                         }
-                                    }
+                                }
                             }
                         }
                         if (summaryExpanded && summaryPaymentBreakdown.isNotEmpty()) {
