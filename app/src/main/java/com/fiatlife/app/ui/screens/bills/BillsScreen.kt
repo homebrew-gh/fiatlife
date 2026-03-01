@@ -39,6 +39,7 @@ import com.fiatlife.app.domain.model.BillWithSource
 import com.fiatlife.app.ui.navigation.Screen
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import com.fiatlife.app.ui.components.CurrencyTextField
 import com.fiatlife.app.ui.components.MoneyText
 import com.fiatlife.app.ui.components.EmptyState
@@ -105,6 +106,9 @@ fun BillsScreen(
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .pointerInput(summaryExpanded) {
+                            detectTapGestures(onDoubleTap = { summaryExpanded = !summaryExpanded })
+                        }
                         .pointerInput(summaryMode) {
                             var dragX = 0f
                             var dragY = 0f
@@ -151,24 +155,14 @@ fun BillsScreen(
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                         )
                         Text(
-                            text = "Swipe left/right to switch monthly/annual",
+                            text = "Swipe to switch monthly/annual · Double-tap for details",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
                         )
-                        TextButton(onClick = {
-                            summaryMode = if (summaryMode == "monthly") "annual" else "monthly"
-                        }) {
-                            Text(if (showingAnnual) "Switch to monthly" else "Switch to annual")
-                        }
                         Button(
                             onClick = { navController.navigate(Screen.CompanyHistory.route) }
                         ) {
                             Text("View Companies")
-                        }
-                        TextButton(
-                            onClick = { summaryExpanded = !summaryExpanded }
-                        ) {
-                            Text(if (summaryExpanded) "Hide summary details" else "Show summary details")
                         }
                         // Category totals in header (under monthly total)
                         if (summaryExpanded && summaryCategoryTotals.isNotEmpty()) {

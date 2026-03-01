@@ -144,6 +144,7 @@ class DashboardViewModel @Inject constructor(
                         .filter { bill ->
                             val nextDue = bill.nextDueDateMillis()
                             if (bill.isCreditOrLoan()) {
+                                // Only show credit/loan when there is an amount due; exclude zero-balance cards.
                                 bill.effectiveAmountDue() > 0.0 &&
                                     (bill.isPastDue() || (nextDue != null && nextDue <= threeMonthsFromNow))
                             } else {

@@ -523,6 +523,8 @@ data class Bill(
     fun isPastDue(): Boolean {
         if (isCancelled) return false
         if (isCreditOrLoan()) {
+            // No payment ever recorded in the app => don't assume missed payments (e.g. card added after due date).
+            if (paymentHistory.isEmpty() && lastPaidDate == null) return false
             val now = System.currentTimeMillis()
             val currentDue = dueDateForMonth(now)
             if (now <= endOfDayMillis(currentDue)) return false
