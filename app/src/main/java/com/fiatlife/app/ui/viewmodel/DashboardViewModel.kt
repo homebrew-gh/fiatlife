@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.repository.BillRepository
+import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
 import com.fiatlife.app.data.repository.GoalRepository
 import com.fiatlife.app.data.repository.SalaryRepository
@@ -45,6 +46,7 @@ class DashboardViewModel @Inject constructor(
     private val billRepository: BillRepository,
     private val cypherLogSubscriptionRepository: CypherLogSubscriptionRepository,
     private val goalRepository: GoalRepository,
+    private val creditAccountRepository: CreditAccountRepository,
     private val nostrClient: NostrClient
 ) : ViewModel() {
 
@@ -56,19 +58,26 @@ class DashboardViewModel @Inject constructor(
         startMonthAnchorUpdates()
         viewModelScope.launch {
             val baseFlow = combine(
-                salaryRepository.getSalaryConfig(),
-                billRepository.getAllBills(),
-                cypherLogSubscriptionRepository.getAllAsBills(),
-                goalRepository.getAllGoals(),
-                nostrClient.connectionState
-            ) { salary, nativeBills, cypherLogBills, goals, connected ->
-                DashboardInputs(salary, nativeBills, cypherLogBills, goals, connected)
+                combine(
+                    salaryRepository.getSalaryConfig(),
+                    billRepository.getAllBills(),
+                    cypherLogSubscriptionRepository.getAllAsBills(),
+                    goalRepository.getAllGoals(),
+                    nostrClient.connectionState
+                ) { salary, nativeBills, cypherLogBills, goals, connected ->
+                    DashboardInputs(salary, nativeBills, cypherLogBills, goals, connected)
+                },
+                creditAccountRepository.getAllCreditAccounts()
+            ) { inputs, creditAccounts ->
+                inputs to creditAccounts
             }
 
-            combine(baseFlow, monthAnchor) { inputs, currentMonthAnchor ->
-                inputs to currentMonthAnchor
-            }.collect { (inputs, currentMonthAnchor) ->
+            combine(baseFlow, monthAnchor) { data, currentMonthAnchor ->
+                data to currentMonthAnchor
+            }.collect { (data, currentMonthAnchor) ->
+                val (inputs, creditAccounts) = data
                 val (salary, nativeBills, cypherLogBills, goals, connected) = inputs
+                val accountsById = creditAccounts.associateBy { it.id }
                 val allBills = (nativeBills + cypherLogBills.map { it.bill }).filterNot { bill ->
                     bill.isCancelled
                 }
@@ -94,11 +103,19 @@ class DashboardViewModel @Inject constructor(
                         !it.isPaidForCurrentCycle() &&
                         it.isPastDue()
                 }
+                fun linkedCreditBalance(bill: Bill): Double {
+                    if (!bill.isCreditOrLoan()) return 0.0
+                    bill.linkedCreditAccountId?.let { id -> return accountsById[id]?.currentBalance ?: 0.0 }
+                    val matched = creditAccounts.firstOrNull { acc ->
+                        acc.linkedBillId == bill.id || acc.name.equals(bill.name, ignoreCase = true)
+                    }
+                    return matched?.currentBalance ?: 0.0
+                }
+
                 val comingDueCount = visibleBills.count { bill ->
                     val nextDue = bill.nextDueDateMillis() ?: return@count false
                     if (bill.isCreditOrLoan()) {
-                        // Credit/loan: show as "coming due" if there's a balance and due within 7 days (incl. today).
-                        bill.effectiveAmountDue() > 0.0 &&
+                        linkedCreditBalance(bill) > 0.0 &&
                             !bill.isPastDue() &&
                             nextDue <= now + sevenDaysMs
                     } else {
@@ -144,8 +161,8 @@ class DashboardViewModel @Inject constructor(
                         .filter { bill ->
                             val nextDue = bill.nextDueDateMillis()
                             if (bill.isCreditOrLoan()) {
-                                // Only show credit/loan when there is an amount due; exclude zero-balance cards.
-                                bill.effectiveAmountDue() > 0.0 &&
+                                // Exclude credit/loan when linked account balance is 0 (source of truth: credit account).
+                                linkedCreditBalance(bill) > 0.0 &&
                                     (bill.isPastDue() || (nextDue != null && nextDue <= threeMonthsFromNow))
                             } else {
                                 !bill.isPaidForCurrentCycle() &&
