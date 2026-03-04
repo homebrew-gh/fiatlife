@@ -420,7 +420,13 @@ data class Bill(
         val previous = addRecurrence(next, unit, -interval)
         val previousDue = applyDueDayForMonthBased(previous, dueDay.coerceIn(1, 31), unit)
         val currentCycleDue = if (previousDue <= now) previousDue else next
-        return if (isPaidForCurrentCycle()) next else currentCycleDue
+        val sevenDaysMs = 7L * 24L * 60L * 60L * 1000L
+        val paidAndPastReset = lastPaidDate != null && now >= lastPaidDate + sevenDaysMs
+        return when {
+            isPaidForCurrentCycle() -> next
+            paidAndPastReset -> next  // After 7-day reset, keep showing next cycle due (don't revert to previous).
+            else -> currentCycleDue
+        }
     }
 
     private fun nextDueFromFrequency(): Long? {
