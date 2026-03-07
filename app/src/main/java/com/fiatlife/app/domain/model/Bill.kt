@@ -568,6 +568,8 @@ data class Bill(
         // Never mark a bill overdue before its first cycle after creation/start date.
         val startAnchor = initialPurchaseDateMillis ?: createdAt.takeIf { it > 0 }
         if (startAnchor != null && lastDue < startOfDayMillis(startAnchor)) return false
+        // User paid for this cycle (on or after the due date); don't show as overdue — next cycle is the one to show.
+        if (lastPaidDate != null && lastPaidDate > endOfDayMillis(lastDue)) return false
         val endOfDueDay = lastDue + 86400_000L - 1
         return System.currentTimeMillis() > endOfDueDay
     }
