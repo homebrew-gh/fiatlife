@@ -422,9 +422,12 @@ data class Bill(
         val currentCycleDue = if (previousDue <= now) previousDue else next
         val sevenDaysMs = 7L * 24L * 60L * 60L * 1000L
         val paidAndPastReset = lastPaidDate != null && now >= lastPaidDate + sevenDaysMs
+        // Payment in history for this cycle (on or after previousDue) → show next cycle even without 7-day reset.
+        val paidForCycleInHistory = paymentHistory.any { it.date >= previousDue && it.amount > 0.0 }
         return when {
             isPaidForCurrentCycle() -> next
-            paidAndPastReset -> next  // After 7-day reset, keep showing next cycle due (don't revert to previous).
+            paidAndPastReset -> next
+            paidForCycleInHistory -> next
             else -> currentCycleDue
         }
     }
@@ -568,8 +571,10 @@ data class Bill(
         // Never mark a bill overdue before its first cycle after creation/start date.
         val startAnchor = initialPurchaseDateMillis ?: createdAt.takeIf { it > 0 }
         if (startAnchor != null && lastDue < startOfDayMillis(startAnchor)) return false
-        // User paid for this cycle (on or after the due date); don't show as overdue — next cycle is the one to show.
-        if (lastPaidDate != null && lastPaidDate > endOfDayMillis(lastDue)) return false
+        // User paid for this cycle: payment on or after the due day, or any payment in history for that cycle.
+        val paidForThisCycle = (lastPaidDate != null && lastPaidDate >= lastDue) ||
+            paymentHistory.any { it.date >= lastDue && it.amount > 0.0 }
+        if (paidForThisCycle) return false
         val endOfDueDay = lastDue + 86400_000L - 1
         return System.currentTimeMillis() > endOfDueDay
     }
