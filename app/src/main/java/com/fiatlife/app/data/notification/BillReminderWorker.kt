@@ -12,12 +12,12 @@ import androidx.work.WorkerParameters
 import com.fiatlife.app.data.local.dao.BillDao
 import com.fiatlife.app.data.local.dao.CreditAccountDao
 import com.fiatlife.app.domain.model.Bill
-import com.fiatlife.app.domain.model.BillFrequency
 import com.fiatlife.app.domain.model.CreditAccount
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
+import java.util.Calendar
 import java.time.LocalDate
 
 private val Context.notifPrefsStore by preferencesDataStore(name = "bill_notif_prefs")
@@ -59,6 +59,15 @@ class BillReminderWorker @AssistedInject constructor(
         val reminderDays = parseReminderDays(prefs)
 
         val bills = billDao.getAll().first()
+        val creditAccounts = creditAccountDao.getAll().first()
+        val accountsById = creditAccounts.mapNotNull { e ->
+            try {
+                json.decodeFromString<CreditAccount>(e.jsonData).let { acc -> acc.id to acc }
+            } catch (_: Exception) { null }
+        }.toMap()
+
+        val now = System.currentTimeMillis()
+        val todayStart = startOfTodayMillis()
         val today = LocalDate.now()
 
         for (entity in bills) {
@@ -66,17 +75,23 @@ class BillReminderWorker @AssistedInject constructor(
                 json.decodeFromString<Bill>(entity.jsonData)
             } catch (_: Exception) { continue }
 
-            val nextDueDates = computeNextDueDates(bill, today)
-            for (dueDate in nextDueDates) {
-                val daysUntil = java.time.temporal.ChronoUnit.DAYS.between(today, dueDate).toInt()
-                if (daysUntil in reminderDays) {
-                    notificationManager.showBillReminder(bill, daysUntil, detailed)
-                }
+            if (bill.isCancelled) continue
+            if (bill.isPaidForCurrentCycle(now)) continue
+            // Match UI: don't remind for credit/loan with $0 balance (nothing due to pay).
+            if (bill.isCreditOrLoan()) {
+                val balance = bill.linkedCreditAccountId?.let { accountsById[it]?.currentBalance }
+                    ?: bill.creditCardDetails?.currentBalance ?: 0.0
+                if (balance <= 0.0) continue
+            }
+
+            val nextDue = bill.nextDueDateMillis() ?: continue
+            val daysUntil = ((nextDue - todayStart) / 86_400_000L).toInt()
+            if (daysUntil in reminderDays) {
+                notificationManager.showBillReminder(bill, daysUntil, detailed)
             }
         }
 
         // Debt/credit accounts not linked to a bill: payment due reminders
-        val creditAccounts = creditAccountDao.getAll().first()
         for (entity in creditAccounts) {
             val account = try {
                 json.decodeFromString<CreditAccount>(entity.jsonData)
@@ -100,41 +115,13 @@ class BillReminderWorker @AssistedInject constructor(
         return Result.success()
     }
 
-    private fun computeNextDueDates(bill: Bill, today: LocalDate): List<LocalDate> {
-        val dueDay = bill.dueDay.coerceIn(1, 28)
-        return when (bill.frequency) {
-            BillFrequency.MONTHLY -> {
-                val thisMonth = today.withDayOfMonth(dueDay)
-                if (thisMonth.isBefore(today)) listOf(thisMonth.plusMonths(1)) else listOf(thisMonth)
-            }
-            BillFrequency.WEEKLY -> {
-                (0L..6L).map { today.plusDays(it) }.filter { it.dayOfWeek.value == dueDay.coerceIn(1, 7) }
-            }
-            BillFrequency.BIWEEKLY -> {
-                val thisMonth = today.withDayOfMonth(dueDay)
-                val dates = mutableListOf<LocalDate>()
-                if (!thisMonth.isBefore(today)) dates.add(thisMonth)
-                val plus14 = thisMonth.plusDays(14)
-                if (!plus14.isBefore(today)) dates.add(plus14)
-                if (dates.isEmpty()) dates.add(thisMonth.plusMonths(1))
-                dates
-            }
-            BillFrequency.BIMONTHLY -> {
-                val thisMonth = today.withDayOfMonth(dueDay)
-                if (thisMonth.isBefore(today)) listOf(thisMonth.plusMonths(2)) else listOf(thisMonth)
-            }
-            BillFrequency.QUARTERLY -> {
-                val thisMonth = today.withDayOfMonth(dueDay)
-                if (thisMonth.isBefore(today)) listOf(thisMonth.plusMonths(3)) else listOf(thisMonth)
-            }
-            BillFrequency.SEMIANNUALLY -> {
-                val thisMonth = today.withDayOfMonth(dueDay)
-                if (thisMonth.isBefore(today)) listOf(thisMonth.plusMonths(6)) else listOf(thisMonth)
-            }
-            BillFrequency.ANNUALLY -> {
-                val thisYear = today.withDayOfMonth(dueDay).withMonth(today.monthValue)
-                if (thisYear.isBefore(today)) listOf(thisYear.plusYears(1)) else listOf(thisYear)
-            }
-        }
+    /** Start of today (midnight) in ms, same reference as UI for "days until due". */
+    private fun startOfTodayMillis(): Long {
+        val cal = Calendar.getInstance()
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
     }
 }

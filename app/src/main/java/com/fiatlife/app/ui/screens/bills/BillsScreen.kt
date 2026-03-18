@@ -320,7 +320,7 @@ fun BillsScreen(
                 }
             }
 
-            // Due in next 7 days (non-autopay, or credit/loan even if autopay)
+            // Due in next 7 days or overdue
             if (state.billsDueInNext7Days.isNotEmpty()) {
                 item {
                     Text(

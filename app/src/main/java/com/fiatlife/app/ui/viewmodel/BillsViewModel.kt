@@ -57,7 +57,7 @@ data class BillsState(
     val annualCategoryTotals: Map<BillGeneralCategory, Double> = emptyMap(),
     val isSaving: Boolean = false,
     val message: String = "",
-    /** Bills due in the next 7 days: non-autopay, or credit/loan (always show if due in 7 days). Credit/loan first. */
+    /** Bills due in the next 7 days or overdue (all unpaid bills in that window). Credit/loan first, then by due date. */
     val billsDueInNext7Days: List<BillWithSource> = emptyList(),
     /** Other bills grouped by general category (excluding those in billsDueInNext7Days for the "by category" list). */
     val otherBillsByCategory: Map<BillGeneralCategory, List<BillWithSource>> = emptyMap(),
@@ -151,15 +151,17 @@ class BillsViewModel @Inject constructor(
                 val todayStart = cal.timeInMillis
                 val todayEnd = todayStart + 86_400_000L - 1
                 val dueIn7Days = visibleBills.filter { item ->
-                    if (item.isCypherLog || item.bill.isPaidForCurrentCycle()) return@filter false
-                    if (!item.bill.autoPay || item.bill.isCreditOrLoan()) {
-                        val nextDue = item.bill.nextDueDateMillis()
-                        val inWindow = nextDue != null && nextDue <= now + sevenDaysMs
-                        // Due today can appear as "lastDueDate" depending on recurrence calculations.
-                        val dueToday = !item.bill.isPastDue() &&
-                            (item.bill.lastDueDateMillis()?.let { it in todayStart..todayEnd } == true)
-                        inWindow || dueToday
-                    } else false
+                    if (item.isCypherLog || item.bill.isPaidForCurrentCycle(now)) return@filter false
+                    // Credit/loan: exclude if there has been a payment in the current cycle.
+                    if (item.bill.isCreditOrLoan() && item.bill.isPaidForCurrentCycle(now)) return@filter false
+                    // Include overdue bills (so they appear in this section regardless of next cycle date).
+                    if (item.bill.isPastDue()) return@filter true
+                    // Include any bill due in the next 7 days (autopay or not).
+                    val nextDue = item.bill.nextDueDateMillis()
+                    val inWindow = nextDue != null && nextDue <= now + sevenDaysMs
+                    // Due today can appear as "lastDueDate" depending on recurrence calculations.
+                    val dueToday = item.bill.lastDueDateMillis()?.let { it in todayStart..todayEnd } == true
+                    inWindow || dueToday
                 }.sortedWith(
                     compareBy<BillWithSource> { !it.bill.isCreditOrLoan() }
                         .thenBy { it.bill.nextDueDateMillis() ?: Long.MAX_VALUE }
