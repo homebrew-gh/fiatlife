@@ -24,6 +24,15 @@ interface CypherLogSubscriptionDao {
     @Upsert
     suspend fun upsert(entity: CypherLogSubscriptionEntity)
 
+    @Upsert
+    suspend fun upsertAll(entities: List<CypherLogSubscriptionEntity>)
+
+    @Transaction
+    suspend fun applySyncBatch(upserts: List<CypherLogSubscriptionEntity>, deleteDTags: List<String>) {
+        deleteDTags.forEach { deleteByDTag(it) }
+        if (upserts.isNotEmpty()) upsertAll(upserts)
+    }
+
     @Delete
     suspend fun delete(entity: CypherLogSubscriptionEntity)
 

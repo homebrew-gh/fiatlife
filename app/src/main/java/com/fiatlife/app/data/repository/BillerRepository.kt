@@ -42,7 +42,7 @@ class BillerRepository @Inject constructor(
                     updatedAt = it.updatedAt
                 )
             }
-        }
+        }.decodeOnBackground()
 
     suspend fun getById(id: String): Biller? =
         dao.getById(id)?.toDomain()
@@ -107,24 +107,26 @@ class BillerRepository @Inject constructor(
         if (!nostrClient.hasSigner) return
         try {
             withTimeout(30_000) {
-                var count = 0
+                val deleteIds = mutableListOf<String>()
+                val upsertsById = mutableMapOf<String, BillerEntity>()
                 nostrClient.subscribeToAppData(dTagPrefix = NOSTR_D_TAG_PREFIX).collect { (dTag, decrypted) ->
                     try {
                         val obj = json.parseToJsonElement(decrypted).jsonObject
                         if (obj["deleted"]?.jsonPrimitive?.booleanOrNull == true) {
                             val id = dTag.removePrefix(NOSTR_D_TAG_PREFIX)
-                            dao.deleteById(id)
+                            deleteIds.add(id)
+                            upsertsById.remove(id)
                             return@collect
                         }
                         val parsed = json.decodeFromString(Biller.serializer(), decrypted)
                         if (parsed.id.isBlank()) return@collect
-                        dao.upsert(parsed.toEntity())
-                        count++
+                        upsertsById[parsed.id] = parsed.toEntity()
                     } catch (e: Exception) {
                         Log.w(TAG, "Failed to parse biller event: ${e.message}")
                     }
                 }
-                Log.d(TAG, "Synced $count biller(s) from relay")
+                dao.applySyncBatch(upsertsById.values.toList(), deleteIds)
+                Log.d(TAG, "Synced ${upsertsById.size} biller(s) from relay; deleted ${deleteIds.size}")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Biller sync failed: ${e.message}")

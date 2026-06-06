@@ -15,6 +15,15 @@ interface GoalDao {
     @Upsert
     suspend fun upsert(entity: GoalEntity)
 
+    @Upsert
+    suspend fun upsertAll(entities: List<GoalEntity>)
+
+    @Transaction
+    suspend fun applySyncBatch(upserts: List<GoalEntity>, deleteIds: List<String>) {
+        deleteIds.forEach { deleteById(it) }
+        if (upserts.isNotEmpty()) upsertAll(upserts)
+    }
+
     @Delete
     suspend fun delete(entity: GoalEntity)
 

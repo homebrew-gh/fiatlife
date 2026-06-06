@@ -21,6 +21,15 @@ interface CreditAccountDao {
     @Upsert
     suspend fun upsert(entity: CreditAccountEntity)
 
+    @Upsert
+    suspend fun upsertAll(entities: List<CreditAccountEntity>)
+
+    @Transaction
+    suspend fun applySyncBatch(upserts: List<CreditAccountEntity>, deleteIds: List<String>) {
+        deleteIds.forEach { deleteById(it) }
+        if (upserts.isNotEmpty()) upsertAll(upserts)
+    }
+
     @Delete
     suspend fun delete(entity: CreditAccountEntity)
 

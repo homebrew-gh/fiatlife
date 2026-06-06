@@ -37,7 +37,7 @@ class GoalRepository @Inject constructor(
             entities.mapNotNull { entity ->
                 decodeGoalSafely(entity.jsonData, source = "db:${entity.id}")
             }
-        }
+        }.decodeOnBackground()
     }
 
     suspend fun saveGoal(goal: FinancialGoal) {
@@ -115,34 +115,33 @@ class GoalRepository @Inject constructor(
         if (!nostrClient.hasSigner) return
         try {
             withTimeout(30_000) {
-                var count = 0
+                val deleteIds = mutableListOf<String>()
+                val upsertsById = mutableMapOf<String, GoalEntity>()
                 nostrClient.subscribeToAppData(dTagPrefix = NOSTR_D_TAG_PREFIX).collect { (dTag, decrypted) ->
                     try {
                         val obj = json.parseToJsonElement(decrypted).jsonObject
                         if (obj["deleted"]?.jsonPrimitive?.booleanOrNull == true) {
                             val goalId = dTag.removePrefix(NOSTR_D_TAG_PREFIX)
-                            goalDao.deleteById(goalId)
-                            Log.d(TAG, "Deleted tombstoned goal $goalId")
+                            deleteIds.add(goalId)
+                            upsertsById.remove(goalId)
                             return@collect
                         }
                         val goal = decodeGoalSafely(decrypted, source = "relay:$dTag") ?: return@collect
                         if (goal.id.isNotEmpty()) {
                             val canonical = json.encodeToString(FinancialGoal.serializer(), goal)
-                            goalDao.upsert(
-                                GoalEntity(
-                                    id = goal.id,
-                                    jsonData = canonical,
-                                    category = goal.category.name,
-                                    updatedAt = goal.updatedAt
-                                )
+                            upsertsById[goal.id] = GoalEntity(
+                                id = goal.id,
+                                jsonData = canonical,
+                                category = goal.category.name,
+                                updatedAt = goal.updatedAt
                             )
-                            count++
                         }
                     } catch (e: Exception) {
                         Log.w(TAG, "Failed to parse goal event: ${e.message}")
                     }
                 }
-                Log.d(TAG, "Synced $count goal(s) from relay")
+                goalDao.applySyncBatch(upsertsById.values.toList(), deleteIds)
+                Log.d(TAG, "Synced ${upsertsById.size} goal(s) from relay; deleted ${deleteIds.size}")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Sync failed: ${e.message}")

@@ -114,15 +114,17 @@ class NostrClient @Inject constructor(
     /**
      * Reconnect if needed and wait until ready (connected + authenticated).
      * Returns true if the relay is ready to accept messages.
+     *
+     * @param readyTimeoutMs max time to wait for the socket + NIP-42 auth handshake
      */
-    suspend fun ensureConnected(): Boolean {
+    suspend fun ensureConnected(readyTimeoutMs: Long = 5000): Boolean {
         if (_connectionState.value && isAuthenticated) return true
         val s = signer ?: return false
         if (relayUrl.isEmpty()) return false
         if (!_connectionState.value) {
             connect(relayUrl, s)
         }
-        return awaitReady()
+        return awaitReady(readyTimeoutMs)
     }
 
     /**

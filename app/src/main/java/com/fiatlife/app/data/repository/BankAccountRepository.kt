@@ -33,7 +33,7 @@ class BankAccountRepository @Inject constructor(
     fun getAllBankAccounts(): Flow<List<BankAccount>> {
         return dao.getAll().map { entities ->
             entities.map { BankAccount(id = it.id, name = it.name) }
-        }
+        }.decodeOnBackground()
     }
 
     suspend fun saveBankAccount(account: BankAccount): BankAccount {
@@ -73,25 +73,27 @@ class BankAccountRepository @Inject constructor(
         if (!nostrClient.hasSigner) return
         try {
             withTimeout(30_000) {
-                var count = 0
+                val deleteIds = mutableListOf<String>()
+                val upsertsById = mutableMapOf<String, BankAccountEntity>()
                 nostrClient.subscribeToAppData(dTagPrefix = NOSTR_D_TAG_PREFIX).collect { (dTag, decrypted) ->
                     try {
                         val obj = json.parseToJsonElement(decrypted).jsonObject
                         if (obj["deleted"]?.jsonPrimitive?.booleanOrNull == true) {
                             val id = dTag.removePrefix(NOSTR_D_TAG_PREFIX)
-                            dao.deleteById(id)
+                            deleteIds.add(id)
+                            upsertsById.remove(id)
                             return@collect
                         }
                         val account = json.decodeFromString<BankAccount>(decrypted)
                         if (account.id.isNotBlank()) {
-                            dao.upsert(BankAccountEntity(id = account.id, name = account.name))
-                            count++
+                            upsertsById[account.id] = BankAccountEntity(id = account.id, name = account.name)
                         }
                     } catch (e: Exception) {
                         Log.w(TAG, "Failed to parse bank account event: ${e.message}")
                     }
                 }
-                Log.d(TAG, "Synced $count bank account(s) from relay")
+                dao.applySyncBatch(upsertsById.values.toList(), deleteIds)
+                Log.d(TAG, "Synced ${upsertsById.size} bank account(s) from relay; deleted ${deleteIds.size}")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Bank account sync failed: ${e.message}")

@@ -2,15 +2,12 @@ package com.fiatlife.app.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.domain.model.CreditAccount
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -31,8 +28,7 @@ data class DebtState(
 
 @HiltViewModel
 class DebtViewModel @Inject constructor(
-    private val repository: CreditAccountRepository,
-    private val nostrClient: NostrClient
+    private val repository: CreditAccountRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(DebtState())
@@ -61,20 +57,6 @@ class DebtViewModel @Inject constructor(
                     )
                 }
             }
-        }
-        syncOnConnect()
-    }
-
-    private fun syncOnConnect() {
-        viewModelScope.launch {
-            nostrClient.connectionState
-                .filter { it }
-                .distinctUntilChanged()
-                .collect {
-                    try {
-                        repository.syncFromNostr()
-                    } catch (_: Exception) { }
-                }
         }
     }
 

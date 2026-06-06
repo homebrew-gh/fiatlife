@@ -15,6 +15,15 @@ interface BankAccountDao {
     @Upsert
     suspend fun upsert(entity: BankAccountEntity)
 
+    @Upsert
+    suspend fun upsertAll(entities: List<BankAccountEntity>)
+
+    @Transaction
+    suspend fun applySyncBatch(upserts: List<BankAccountEntity>, deleteIds: List<String>) {
+        deleteIds.forEach { deleteById(it) }
+        if (upserts.isNotEmpty()) upsertAll(upserts)
+    }
+
     @Delete
     suspend fun delete(entity: BankAccountEntity)
 

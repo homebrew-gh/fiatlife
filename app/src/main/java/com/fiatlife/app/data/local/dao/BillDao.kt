@@ -24,6 +24,15 @@ interface BillDao {
     @Upsert
     suspend fun upsert(entity: BillEntity)
 
+    @Upsert
+    suspend fun upsertAll(entities: List<BillEntity>)
+
+    @Transaction
+    suspend fun applySyncBatch(upserts: List<BillEntity>, deleteIds: List<String>) {
+        deleteIds.forEach { deleteById(it) }
+        if (upserts.isNotEmpty()) upsertAll(upserts)
+    }
+
     @Delete
     suspend fun delete(entity: BillEntity)
 

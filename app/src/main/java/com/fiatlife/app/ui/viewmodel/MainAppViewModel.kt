@@ -63,7 +63,10 @@ class MainAppViewModel @Inject constructor(
         base.copy(isManualSyncing = manualSyncing)
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
+        // Lazily: start when first UI subscribes, then keep collecting so the banner
+        // does not sit on initialValue (offline) while combine is inactive, which
+        // happened with WhileSubscribed when collectors briefly dropped.
+        started = SharingStarted.Lazily,
         initialValue = MainAppState()
     )
 
@@ -73,6 +76,12 @@ class MainAppViewModel @Inject constructor(
         viewModelScope.launch {
             _isManualSyncing.update { true }
             try {
+                // Banner can show Offline while the socket is down; sync still queued REQs
+                // and showed "Syncing with relay…". Wait for a real connection first.
+                val relayReady = nostrClient.ensureConnected(15_000)
+                if (!relayReady) {
+                    Log.w(TAG, "Manual sync: relay not ready after timeout")
+                }
                 val jobs = listOf(
                     launch { runCatching { salaryRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Salary sync failed: ${it.message}") } },
                     launch { runCatching { billRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bill sync failed: ${it.message}") } },

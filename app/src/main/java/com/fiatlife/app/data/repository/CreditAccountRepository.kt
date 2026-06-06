@@ -42,13 +42,13 @@ class CreditAccountRepository @Inject constructor(
     fun getAllCreditAccounts(): Flow<List<CreditAccount>> {
         return creditAccountDao.getAll().map { entities ->
             entities.map { json.decodeFromString<CreditAccount>(it.jsonData) }
-        }
+        }.decodeOnBackground()
     }
 
     fun getCreditAccountById(id: String): Flow<CreditAccount?> {
         return creditAccountDao.getByIdAsFlow(id).map { entity ->
             entity?.let { json.decodeFromString<CreditAccount>(it.jsonData) }
-        }
+        }.decodeOnBackground()
     }
 
     suspend fun saveCreditAccount(account: CreditAccount): CreditAccount {
@@ -299,33 +299,32 @@ class CreditAccountRepository @Inject constructor(
         if (!nostrClient.hasSigner) return
         try {
             withTimeout(30_000) {
-                var count = 0
+                val deleteIds = mutableListOf<String>()
+                val upsertsById = mutableMapOf<String, CreditAccountEntity>()
                 nostrClient.subscribeToAppData(dTagPrefix = NOSTR_D_TAG_PREFIX).collect { (dTag, decrypted) ->
                     try {
                         val obj = json.parseToJsonElement(decrypted).jsonObject
                         if (obj["deleted"]?.jsonPrimitive?.booleanOrNull == true) {
                             val id = dTag.removePrefix(NOSTR_D_TAG_PREFIX)
-                            creditAccountDao.deleteById(id)
-                            Log.d(TAG, "Deleted tombstoned credit account $id")
+                            deleteIds.add(id)
+                            upsertsById.remove(id)
                             return@collect
                         }
                         val account = json.decodeFromString<CreditAccount>(decrypted)
                         if (account.id.isNotEmpty()) {
-                            creditAccountDao.upsert(
-                                CreditAccountEntity(
-                                    id = account.id,
-                                    jsonData = decrypted,
-                                    type = account.type.name,
-                                    updatedAt = account.updatedAt
-                                )
+                            upsertsById[account.id] = CreditAccountEntity(
+                                id = account.id,
+                                jsonData = decrypted,
+                                type = account.type.name,
+                                updatedAt = account.updatedAt
                             )
-                            count++
                         }
                     } catch (e: Exception) {
                         Log.w(TAG, "Failed to parse credit account event: ${e.message}")
                     }
                 }
-                Log.d(TAG, "Synced $count credit account(s) from relay")
+                creditAccountDao.applySyncBatch(upsertsById.values.toList(), deleteIds)
+                Log.d(TAG, "Synced ${upsertsById.size} credit account(s) from relay; deleted ${deleteIds.size}")
                 val backfilled = backfillMissingLinkedBills()
                 if (backfilled > 0) {
                     Log.d(TAG, "Backfilled $backfilled missing linked bill(s) for credit accounts")

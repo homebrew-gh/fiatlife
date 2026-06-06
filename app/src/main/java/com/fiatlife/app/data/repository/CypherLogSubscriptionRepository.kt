@@ -204,17 +204,23 @@ class CypherLogSubscriptionRepository @Inject constructor(
     fun getAllAsBills(): Flow<List<BillWithSource>> {
         return dao.getAll().map { entities ->
             entities.mapNotNull { entity -> entityToBillWithSource(entity) }
-        }
+        }.decodeOnBackground()
     }
 
     fun getByDTag(dTag: String): Flow<BillWithSource?> {
         return dao.getByEitherDTagAsFlow(toSubscriptionDTag(dTag), dTag).map { entity ->
             entity?.let { entityToBillWithSource(it) }
-        }
+        }.decodeOnBackground()
     }
 
     suspend fun upsertFromEvent(event: NostrEvent) {
-        val dTagRaw = event.tags.firstOrNull { it.size >= 2 && it[0] == "d" }?.getOrNull(1) ?: return
+        val entity = buildEntityFromEvent(event) ?: return
+        dao.upsert(entity)
+        Log.d(TAG, "Upserted 37004 d=${entity.dTag}")
+    }
+
+    private suspend fun buildEntityFromEvent(event: NostrEvent): CypherLogSubscriptionEntity? {
+        val dTagRaw = event.tags.firstOrNull { it.size >= 2 && it[0] == "d" }?.getOrNull(1) ?: return null
         val dTag = toSubscriptionDTag(dTagRaw)
         val tagsJson = buildJsonArray {
             event.tags.forEach { tag ->
@@ -224,7 +230,6 @@ class CypherLogSubscriptionRepository @Inject constructor(
         var contentDecryptedJson: String? = null
         if (event.content.isNotBlank()) {
             val rawContent = event.content.trim()
-            // CypherLog does not encrypt on personal/private (NIP-42 auth'd) relays; content may be plaintext JSON.
             if (isPlaintextSubscriptionJson(rawContent)) {
                 contentDecryptedJson = rawContent
                 Log.d(TAG, "37004 d=$dTag: using plaintext content (private-relay style)")
@@ -256,16 +261,13 @@ class CypherLogSubscriptionRepository @Inject constructor(
                 }
             }
         }
-        dao.upsert(
-            CypherLogSubscriptionEntity(
-                dTag = dTag,
-                eventId = event.id,
-                tagsJson = tagsJson,
-                createdAt = event.created_at,
-                contentDecryptedJson = contentDecryptedJson
-            )
+        return CypherLogSubscriptionEntity(
+            dTag = dTag,
+            eventId = event.id,
+            tagsJson = tagsJson,
+            createdAt = event.created_at,
+            contentDecryptedJson = contentDecryptedJson
         )
-        Log.d(TAG, "Upserted 37004 d=$dTag")
     }
 
     /**
@@ -331,33 +333,36 @@ class CypherLogSubscriptionRepository @Inject constructor(
         try {
             withTimeout(30_000) {
                 val deletedDTags = loadDeletedDTagsFromRelay()
+                val deleteDTags = mutableListOf<String>()
                 if (deletedDTags.isNotEmpty()) {
                     deletedDTags.forEach {
-                        dao.deleteByDTag(toSubscriptionDTag(it))
-                        dao.deleteByDTag(it)
+                        deleteDTags.add(toSubscriptionDTag(it))
+                        deleteDTags.add(it)
                     }
                 }
-                var count = 0
+                val upsertsByDTag = mutableMapOf<String, CypherLogSubscriptionEntity>()
                 val seenDTags = mutableSetOf<String>()
                 nostrClient.subscribeToKind30078ByDTagPrefix(SUBSCRIPTION_DTAG_PREFIX).collect { event ->
                     val dTag = event.tags.firstOrNull { it.size >= 2 && it[0] == "d" }?.getOrNull(1) ?: return@collect
                     val normalizedDTag = toSubscriptionDTag(dTag)
                     if (rawIdFromDTag(normalizedDTag) in deletedDTags || normalizedDTag in deletedDTags) {
-                        dao.deleteByDTag(normalizedDTag)
+                        deleteDTags.add(normalizedDTag)
+                        upsertsByDTag.remove(normalizedDTag)
                         return@collect
                     }
-                    upsertFromEvent(event)
+                    val entity = buildEntityFromEvent(event) ?: return@collect
+                    upsertsByDTag[normalizedDTag] = entity
                     seenDTags.add(normalizedDTag)
-                    count++
                 }
                 // Prune stale local rows that no longer exist on relay (prevents ghost/deleted reappearance).
                 val local = dao.getAllSnapshot().map { toSubscriptionDTag(it.dTag) }
                 val stale = local.filter { it !in seenDTags && rawIdFromDTag(it) !in deletedDTags }
                 stale.forEach {
-                    dao.deleteByDTag(it)
-                    dao.deleteByDTag(rawIdFromDTag(it))
+                    deleteDTags.add(it)
+                    deleteDTags.add(rawIdFromDTag(it))
                 }
-                Log.d(TAG, "Synced $count 30078 subscription(s) from relay; pruned ${stale.size} stale row(s)")
+                dao.applySyncBatch(upsertsByDTag.values.toList(), deleteDTags.distinct())
+                Log.d(TAG, "Synced ${upsertsByDTag.size} 30078 subscription(s) from relay; pruned ${stale.size} stale row(s)")
             }
         } catch (e: Exception) {
             Log.e(TAG, "30078 subscription sync failed: ${e.message}")

@@ -37,19 +37,19 @@ class BillRepository @Inject constructor(
     fun getAllBills(): Flow<List<Bill>> {
         return billDao.getAll().map { entities ->
             entities.map { json.decodeFromString<Bill>(it.jsonData) }
-        }
+        }.decodeOnBackground()
     }
 
     fun getBillsByCategory(category: BillCategory): Flow<List<Bill>> {
         return billDao.getByCategory(category.name).map { entities ->
             entities.map { json.decodeFromString<Bill>(it.jsonData) }
-        }
+        }.decodeOnBackground()
     }
 
     fun getBillById(id: String): Flow<Bill?> {
         return billDao.getByIdAsFlow(id).map { entity ->
             entity?.let { json.decodeFromString<Bill>(it.jsonData) }
-        }
+        }.decodeOnBackground()
     }
 
     suspend fun getBillByLinkedBillerId(billerId: String): Bill? {
@@ -136,34 +136,33 @@ class BillRepository @Inject constructor(
         if (!nostrClient.hasSigner) return
         try {
             withTimeout(30_000) {
-                var count = 0
+                val deleteIds = mutableListOf<String>()
+                val upsertsById = mutableMapOf<String, BillEntity>()
                 nostrClient.subscribeToAppData(dTagPrefix = NOSTR_D_TAG_PREFIX).collect { (dTag, decrypted) ->
                     try {
                         val obj = json.parseToJsonElement(decrypted).jsonObject
                         if (obj["deleted"]?.jsonPrimitive?.booleanOrNull == true) {
                             val billId = dTag.removePrefix(NOSTR_D_TAG_PREFIX)
-                            billDao.deleteById(billId)
-                            Log.d(TAG, "Deleted tombstoned bill $billId")
+                            deleteIds.add(billId)
+                            upsertsById.remove(billId)
                             return@collect
                         }
                         val bill = json.decodeFromString<Bill>(decrypted)
                         if (bill.id.isNotEmpty()) {
-                            billDao.upsert(
-                                BillEntity(
-                                    id = bill.id,
-                                    jsonData = decrypted,
-                                    category = bill.effectiveSubcategory.name,
-                                    linkedBillerId = bill.linkedBillerId,
-                                    updatedAt = bill.updatedAt
-                                )
+                            upsertsById[bill.id] = BillEntity(
+                                id = bill.id,
+                                jsonData = decrypted,
+                                category = bill.effectiveSubcategory.name,
+                                linkedBillerId = bill.linkedBillerId,
+                                updatedAt = bill.updatedAt
                             )
-                            count++
                         }
                     } catch (e: Exception) {
                         Log.w(TAG, "Failed to parse bill event: ${e.message}")
                     }
                 }
-                Log.d(TAG, "Synced $count bill(s) from relay")
+                billDao.applySyncBatch(upsertsById.values.toList(), deleteIds)
+                Log.d(TAG, "Synced ${upsertsById.size} bill(s) from relay; deleted ${deleteIds.size}")
             }
             backfillLegacyCreditLoanPayments()
         } catch (e: Exception) {
@@ -178,7 +177,7 @@ class BillRepository @Inject constructor(
     suspend fun backfillLegacyCreditLoanPayments(): Int {
         val rows = billDao.getAll().first()
         if (rows.isEmpty()) return 0
-        var updatedCount = 0
+        val toUpsert = mutableListOf<BillEntity>()
         val now = System.currentTimeMillis()
         rows.forEach { entity ->
             val bill = runCatching { json.decodeFromString<Bill>(entity.jsonData) }.getOrNull() ?: return@forEach
@@ -195,7 +194,7 @@ class BillRepository @Inject constructor(
                 updatedAt = now
             )
             val migratedJson = json.encodeToString(Bill.serializer(), migrated)
-            billDao.upsert(
+            toUpsert.add(
                 BillEntity(
                     id = migrated.id,
                     jsonData = migratedJson,
@@ -204,11 +203,11 @@ class BillRepository @Inject constructor(
                     updatedAt = migrated.updatedAt
                 )
             )
-            updatedCount++
         }
-        if (updatedCount > 0) {
-            Log.d(TAG, "Backfilled $updatedCount legacy credit/loan payment row(s)")
+        if (toUpsert.isNotEmpty()) {
+            billDao.upsertAll(toUpsert)
+            Log.d(TAG, "Backfilled ${toUpsert.size} legacy credit/loan payment row(s)")
         }
-        return updatedCount
+        return toUpsert.size
     }
 }

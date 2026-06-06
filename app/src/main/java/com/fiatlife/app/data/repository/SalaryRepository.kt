@@ -28,7 +28,7 @@ class SalaryRepository @Inject constructor(
     fun getSalaryConfig(): Flow<SalaryConfig?> {
         return salaryDao.getLatestConfig().map { entity ->
             entity?.let { json.decodeFromString<SalaryConfig>(it.jsonData) }
-        }
+        }.decodeOnBackground()
     }
 
     suspend fun saveSalaryConfig(config: SalaryConfig) {

@@ -73,8 +73,11 @@ class MainActivity : ComponentActivity() {
     private var needsPinUnlock = mutableStateOf(false)
     private var isInMainApp = false
     private var hasRestoredSession = false
+    private var lastSyncAtMs = 0L
+    private var syncInProgress = false
 
     companion object {
+        private const val SYNC_COOLDOWN_MS = 5 * 60 * 1000L
         val KEY_AUTH_TYPE = stringPreferencesKey("auth_type")
         val KEY_PRIVATE_KEY = stringPreferencesKey("private_key")
         val KEY_AMBER_PUBKEY = stringPreferencesKey("amber_pubkey")
@@ -303,11 +306,16 @@ class MainActivity : ComponentActivity() {
             val prefs = dataStore.data.first()
             val relayUrl = prefs[KEY_RELAY_URL] ?: ""
             if (relayUrl.isEmpty()) return@launch
-            if (!nostrClient.connectionState.value) {
+            val needsReconnect = !nostrClient.connectionState.value
+            if (needsReconnect) {
                 Log.d(TAG, "Reconnecting to relay on resume")
                 nostrClient.connect(relayUrl)
             }
-            syncFromRelay()
+            val now = System.currentTimeMillis()
+            if (needsReconnect || now - lastSyncAtMs >= SYNC_COOLDOWN_MS) {
+                lastSyncAtMs = now
+                syncFromRelay()
+            }
         }
     }
 
@@ -392,16 +400,22 @@ class MainActivity : ComponentActivity() {
     fun syncFromRelay() {
         if (!nostrClient.hasSigner) return
         lifecycleScope.launch {
-            Log.d(TAG, "Starting one-shot sync from relay (sequential)")
-            runCatching { syncSettingsFromRelay() }.onFailure { Log.w(TAG, "Settings sync: ${it.message}") }
-            try { salaryRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Salary sync: ${e.message}") }
-            try { billRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bill sync: ${e.message}") }
-            try { goalRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Goal sync: ${e.message}") }
-            try { creditAccountRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Credit account sync: ${e.message}") }
-            try { bankAccountRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bank account sync: ${e.message}") }
-            try { billerRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Biller sync: ${e.message}") }
-            try { cypherLogSubscriptionRepository.syncFromRelay() } catch (e: Exception) { Log.w(TAG, "CypherLog sync: ${e.message}") }
-            Log.d(TAG, "Sync from relay finished")
+            if (syncInProgress) return@launch
+            syncInProgress = true
+            try {
+                Log.d(TAG, "Starting one-shot sync from relay (sequential)")
+                runCatching { syncSettingsFromRelay() }.onFailure { Log.w(TAG, "Settings sync: ${it.message}") }
+                try { salaryRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Salary sync: ${e.message}") }
+                try { billRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bill sync: ${e.message}") }
+                try { goalRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Goal sync: ${e.message}") }
+                try { creditAccountRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Credit account sync: ${e.message}") }
+                try { bankAccountRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bank account sync: ${e.message}") }
+                try { billerRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Biller sync: ${e.message}") }
+                try { cypherLogSubscriptionRepository.syncFromRelay() } catch (e: Exception) { Log.w(TAG, "CypherLog sync: ${e.message}") }
+                Log.d(TAG, "Sync from relay finished")
+            } finally {
+                syncInProgress = false
+            }
         }
     }
 

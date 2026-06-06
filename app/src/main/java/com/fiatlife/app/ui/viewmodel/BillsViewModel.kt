@@ -2,7 +2,6 @@ package com.fiatlife.app.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.repository.BankAccountRepository
 import com.fiatlife.app.data.repository.BillRepository
 import com.fiatlife.app.data.repository.BillerRepository
@@ -74,8 +73,7 @@ class BillsViewModel @Inject constructor(
     private val cypherLogSubscriptionRepository: CypherLogSubscriptionRepository,
     private val creditAccountRepository: CreditAccountRepository,
     private val bankAccountRepository: BankAccountRepository,
-    private val billerRepository: BillerRepository,
-    private val nostrClient: NostrClient
+    private val billerRepository: BillerRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(BillsState())
@@ -245,7 +243,6 @@ class BillsViewModel @Inject constructor(
                 }
             }
         }
-        syncOnConnect()
     }
 
     private fun startMonthAnchorUpdates() {
@@ -269,20 +266,6 @@ class BillsViewModel @Inject constructor(
             set(java.util.Calendar.MILLISECOND, 0)
         }
         return (cal.timeInMillis - now).coerceAtLeast(60_000L)
-    }
-
-    private fun syncOnConnect() {
-        viewModelScope.launch {
-            nostrClient.connectionState
-                .filter { it }
-                .distinctUntilChanged()
-                .collect {
-                    try {
-                        repository.syncFromNostr()
-                        cypherLogSubscriptionRepository.syncFromRelay()
-                    } catch (_: Exception) { }
-                }
-        }
     }
 
     fun filterByGeneralCategory(generalCategory: BillGeneralCategory?) {
