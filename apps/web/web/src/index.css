@@ -1,0 +1,353 @@
+@import "@fontsource/dm-sans/400.css";
+@import "@fontsource/dm-sans/500.css";
+@import "@fontsource/dm-sans/600.css";
+@import "@fontsource/dm-sans/700.css";
+@import "@fontsource/source-serif-4/600.css";
+@import "@fontsource/source-serif-4/700.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource/ibm-plex-mono/600.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Theme tokens live outside @layer so they always win the cascade. */
+html {
+  color-scheme: light;
+  --fl-bg: #f5fff0;
+  --fl-surface: #ffffff;
+  --fl-surface-variant: #e8f5e9;
+  --fl-chrome: #ffffff;
+  --fl-input-bg: #ffffff;
+  --fl-primary: #006e1c;
+  --fl-on-primary: #ffffff;
+  --fl-primary-container: #c8ffb8;
+  --fl-on-primary-container: #00390a;
+  --fl-secondary: #2e7d32;
+  --fl-dollar-bill: #85bb65;
+  --fl-heading: #006e1c;
+  --fl-money: #006e1c;
+  --fl-on-surface: #1a1c19;
+  --fl-on-surface-variant: #454743;
+  --fl-outline: #c6c7c1;
+  --fl-error: #ba1a1a;
+  --fl-success: #4caf50;
+  --fl-warn: #7a5900;
+  --fl-badge-error-bg: #fde8e8;
+  --fl-badge-success-bg: #e8f5e9;
+  --fl-notice-bg: #e8f5e9;
+  --fl-overlay: rgba(0, 0, 0, 0.4);
+  --fl-body-gradient: linear-gradient(
+    180deg,
+    #f5fff0 0%,
+    #f5fff0 40%,
+    #e8f5e9 100%
+  );
+  --fl-dollar-gradient: linear-gradient(
+    135deg,
+    #f5fff0 0%,
+    #e8f5e9 45%,
+    #c8ffb8 100%
+  );
+  --fl-shadow-card: 0 1px 2px rgba(0, 46, 12, 0.06),
+    0 4px 16px rgba(0, 46, 12, 0.08);
+  --fl-shadow-bill: inset 0 0 0 1px rgba(133, 187, 101, 0.35);
+  color: var(--fl-on-surface);
+}
+
+html.dark {
+  color-scheme: dark;
+  --fl-bg: #1a1c19;
+  --fl-surface: #2a2c28;
+  --fl-surface-variant: #353833;
+  --fl-chrome: #242622;
+  --fl-input-bg: #353833;
+  --fl-primary: #78dc77;
+  --fl-on-primary: #00390a;
+  --fl-primary-container: #005313;
+  --fl-on-primary-container: #a8f499;
+  --fl-secondary: #5bc362;
+  --fl-dollar-bill: #a8f499;
+  --fl-heading: #e2e3dd;
+  --fl-money: #a8f499;
+  --fl-on-surface: #e2e3dd;
+  --fl-on-surface-variant: #c6c7c1;
+  --fl-outline: #5d5f5a;
+  --fl-error: #ffb4ab;
+  --fl-success: #78dc77;
+  --fl-warn: #f5be48;
+  --fl-badge-error-bg: #3d2624;
+  --fl-badge-success-bg: #1e3a20;
+  --fl-notice-bg: #1e3a20;
+  --fl-overlay: rgba(0, 0, 0, 0.65);
+  --fl-body-gradient: linear-gradient(
+    180deg,
+    #1a1c19 0%,
+    #1a1c19 50%,
+    #242622 100%
+  );
+  --fl-dollar-gradient: linear-gradient(
+    135deg,
+    #242622 0%,
+    #2f312d 45%,
+    #005313 100%
+  );
+  --fl-shadow-card: 0 1px 3px rgba(0, 0, 0, 0.45),
+    0 6px 20px rgba(0, 0, 0, 0.35);
+  --fl-shadow-bill: inset 0 0 0 1px rgba(120, 220, 119, 0.2);
+  color: #e2e3dd;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not(.light) {
+    color-scheme: dark;
+    --fl-bg: #1a1c19;
+    --fl-surface: #2a2c28;
+    --fl-surface-variant: #353833;
+    --fl-chrome: #242622;
+    --fl-input-bg: #353833;
+    --fl-primary: #78dc77;
+    --fl-on-primary: #00390a;
+    --fl-primary-container: #005313;
+    --fl-on-primary-container: #a8f499;
+    --fl-secondary: #5bc362;
+    --fl-dollar-bill: #a8f499;
+    --fl-heading: #e2e3dd;
+    --fl-money: #a8f499;
+    --fl-on-surface: #e2e3dd;
+    --fl-on-surface-variant: #c6c7c1;
+    --fl-outline: #5d5f5a;
+    --fl-error: #ffb4ab;
+    --fl-success: #78dc77;
+    --fl-warn: #f5be48;
+    --fl-badge-error-bg: #3d2624;
+    --fl-badge-success-bg: #1e3a20;
+    --fl-notice-bg: #1e3a20;
+    --fl-overlay: rgba(0, 0, 0, 0.65);
+    --fl-body-gradient: linear-gradient(
+      180deg,
+      #1a1c19 0%,
+      #1a1c19 50%,
+      #242622 100%
+    );
+    --fl-dollar-gradient: linear-gradient(
+      135deg,
+      #242622 0%,
+      #2f312d 45%,
+      #005313 100%
+    );
+    --fl-shadow-card: 0 1px 3px rgba(0, 0, 0, 0.45),
+      0 6px 20px rgba(0, 0, 0, 0.35);
+    --fl-shadow-bill: inset 0 0 0 1px rgba(120, 220, 119, 0.2);
+    color: #e2e3dd;
+  }
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background-color: var(--fl-bg);
+    background-image: var(--fl-body-gradient);
+    background-attachment: fixed;
+    color: var(--fl-on-surface);
+  }
+
+  #root,
+  main {
+    color: inherit;
+  }
+
+  input,
+  select,
+  textarea {
+    color: var(--fl-on-surface);
+    background-color: var(--fl-input-bg);
+    border-color: var(--fl-outline);
+  }
+
+  select option {
+    color: var(--fl-on-surface);
+    background-color: var(--fl-surface);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--fl-on-surface-variant);
+  }
+
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus,
+  select:-webkit-autofill,
+  textarea:-webkit-autofill {
+    -webkit-text-fill-color: var(--fl-on-surface);
+    -webkit-box-shadow: 0 0 0 1000px var(--fl-input-bg) inset;
+    box-shadow: 0 0 0 1000px var(--fl-input-bg) inset;
+    transition: background-color 9999s ease-out 0s;
+  }
+}
+
+/* Semantic text utilities outside @layer — do not rely on Tailwind color class names. */
+.text-body {
+  color: var(--fl-on-surface);
+}
+
+.text-muted {
+  color: var(--fl-on-surface-variant);
+}
+
+.text-accent {
+  color: var(--fl-primary);
+}
+
+.text-heading {
+  color: var(--fl-heading);
+}
+
+@layer components {
+  .app-chrome {
+    background-color: var(--fl-chrome);
+    border-color: var(--fl-outline);
+    color: var(--fl-on-surface);
+  }
+
+  .card {
+    background-color: var(--fl-surface);
+    border: 1px solid var(--fl-outline);
+    border-radius: 12px;
+    box-shadow: var(--fl-shadow-card), var(--fl-shadow-bill);
+    color: var(--fl-on-surface);
+  }
+
+  .card-quiet {
+    border: 1px solid var(--fl-outline);
+    border-radius: 12px;
+    background-color: var(--fl-surface-variant);
+    color: var(--fl-on-surface);
+  }
+
+  .page-title {
+    @apply font-serif text-2xl font-semibold;
+    color: var(--fl-heading);
+  }
+
+  .section-title {
+    @apply font-serif text-lg font-semibold;
+    color: var(--fl-heading);
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-pill px-4 py-2
+           font-semibold transition-opacity disabled:opacity-50 disabled:cursor-not-allowed;
+    background-color: var(--fl-primary);
+    color: var(--fl-on-primary);
+  }
+  .btn-primary:hover:not(:disabled) {
+    opacity: 0.9;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-pill border px-4 py-2
+           transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+    border-color: var(--fl-outline);
+    color: var(--fl-on-surface);
+    background-color: transparent;
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background-color: var(--fl-surface-variant);
+  }
+
+  .input {
+    @apply w-full rounded-card border px-3 py-2 font-sans
+           focus:outline-none focus:ring-2;
+    background-color: var(--fl-input-bg);
+    border-color: var(--fl-outline);
+    color: var(--fl-on-surface);
+  }
+  .input::placeholder {
+    color: var(--fl-on-surface-variant);
+  }
+  .input:focus {
+    border-color: var(--fl-primary);
+    --tw-ring-color: var(--fl-primary);
+    --tw-ring-opacity: 0.25;
+  }
+
+  .label {
+    @apply block text-sm font-medium mb-1;
+    color: var(--fl-on-surface-variant);
+  }
+
+  .money {
+    @apply font-mono tabular-nums tracking-tight;
+    color: var(--fl-money);
+  }
+
+  .nav-tab {
+    @apply flex flex-col items-center gap-0.5 px-2 py-1 text-xs transition-colors;
+    color: var(--fl-on-surface);
+    opacity: 0.72;
+  }
+  .nav-tab-active {
+    color: var(--fl-primary);
+    opacity: 1;
+    @apply font-semibold;
+  }
+
+  .notice-panel {
+    border: 1px solid var(--fl-dollar-bill);
+    border-radius: 12px;
+    background-color: var(--fl-notice-bg);
+    color: var(--fl-on-surface);
+  }
+
+  .divider-line {
+    border-bottom: 1px solid var(--fl-outline);
+    opacity: 0.6;
+  }
+
+  .badge-error {
+    background-color: var(--fl-badge-error-bg);
+    color: var(--fl-error);
+  }
+
+  .badge-success {
+    background-color: var(--fl-badge-success-bg);
+    color: var(--fl-success);
+  }
+
+  .modal-overlay {
+    background-color: var(--fl-overlay);
+  }
+
+  .filter-chip {
+    @apply shrink-0 rounded-pill border px-3 py-1.5 text-sm transition-colors;
+    border-color: var(--fl-outline);
+    background-color: var(--fl-surface);
+    color: var(--fl-on-surface);
+  }
+  .filter-chip:hover {
+    background-color: var(--fl-surface-variant);
+  }
+
+  .filter-chip-active {
+    @apply shrink-0 rounded-pill border px-3 py-1.5 text-sm font-medium;
+    border-color: var(--fl-primary);
+    background-color: var(--fl-primary-container);
+    color: var(--fl-on-primary-container);
+  }
+
+  .badge-autopay {
+    background-color: var(--fl-primary-container);
+    color: var(--fl-on-primary-container);
+  }
+}

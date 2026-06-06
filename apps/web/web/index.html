@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#006E1C" />
+    <title>FiatLife</title>
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("fiatlife-theme");
+          var dark =
+            stored === "dark" ||
+            (stored !== "light" &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          var root = document.documentElement;
+          root.classList.toggle("dark", dark);
+          root.classList.toggle("light", !dark);
+          root.style.colorScheme = dark ? "dark" : "light";
+          var scheme = document.querySelector('meta[name="color-scheme"]');
+          if (scheme) scheme.content = dark ? "dark" : "light";
+          var theme = document.querySelector('meta[name="theme-color"]');
+          if (theme) theme.content = dark ? "#1A1C19" : "#006E1C";
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body class="font-sans antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

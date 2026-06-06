@@ -28,3 +28,11 @@ release/
 !debug.keystore
 app/release/
 app/debug/
+apps/web/web/node_modules/
+apps/web/web/dist/
+apps/web/server/target/
+apps/web/server/data/
+apps/web/.pack/
+packages/start9/node_modules/
+packages/start9/javascript/
+packages/start9/*.s9pk
