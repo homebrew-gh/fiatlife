@@ -10,12 +10,20 @@ import {
   utilizationPercent,
   type CreditAccount,
 } from "../../lib/creditAccount";
+import {
+  formatPayoffDate,
+  isMinimumPaymentTrap,
+  monthlyInterest,
+  summarizeDebtPayoff,
+} from "../../lib/debtPayoff";
 import { useDebtData } from "../../lib/debtData";
 import { formatUsd } from "../../lib/format";
 
 function DebtAccountCard({ account }: { account: CreditAccount }) {
   const util = utilizationPercent(account);
   const monthly = effectiveMonthlyPayment(account);
+  const interest = monthlyInterest(account);
+  const trap = isMinimumPaymentTrap(account);
 
   return (
     <Link
@@ -32,6 +40,11 @@ function DebtAccountCard({ account }: { account: CreditAccount }) {
               ? ` · ${account.termMonths / 12}yr`
               : ""}
           </p>
+          {interest > 0 ? (
+            <p className="text-xs text-muted mt-0.5">
+              ≈ {formatUsd(interest)}/mo interest
+            </p>
+          ) : null}
         </div>
         <div className="text-right shrink-0">
           <p className="font-mono font-semibold text-money">
@@ -43,6 +56,12 @@ function DebtAccountCard({ account }: { account: CreditAccount }) {
           ▸
         </span>
       </div>
+
+      {trap ? (
+        <p className="mt-2 text-xs text-error flex items-center gap-1">
+          <span aria-hidden>⚠</span> Minimum payment barely covers interest
+        </p>
+      ) : null}
 
       {util != null ? (
         <div className="mt-3">
@@ -71,6 +90,7 @@ export function DebtTab() {
   const [refreshing, setRefreshing] = useState(false);
 
   const summary = useMemo(() => summarizeDebt(accounts), [accounts]);
+  const payoff = useMemo(() => summarizeDebtPayoff(accounts), [accounts]);
   const hasRevolving = accounts.some((a) => isRevolvingType(a.type));
 
   const onRefresh = async () => {
@@ -126,22 +146,41 @@ export function DebtTab() {
         </p>
       ) : null}
 
-      <Link
-        to="/app/debt/mortgage-calculator"
-        className="card block p-4 hover:ring-1 hover:ring-outline transition-shadow"
-      >
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 className="font-semibold text-body">Mortgage Calculator</h2>
-            <p className="text-sm text-muted mt-1">
-              Compare down payments, rates, and terms with payment schedules.
-            </p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Link
+          to="/app/debt/planner"
+          className="card block p-4 hover:ring-1 hover:ring-outline transition-shadow"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold text-body">Debt Planner</h2>
+              <p className="text-sm text-muted mt-1">
+                Snowball vs. avalanche payoff with a debt-free date.
+              </p>
+            </div>
+            <span className="text-muted shrink-0" aria-hidden>
+              ▸
+            </span>
           </div>
-          <span className="text-muted shrink-0" aria-hidden>
-            ▸
-          </span>
-        </div>
-      </Link>
+        </Link>
+
+        <Link
+          to="/app/debt/mortgage-calculator"
+          className="card block p-4 hover:ring-1 hover:ring-outline transition-shadow"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold text-body">Mortgage Calculator</h2>
+              <p className="text-sm text-muted mt-1">
+                Compare down payments, rates, and terms with payment schedules.
+              </p>
+            </div>
+            <span className="text-muted shrink-0" aria-hidden>
+              ▸
+            </span>
+          </div>
+        </Link>
+      </div>
 
       {loading ? (
         <p className="text-sm text-muted">Loading accounts…</p>
@@ -182,6 +221,33 @@ export function DebtTab() {
                   </p>
                 </div>
               </div>
+            ) : null}
+            {payoff.hasInterestBearingDebt ? (
+              <div className="mt-4 grid grid-cols-2 gap-4 text-center text-sm">
+                <div>
+                  <p className="opacity-70">Debt-free</p>
+                  <p className="font-semibold mt-1">
+                    {payoff.allFeasible && payoff.debtFreeDateMs != null
+                      ? formatPayoffDate(payoff.debtFreeDateMs)
+                      : "Not on track"}
+                  </p>
+                </div>
+                <div>
+                  <p className="opacity-70">Projected interest</p>
+                  <p className="font-mono font-semibold mt-1">
+                    {payoff.allFeasible
+                      ? formatUsd(payoff.totalInterest)
+                      : `${formatUsd(payoff.monthlyInterest)}/mo`}
+                  </p>
+                </div>
+              </div>
+            ) : null}
+            {!payoff.allFeasible && payoff.infeasibleCount > 0 ? (
+              <p className="text-center text-xs mt-3 text-on-primary-container/90">
+                ⚠ {payoff.infeasibleCount} account
+                {payoff.infeasibleCount === 1 ? "" : "s"} won&apos;t pay off at
+                the current payment.
+              </p>
             ) : null}
             <p className="text-center text-sm opacity-70 mt-4">
               {summary.accountCount} account

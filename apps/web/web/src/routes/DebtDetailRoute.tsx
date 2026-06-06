@@ -15,6 +15,12 @@ import {
   utilizationPercent,
   type CreditAccount,
 } from "../lib/creditAccount";
+import {
+  formatMonths,
+  formatPayoffDate,
+  monthlyInterest,
+  projectAccountPayoff,
+} from "../lib/debtPayoff";
 import { useBillsData } from "../lib/billsData";
 import { useDebtData } from "../lib/debtData";
 import { formatUsd } from "../lib/format";
@@ -156,7 +162,9 @@ export function DebtDetailRoute() {
 
       {account.type === "MORTGAGE" ? (
         <MortgageScheduleSection account={account} />
-      ) : null}
+      ) : (
+        <PayoffSection account={account} />
+      )}
 
       {linkedBill ? (
         <section className="card p-4 space-y-3">
@@ -270,5 +278,57 @@ export function DebtDetailRoute() {
         saving={saving}
       />
     </div>
+  );
+}
+
+function PayoffSection({ account }: { account: CreditAccount }) {
+  const interest = monthlyInterest(account);
+  const payment = effectiveMonthlyPayment(account);
+
+  if (account.currentBalance <= 0 || account.apr <= 0) return null;
+
+  const proj = projectAccountPayoff(account);
+
+  return (
+    <section className="card p-4 space-y-3">
+      <h2 className="section-title">Payoff Projection</h2>
+
+      {!proj.feasible ? (
+        <div className="notice-error text-sm" role="alert">
+          <p className="font-medium">Minimum payment trap</p>
+          <p className="mt-1">
+            At {formatUsd(payment)}/mo this balance won&apos;t be paid off —
+            roughly {formatUsd(interest)} of that goes to interest each month.
+            Increase the payment to make progress.
+          </p>
+        </div>
+      ) : null}
+
+      <dl className="space-y-2 text-sm">
+        <div className="flex justify-between gap-4">
+          <dt className="text-muted">Interest this month</dt>
+          <dd className="font-mono">{formatUsd(interest)}</dd>
+        </div>
+        {proj.feasible ? (
+          <>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted">Debt-free</dt>
+              <dd>
+                {proj.payoffDateMs != null
+                  ? `${formatPayoffDate(proj.payoffDateMs)} · ${formatMonths(proj.months)}`
+                  : "—"}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted">Total interest</dt>
+              <dd className="font-mono">{formatUsd(proj.totalInterest)}</dd>
+            </div>
+          </>
+        ) : null}
+      </dl>
+      <p className="text-xs text-muted">
+        Estimated at the current {formatUsd(payment)}/mo payment.
+      </p>
+    </section>
   );
 }
