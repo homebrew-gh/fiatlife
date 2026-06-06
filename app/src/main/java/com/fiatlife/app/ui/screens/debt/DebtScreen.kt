@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.TrendingDown
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,6 +21,9 @@ import com.fiatlife.app.domain.model.BillFrequency
 import com.fiatlife.app.domain.model.CreditAccount
 import com.fiatlife.app.domain.model.CreditAccountType
 import com.fiatlife.app.domain.model.CreditCardMinPaymentType
+import com.fiatlife.app.domain.model.formatPayoffDate
+import com.fiatlife.app.domain.model.isMinimumPaymentTrap
+import com.fiatlife.app.domain.model.monthlyInterest
 import com.fiatlife.app.ui.components.CurrencyTextField
 import com.fiatlife.app.ui.components.EmptyState
 import com.fiatlife.app.ui.components.MoneyText
@@ -138,6 +142,59 @@ fun DebtScreen(
                                 }
                             }
                         }
+                        val payoff = state.payoff
+                        if (payoff != null && payoff.hasInterestBearingDebt) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceEvenly
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(
+                                        text = "Debt-Free",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                    )
+                                    Text(
+                                        text = if (payoff.allFeasible && payoff.debtFreeDateMillis != null)
+                                            formatPayoffDate(payoff.debtFreeDateMillis)
+                                        else "Not on track",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(
+                                        text = "Projected Interest",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                    )
+                                    if (payoff.allFeasible) {
+                                        MoneyText(
+                                            amount = payoff.totalInterest,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    } else {
+                                        Text(
+                                            text = "${payoff.monthlyInterest.formatCurrency()}/mo",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
+                                }
+                            }
+                            if (!payoff.allFeasible && payoff.infeasibleCount > 0) {
+                                Text(
+                                    text = "⚠ ${payoff.infeasibleCount} account(s) won't pay off at the current payment.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f),
+                                    modifier = Modifier.padding(top = 8.dp)
+                                )
+                            }
+                        }
                         Text(
                             text = "${state.accounts.size} account(s)",
                             style = MaterialTheme.typography.bodySmall,
@@ -157,6 +214,45 @@ fun DebtScreen(
                     )
                 }
             } else {
+                item {
+                    Card(
+                        onClick = { navController.navigate(Screen.DebtPlanner.route) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.large,
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.TrendingDown,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Debt Planner",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Snowball vs. avalanche payoff with a debt-free date",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Icon(
+                                Icons.Filled.ChevronRight,
+                                contentDescription = "Open planner",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
                 items(state.accounts, key = { it.id }) { account ->
                     DebtAccountCard(
                         account = account,
@@ -191,6 +287,8 @@ private fun DebtAccountCard(
     account: CreditAccount,
     onClick: () -> Unit
 ) {
+    val interest = account.monthlyInterest()
+    val trap = account.isMinimumPaymentTrap()
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -198,48 +296,63 @@ private fun DebtAccountCard(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = account.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = account.type.displayName,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (account.institution.isNotBlank()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = account.institution,
+                        text = account.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = account.type.displayName,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (account.institution.isNotBlank()) {
+                        Text(
+                            text = account.institution,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (interest > 0) {
+                        Text(
+                            text = "≈ ${interest.formatCurrency()}/mo interest",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    MoneyText(
+                        amount = account.currentBalance,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = "${account.effectiveMonthlyPayment().formatCurrency()}/mo",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                MoneyText(
-                    amount = account.currentBalance,
-                    style = MaterialTheme.typography.titleMedium
+                Icon(
+                    Icons.Filled.ChevronRight,
+                    contentDescription = "View details",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
                 )
+            }
+            if (trap) {
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "${account.effectiveMonthlyPayment().formatCurrency()}/mo",
+                    text = "⚠ Minimum payment barely covers interest",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.error
                 )
             }
-            Icon(
-                Icons.Filled.ChevronRight,
-                contentDescription = "View details",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp)
-            )
         }
     }
 }

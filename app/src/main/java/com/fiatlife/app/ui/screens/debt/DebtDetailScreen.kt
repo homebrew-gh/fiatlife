@@ -10,6 +10,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.TrendingDown
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,6 +24,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.fiatlife.app.domain.model.CreditAccount
 import com.fiatlife.app.domain.model.StatementEntry
+import com.fiatlife.app.domain.model.formatMonths
+import com.fiatlife.app.domain.model.formatPayoffDate
+import com.fiatlife.app.domain.model.monthlyInterest
+import com.fiatlife.app.domain.model.projectPayoff
 import com.fiatlife.app.ui.components.MoneyText
 import com.fiatlife.app.ui.navigation.Screen
 import com.fiatlife.app.ui.components.SectionCard
@@ -131,6 +136,11 @@ fun DebtDetailScreen(
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
+
+                if (acc.apr > 0 && acc.currentBalance > 0) {
+                    PayoffProjectionCard(acc)
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
 
                 if (linkedBill != null) {
                     val bill = linkedBill!!
@@ -376,6 +386,74 @@ fun DebtDetailScreen(
             },
             isSaving = false
         )
+    }
+}
+
+@Composable
+private fun PayoffProjectionCard(account: CreditAccount) {
+    val interest = account.monthlyInterest()
+    val payment = account.effectiveMonthlyPayment()
+    val proj = account.projectPayoff()
+
+    SectionCard(title = "Payoff Projection", icon = Icons.AutoMirrored.Filled.TrendingDown) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (!proj.feasible) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.errorContainer
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "Minimum payment trap",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Text(
+                            text = "At ${payment.formatCurrency()}/mo this balance won't be paid off — " +
+                                "about ${interest.formatCurrency()} of that goes to interest each month. " +
+                                "Increase the payment to make progress.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Interest this month", style = MaterialTheme.typography.bodyMedium)
+                MoneyText(amount = interest, style = MaterialTheme.typography.bodyMedium)
+            }
+            if (proj.feasible) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Debt-free", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = proj.payoffDateMillis?.let {
+                            "${formatPayoffDate(it)} · ${formatMonths(proj.months)}"
+                        } ?: "—",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Total interest", style = MaterialTheme.typography.bodyMedium)
+                    MoneyText(amount = proj.totalInterest, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            Text(
+                text = "Estimated at the current ${payment.formatCurrency()}/mo payment.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 

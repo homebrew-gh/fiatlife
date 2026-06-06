@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.domain.model.CreditAccount
+import com.fiatlife.app.domain.model.DebtPayoffSummary
+import com.fiatlife.app.domain.model.summarizeDebtPayoff
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +21,7 @@ data class DebtState(
     val utilizationPercent: Double = 0.0,
     val totalDebt: Double = 0.0,
     val totalMonthlyPayment: Double = 0.0,
+    val payoff: DebtPayoffSummary? = null,
     val showAddDialog: Boolean = false,
     val editingAccount: CreditAccount? = null,
     val navigateToAccountId: String? = null,
@@ -43,6 +46,7 @@ class DebtViewModel @Inject constructor(
                 val utilization = if (totalAvailable > 0) totalUtilized / totalAvailable else 0.0
                 val totalDebt = accounts.sumOf { it.currentBalance }
                 val totalMonthly = accounts.sumOf { it.effectiveMonthlyPayment() }
+                val payoffSummary = summarizeDebtPayoff(accounts)
 
                 _state.update {
                     it.copy(
@@ -53,7 +57,8 @@ class DebtViewModel @Inject constructor(
                         totalCreditUtilized = totalUtilized,
                         utilizationPercent = utilization,
                         totalDebt = totalDebt,
-                        totalMonthlyPayment = totalMonthly
+                        totalMonthlyPayment = totalMonthly,
+                        payoff = payoffSummary
                     )
                 }
             }

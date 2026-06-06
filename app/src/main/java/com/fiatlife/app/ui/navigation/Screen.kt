@@ -102,6 +102,14 @@ sealed class Screen(
         fun routeWithId(accountId: String) = "debt_detail/$accountId"
     }
 
+    data object DebtPlanner : Screen(
+        route = "debt_planner",
+        title = "Debt Planner",
+        subtitle = "Payoff strategy and debt-free date",
+        selectedIcon = Icons.Filled.AccountBalance,
+        unselectedIcon = Icons.Outlined.AccountBalance
+    )
+
     companion object {
         /** Bottom tab items (Settings is in top bar) */
         val bottomNavItems = listOf(Dashboard, Salary, Bills, Debt, Goals)
@@ -117,6 +125,7 @@ sealed class Screen(
             route?.startsWith("company_history/") == true -> CompanyHistoryDetail
             route == CompanyHistory.route -> CompanyHistory
             route?.startsWith("debt_detail") == true -> DebtDetail
+            route == DebtPlanner.route -> DebtPlanner
             else -> null
         }
     }
