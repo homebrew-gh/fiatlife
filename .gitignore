@@ -26,6 +26,7 @@ release/
 *.keystore
 *.jks
 !debug.keystore
+app/build/
 app/release/
 app/debug/
 apps/web/web/node_modules/
