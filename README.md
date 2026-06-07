@@ -2,6 +2,19 @@
 
 A privacy-first Android application for tracking your fiat finances. All data is stored encrypted via Nostr events on your personal relay and synced across devices. Attachments (bills, statements) are stored on a Blossom server.
 
+## Downloads
+
+Official releases include the Android APK and Start9 server package:
+
+**[Latest release](https://github.com/homebrew-gh/fiatlife/releases/latest)**
+
+| Platform | Package |
+|----------|---------|
+| Android | `fiatlife-android-*.apk` — sideload on Android 8+ |
+| Start9 (x86_64) | `fiatlife_x86_64.s9pk` — StartOS → Sideload |
+
+See [`packages/start9/README.md`](packages/start9/README.md) for aarch64 builds and server setup.
+
 ## Features
 
 ### Paycheck Calculator
