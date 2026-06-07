@@ -83,6 +83,7 @@ fun SalaryScreen(
     if (state.showLogDialog) {
         LogPaycheckDialog(
             editing = state.editingLog,
+            payDateHint = state.logPayDateHint,
             calculation = calc,
             config = state.config,
             onDismiss = { viewModel.dismissLogDialog() },
@@ -1074,13 +1075,63 @@ private fun androidx.compose.foundation.lazy.LazyListScope.summaryContent(
     item {
         SectionCard(title = "Paycheck Log", icon = Icons.Filled.ReceiptLong) {
             val logs = SalarySummary.logsForYear(state.config, state.summaryYear)
-            if (logs.isEmpty()) {
+            val missing = SalarySummary.missingPaydaysForYear(state.config, state.summaryYear)
+            val canDetectMissing = SalarySummary.canDetectMissingPaychecks(state.config)
+
+            if (logs.isEmpty() && missing.isEmpty()) {
                 Text(
-                    text = "No paychecks logged for ${state.summaryYear} yet.",
+                    text = if (canDetectMissing) {
+                        "No paychecks logged for ${state.summaryYear} yet."
+                    } else {
+                        "No paychecks logged for ${state.summaryYear} yet. Set your first payday of the year " +
+                                "in the Calculator tab to track missing checks."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
+                if (missing.isNotEmpty()) {
+                    Text(
+                        text = "${missing.size} missing paycheck${if (missing.size == 1) "" else "s"}",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = WarningAmber
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    missing.forEach { payday ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    formatIsoDate(payday),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    "Not logged",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            TextButton(onClick = { viewModel.showLogPaycheck(payDateHint = payday) }) {
+                                Text("Log")
+                            }
+                        }
+                    }
+                    if (logs.isNotEmpty()) {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Text(
+                            text = "Logged",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(4.dp))
+                    }
+                }
                 logs.forEach { entry ->
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -1253,13 +1304,16 @@ private fun linesFromEntryAndroid(entry: PaycheckLogEntry?): LogLinesUi {
 @Composable
 private fun LogPaycheckDialog(
     editing: PaycheckLogEntry?,
+    payDateHint: Long?,
     calculation: PaycheckCalculation,
     config: SalaryConfig,
     onDismiss: () -> Unit,
     onSave: (PaycheckLogEntry) -> Unit
 ) {
     val initial = remember(editing) { linesFromEntryAndroid(editing) }
-    var payDate by remember { mutableStateOf(formatIsoDate(editing?.payDate ?: System.currentTimeMillis())) }
+    var payDate by remember(editing, payDateHint) {
+        mutableStateOf(formatIsoDate(editing?.payDate ?: payDateHint ?: System.currentTimeMillis()))
+    }
     var earnings by remember { mutableStateOf(initial.earnings) }
     var taxes by remember { mutableStateOf(initial.taxes) }
     var preTax by remember { mutableStateOf(initial.preTax) }

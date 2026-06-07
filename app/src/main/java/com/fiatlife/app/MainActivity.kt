@@ -21,9 +21,12 @@ import androidx.compose.runtime.setValue
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.lifecycleScope
 import com.fiatlife.app.data.blossom.BlossomClient
+import com.fiatlife.app.data.network.RelayTlsSettings
+import com.fiatlife.app.data.network.RelayUrlValidator
 import com.fiatlife.app.data.nostr.*
 import com.fiatlife.app.data.repository.BillRepository
 import com.fiatlife.app.data.repository.BillerRepository
@@ -64,6 +67,7 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var bankAccountRepository: BankAccountRepository
     @Inject lateinit var cypherLogSubscriptionRepository: CypherLogSubscriptionRepository
     @Inject lateinit var appSettingsRepository: AppSettingsRepository
+    @Inject lateinit var relayTlsSettings: RelayTlsSettings
 
     val amberSignerRef = AtomicReference<AmberSigner?>(null)
     lateinit var decryptLauncher: ActivityResultLauncher<Intent>
@@ -84,16 +88,20 @@ class MainActivity : ComponentActivity() {
         val KEY_SIGNER_PACKAGE = stringPreferencesKey("signer_package")
         val KEY_RELAY_URL = stringPreferencesKey("relay_url")
         val KEY_BLOSSOM_URL = stringPreferencesKey("blossom_url")
+        /** Accept self-signed TLS for wss/https to LAN/VPN hosts (Start9, WireGuard, etc.). */
+        val KEY_TRUST_SELF_SIGNED_LAN_TLS = booleanPreferencesKey("trust_self_signed_lan_tls")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_SECURE,
-            WindowManager.LayoutParams.FLAG_SECURE
-        )
+        if (!BuildConfig.DEBUG) {
+            window.setFlags(
+                WindowManager.LayoutParams.FLAG_SECURE,
+                WindowManager.LayoutParams.FLAG_SECURE
+            )
+        }
 
         if (pinPrefs.isPinLockEnabled() && pinPrefs.hasPinSet()) {
             needsPinUnlock.value = true
@@ -229,9 +237,16 @@ class MainActivity : ComponentActivity() {
                     !hasRelayConfigured -> {
                         isInMainApp = false
                         RelaySetupScreen(
+                            initialTrustSelfSignedLanTls = relayTlsSettings.trustSelfSignedLanTls,
+                            onTrustTlsChange = { enabled ->
+                                relayTlsSettings.applyTrustSelfSignedLanTls(enabled)
+                                lifecycleScope.launch {
+                                    relayTlsSettings.setTrustSelfSignedLanTls(enabled)
+                                }
+                            },
                             isLoading = relaySetupLoading,
                             loadingMessage = relaySetupStatus,
-                            onSave = { relayInput, blossomInput ->
+                            onSave = { relayInput, blossomInput, trustLanTls ->
                                 if (relaySetupLoading) return@RelaySetupScreen
                                 lifecycleScope.launch {
                                     relaySetupLoading = true
@@ -239,19 +254,30 @@ class MainActivity : ComponentActivity() {
                                     val blossomUrl = normalizeBlossomUrl(blossomInput)
                                     try {
                                         relaySetupStatus = "Saving relay settings…"
+                                        relayTlsSettings.applyTrustSelfSignedLanTls(trustLanTls)
+                                        relayTlsSettings.setTrustSelfSignedLanTls(trustLanTls)
                                         dataStore.edit { prefs ->
                                             prefs[KEY_RELAY_URL] = relayUrl
                                             prefs[KEY_BLOSSOM_URL] = blossomUrl
+                                            prefs[KEY_TRUST_SELF_SIGNED_LAN_TLS] = trustLanTls
                                         }
 
                                         if (relayUrl.isNotBlank()) {
+                                            val signer = nostrClient.currentSigner
+                                            if (signer == null) {
+                                                relaySetupStatus = "No signer configured. Sign out and sign in again."
+                                                return@launch
+                                            }
                                             relaySetupStatus = "Connecting to relay…"
-                                            nostrClient.connect(relayUrl)
+                                            nostrClient.disconnect()
+                                            nostrClient.connect(relayUrl, signer)
                                             val ready = nostrClient.awaitReady(12_000)
-                                            relaySetupStatus = if (ready) {
-                                                "Connected. Loading your data…"
-                                            } else {
-                                                "Waiting for relay/auth. Loading queued data…"
+                                            relaySetupStatus = when {
+                                                ready -> "Connected. Loading your data…"
+                                                nostrClient.connectionState.value ->
+                                                    "Connected but relay auth is still pending. Loading queued data…"
+                                                else ->
+                                                    "Could not connect to relay. Check the URL and enable Self-signed LAN certificate if using Start9."
                                             }
                                             nostrClient.currentSigner?.let { signer ->
                                                 if (blossomUrl.isNotBlank()) blossomClient.configure(blossomUrl, signer)
@@ -444,12 +470,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun normalizeRelayUrl(url: String): String {
-        val trimmed = url.trim()
-        if (trimmed.isEmpty()) return trimmed
-        if (trimmed.startsWith("wss://") || trimmed.startsWith("ws://")) return trimmed
-        return "wss://$trimmed"
-    }
+    private fun normalizeRelayUrl(url: String): String = RelayUrlValidator.normalize(url)
 
     private fun normalizeBlossomUrl(url: String): String {
         val trimmed = url.trim()

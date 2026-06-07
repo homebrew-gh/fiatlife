@@ -32,6 +32,9 @@ class GoalRepository @Inject constructor(
         private const val NOSTR_D_TAG_PREFIX = "fiatlife/goal/"
     }
 
+    fun observeHasData(): Flow<Boolean> =
+        goalDao.observeCount().map { it > 0 }
+
     fun getAllGoals(): Flow<List<FinancialGoal>> {
         return goalDao.getAll().map { entities ->
             entities.mapNotNull { entity ->

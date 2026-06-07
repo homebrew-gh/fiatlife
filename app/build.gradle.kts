@@ -73,6 +73,13 @@ android {
         buildConfig = true
     }
 
+    composeCompiler {
+        // Strong skipping lets Compose skip composables even when they take
+        // unstable params (List/Map/etc.) by comparing with instance equality.
+        // Opt-in on Kotlin 2.0.10; default from 2.0.20. Big recomposition win.
+        enableStrongSkippingMode = true
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

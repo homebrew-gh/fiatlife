@@ -1,6 +1,7 @@
 package com.fiatlife.app.ui.components
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -27,6 +28,8 @@ import com.fiatlife.app.ui.theme.WarningAmber
 import java.text.NumberFormat
 import java.util.Locale
 
+private val currencyFormatter = ThreadLocal.withInitial { NumberFormat.getCurrencyInstance(Locale.US) }
+
 @Composable
 fun MoneyText(
     amount: Double,
@@ -35,8 +38,7 @@ fun MoneyText(
     color: Color = MoneyGreen,
     showSign: Boolean = false
 ) {
-    val formatter = NumberFormat.getCurrencyInstance(Locale.US)
-    val formatted = formatter.format(amount)
+    val formatted = currencyFormatter.get().format(amount)
     val display = if (showSign && amount > 0) "+$formatted" else formatted
 
     Text(
@@ -63,7 +65,7 @@ fun SectionCard(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -101,11 +103,13 @@ fun ProgressBar(
     modifier: Modifier = Modifier,
     color: Color = ProfitGreen,
     trackColor: Color = MaterialTheme.colorScheme.surfaceVariant,
-    height: Int = 12
+    height: Int = 12,
+    animated: Boolean = false
 ) {
-    val animatedProgress by animateFloatAsState(
-        targetValue = progress.coerceIn(0f, 1f),
-        animationSpec = tween(600),
+    val target = progress.coerceIn(0f, 1f)
+    val displayProgress by animateFloatAsState(
+        targetValue = target,
+        animationSpec = if (animated) tween(600) else snap(),
         label = "progress"
     )
 
@@ -119,7 +123,7 @@ fun ProgressBar(
         Box(
             modifier = Modifier
                 .fillMaxHeight()
-                .fillMaxWidth(animatedProgress)
+                .fillMaxWidth(displayProgress)
                 .clip(RoundedCornerShape(height / 2))
                 .background(color)
         )
@@ -316,9 +320,7 @@ fun AppBanner(
     }
 }
 
-fun Double.formatCurrency(): String {
-    return NumberFormat.getCurrencyInstance(Locale.US).format(this)
-}
+fun Double.formatCurrency(): String = currencyFormatter.get().format(this)
 
 fun Double.formatPercentage(decimals: Int = 1): String {
     return "%.${decimals}f%%".format(this * 100)

@@ -9,6 +9,9 @@ interface CypherLogSubscriptionDao {
     @Query("SELECT * FROM cypherlog_subscriptions ORDER BY createdAt DESC")
     fun getAll(): Flow<List<CypherLogSubscriptionEntity>>
 
+    @Query("SELECT COUNT(*) FROM cypherlog_subscriptions")
+    fun observeCount(): Flow<Int>
+
     @Query("SELECT * FROM cypherlog_subscriptions ORDER BY createdAt DESC")
     suspend fun getAllSnapshot(): List<CypherLogSubscriptionEntity>
 

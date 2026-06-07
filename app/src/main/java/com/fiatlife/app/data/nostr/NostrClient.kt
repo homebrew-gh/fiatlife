@@ -8,6 +8,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.*
+import com.fiatlife.app.data.network.NetworkClients
 import okhttp3.*
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -39,13 +40,14 @@ data class OutboxState(
 
 @Singleton
 class NostrClient @Inject constructor(
-    private val okHttpClient: OkHttpClient
+    private val networkClients: NetworkClients
 ) {
     private var webSocket: WebSocket? = null
     private var relayUrl: String = ""
     private var signer: NostrSigner? = null
     private var isAuthenticated = false
     private var authInFlight = false
+    private var authChallengeReceived = false
 
     /** Buffer must be large enough to avoid dropping events when relay sends many at once. */
     private val _messages = MutableSharedFlow<NostrMessage>(extraBufferCapacity = 512)
@@ -78,17 +80,22 @@ class NostrClient @Inject constructor(
     }
 
     fun connect(relayUrl: String) {
-        val s = signer ?: return
+        val s = signer
+        if (s == null) {
+            Log.w(TAG, "connect($relayUrl) skipped — no signer configured")
+            return
+        }
         connect(relayUrl, s)
     }
 
     fun connect(relayUrl: String, signer: NostrSigner) {
-        if (_connectionState.value && this.relayUrl == relayUrl) return
+        if (_connectionState.value && this.relayUrl == relayUrl && isAuthenticated) return
 
         this.relayUrl = relayUrl
         this.signer = signer
         this.isAuthenticated = false
         this.authInFlight = false
+        this.authChallengeReceived = false
 
         disconnect()
 
@@ -96,17 +103,17 @@ class NostrClient @Inject constructor(
             .url(relayUrl)
             .build()
 
-        webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
+        webSocket = networkClients.clientFor(relayUrl).newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.d(TAG, "WebSocket open to $relayUrl")
                 _connectionState.value = true
                 _messages.tryEmit(NostrMessage.Connected)
                 // Don't drain the pending queue yet — wait for NIP-42 auth.
-                // If the relay doesn't send AUTH within 1.5s, assume no auth
-                // is required and drain then.
+                // If the relay doesn't send AUTH within 7s, assume no auth
+                // is required and drain then (slow VPN links need more time).
                 scope.launch {
-                    delay(1500)
-                    if (_connectionState.value && !isAuthenticated && !authInFlight) {
+                    delay(7_000)
+                    if (_connectionState.value && !isAuthenticated && !authInFlight && !authChallengeReceived) {
                         Log.d(TAG, "No AUTH challenge received, assuming open relay")
                         isAuthenticated = true
                         drainPendingQueue()
@@ -125,8 +132,10 @@ class NostrClient @Inject constructor(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.w(TAG, "WebSocket failure: ${t.message}")
+                Log.w(TAG, "WebSocket failure to $relayUrl: ${t.message}", t)
                 _connectionState.value = false
+                isAuthenticated = false
+                authInFlight = false
                 _messages.tryEmit(NostrMessage.Error(t))
             }
         })
@@ -168,6 +177,7 @@ class NostrClient @Inject constructor(
         _connectionState.value = false
         isAuthenticated = false
         authInFlight = false
+        authChallengeReceived = false
     }
 
     fun clearSigner() {
@@ -587,9 +597,17 @@ class NostrClient @Inject constructor(
                 "AUTH" -> {
                     val challenge = array[1].jsonPrimitive.content
                     Log.d(TAG, "AUTH challenge received")
+                    authChallengeReceived = true
                     authInFlight = true
                     _messages.tryEmit(NostrMessage.AuthChallenge(challenge))
                     handleAuthChallenge(challenge)
+                }
+                "CLOSED" -> {
+                    val reason = if (array.size > 2) array[2].jsonPrimitive.content else ""
+                    Log.w(TAG, "CLOSED from relay: $reason")
+                    if (reason.contains("auth-required", ignoreCase = true)) {
+                        isAuthenticated = false
+                    }
                 }
             }
         } catch (e: Exception) {

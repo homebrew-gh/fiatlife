@@ -10,11 +10,14 @@ import com.fiatlife.app.domain.model.BillFrequency
 import com.fiatlife.app.domain.model.BillStatusEvent
 import com.fiatlife.app.domain.model.BillSubcategory
 import com.fiatlife.app.domain.model.StatementEntry
+import com.fiatlife.app.data.repository.stateWhileSubscribed
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -68,34 +71,39 @@ class CompanyHistoryViewModel @Inject constructor(
     private val cypherLogSubscriptionRepository: CypherLogSubscriptionRepository,
     private val billerRepository: BillerRepository
 ) : ViewModel() {
-    private val _state = MutableStateFlow(CompanyHistoryState())
-    val state: StateFlow<CompanyHistoryState> = _state.asStateFlow()
+    private val uiOverlay = MutableStateFlow(CompanyHistoryUiOverlay())
     private var allCompaniesCache: List<CompanyHistoryRow> = emptyList()
 
-    init {
-        viewModelScope.launch {
-            combine(
-                billRepository.getAllBills(),
-                cypherLogSubscriptionRepository.getAllAsBills(),
-                billerRepository.getAllBillers()
-            ) { nativeBills, cypherLogBills, billers ->
-                val cypherIds = cypherLogBills.map { it.bill.id }.toSet()
-                val allBills = nativeBills + cypherLogBills.map { it.bill }
-                buildState(allBills, cypherIds, billers)
-            }.collect { next ->
-                allCompaniesCache = next.companies
-                _state.update { prev ->
-                    prev.copy(
-                        companies = allCompaniesCache.filter { if (prev.showArchived) it.isArchived else !it.isArchived },
-                        paymentsByCompanyKey = next.paymentsByCompanyKey,
-                        statementsByCompanyKey = next.statementsByCompanyKey,
-                        billsByCompanyKey = next.billsByCompanyKey,
-                        cypherBillIds = next.cypherBillIds
-                    )
-                }
-            }
+    val state: StateFlow<CompanyHistoryState> = combine(
+        combine(
+            billRepository.getAllBills(),
+            cypherLogSubscriptionRepository.getAllAsBills(),
+            billerRepository.getAllBillers()
+        ) { nativeBills, cypherLogBills, billers ->
+            val cypherIds = cypherLogBills.map { it.bill.id }.toSet()
+            val allBills = nativeBills + cypherLogBills.map { it.bill }
+            buildState(allBills, cypherIds, billers)
         }
-    }
+            .flowOn(Dispatchers.Default)
+            .distinctUntilChanged(),
+        uiOverlay
+    ) { next, ui ->
+        allCompaniesCache = next.companies
+        CompanyHistoryState(
+            companies = allCompaniesCache.filter { if (ui.showArchived) it.isArchived else !it.isArchived },
+            paymentsByCompanyKey = next.paymentsByCompanyKey,
+            statementsByCompanyKey = next.statementsByCompanyKey,
+            billsByCompanyKey = next.billsByCompanyKey,
+            cypherBillIds = next.cypherBillIds,
+            showArchived = ui.showArchived,
+            message = ui.message
+        )
+    }.stateWhileSubscribed(viewModelScope, CompanyHistoryState())
+
+    private data class CompanyHistoryUiOverlay(
+        val showArchived: Boolean = false,
+        val message: String = ""
+    )
 
     private data class CompanyRef(val key: String, val name: String)
 
@@ -205,12 +213,7 @@ class CompanyHistoryViewModel @Inject constructor(
     }
 
     fun setShowArchived(show: Boolean) {
-        _state.update { state ->
-            state.copy(
-                showArchived = show,
-                companies = allCompaniesCache.filter { if (show) it.isArchived else !it.isArchived }
-            )
-        }
+        uiOverlay.update { it.copy(showArchived = show) }
     }
 
     fun uploadStatementForCompany(
@@ -223,7 +226,7 @@ class CompanyHistoryViewModel @Inject constructor(
         viewModelScope.launch {
             val target = selectTargetBill(companyKey, targetBillId)
             if (target == null) {
-                _state.update { it.copy(message = "No bill found for this company.") }
+                uiOverlay.update { it.copy(message = "No bill found for this company.") }
                 return@launch
             }
             billRepository.uploadAttachment(bytes, contentType, filename)
@@ -235,27 +238,27 @@ class CompanyHistoryViewModel @Inject constructor(
                         label = filename
                     )
                     billRepository.saveBill(target.copy(statementEntries = nextStatements))
-                    _state.update { it.copy(message = "Statement uploaded to ${target.name}.") }
+                    uiOverlay.update { it.copy(message = "Statement uploaded to ${target.name}.") }
                 }
                 .onFailure { e ->
-                    _state.update { it.copy(message = "Upload failed: ${e.message}") }
+                    uiOverlay.update { it.copy(message = "Upload failed: ${e.message}") }
                 }
         }
     }
 
     fun clearMessage() {
-        _state.update { it.copy(message = "") }
+        uiOverlay.update { it.copy(message = "") }
     }
 
     fun skipSubscriptionInterval(companyKey: String, billId: String) {
         val bill = selectTargetBill(companyKey, billId) ?: return
         if (!bill.canSkipInterval()) {
-            _state.update { it.copy(message = "Skip is only available for Food and Health/Wellness subscriptions.") }
+            uiOverlay.update { it.copy(message = "Skip is only available for Food and Health/Wellness subscriptions.") }
             return
         }
         val skippedDue = bill.skippedNextDueDateMillis()
         if (skippedDue == null) {
-            _state.update { it.copy(message = "Could not calculate next interval.") }
+            uiOverlay.update { it.copy(message = "Could not calculate next interval.") }
             return
         }
         val now = System.currentTimeMillis()
@@ -336,8 +339,8 @@ class CompanyHistoryViewModel @Inject constructor(
 
     fun deleteCompany(companyKey: String, companyName: String) {
         viewModelScope.launch {
-            val bills = _state.value.billsByCompanyKey[companyKey].orEmpty()
-            val cypherIds = _state.value.cypherBillIds
+            val bills = state.value.billsByCompanyKey[companyKey].orEmpty()
+            val cypherIds = state.value.cypherBillIds
             bills.forEach { bill ->
                 if (bill.id in cypherIds) cypherLogSubscriptionRepository.deleteSubscription(bill.id)
                 else billRepository.deleteBill(bill)
@@ -351,7 +354,7 @@ class CompanyHistoryViewModel @Inject constructor(
                     billerRepository.getByNormalizedName(normalized)?.let { billerRepository.deleteById(it.id) }
                 }
             }
-            _state.update {
+            uiOverlay.update {
                 it.copy(
                     message = "Deleted company \"$companyName\" and associated bills. Note: relay policy may keep historical Nostr events."
                 )
@@ -360,7 +363,7 @@ class CompanyHistoryViewModel @Inject constructor(
     }
 
     private fun selectTargetBill(companyKey: String, targetBillId: String?): Bill? {
-        val bills = _state.value.billsByCompanyKey[companyKey].orEmpty()
+        val bills = state.value.billsByCompanyKey[companyKey].orEmpty()
         if (bills.isEmpty()) return null
         targetBillId?.let { id -> bills.firstOrNull { it.id == id }?.let { return it } }
         return bills.maxByOrNull { it.updatedAt }
@@ -368,16 +371,16 @@ class CompanyHistoryViewModel @Inject constructor(
 
     private fun saveBillBySource(updated: Bill) {
         viewModelScope.launch {
-            if (updated.id in _state.value.cypherBillIds) {
+            if (updated.id in state.value.cypherBillIds) {
                 val result = cypherLogSubscriptionRepository.saveSubscriptionDetailed(updated, null)
-                _state.update {
+                uiOverlay.update {
                     it.copy(
                         message = if (result.success) "Subscription updated." else "Update failed: ${result.reason}"
                     )
                 }
             } else {
                 billRepository.saveBill(updated)
-                _state.update { it.copy(message = "Subscription updated.") }
+                uiOverlay.update { it.copy(message = "Subscription updated.") }
             }
         }
     }

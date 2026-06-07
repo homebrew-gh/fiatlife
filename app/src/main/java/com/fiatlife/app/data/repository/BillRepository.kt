@@ -34,6 +34,9 @@ class BillRepository @Inject constructor(
         private const val NOSTR_D_TAG_PREFIX = "fiatlife/bill/"
     }
 
+    fun observeHasData(): Flow<Boolean> =
+        billDao.observeCount().map { it > 0 }
+
     fun getAllBills(): Flow<List<Bill>> {
         return billDao.getAll().map { entities ->
             entities.map { json.decodeFromString<Bill>(it.jsonData) }

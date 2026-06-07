@@ -22,9 +22,6 @@ import com.fiatlife.app.ui.components.*
 import com.fiatlife.app.ui.navigation.Screen
 import com.fiatlife.app.ui.theme.*
 import com.fiatlife.app.ui.viewmodel.DashboardViewModel
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -193,16 +190,11 @@ fun DashboardScreen(
 
         if (state.upcomingBills.isNotEmpty()) {
             item {
-                val dateFormat = SimpleDateFormat("EEE, MMM d", Locale.getDefault())
                 SectionCard(
                     title = "Upcoming Bills",
                     icon = Icons.Filled.Receipt
                 ) {
                     state.upcomingBills.forEach { bill ->
-                        val dueMillis = if (bill.isPastDue()) bill.lastDueDateMillis() else bill.nextDueDateMillis()
-                        val dueDateText = dueMillis?.let { dateFormat.format(Date(it)) }
-                            ?.let { if (bill.isPastDue()) "$it (Overdue)" else it }
-                            ?: ""
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -220,15 +212,15 @@ fun DashboardScreen(
                                     fontWeight = FontWeight.Medium
                                 )
                                 Text(
-                                    text = bill.effectiveSubcategory.displayName,
+                                    text = bill.subcategoryName,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                if (dueDateText.isNotEmpty()) {
+                                if (bill.dueDateText.isNotEmpty()) {
                                     Text(
-                                        text = dueDateText,
+                                        text = bill.dueDateText,
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = if (bill.isPastDue())
+                                        color = if (bill.isPastDue)
                                             MaterialTheme.colorScheme.error
                                         else
                                             MaterialTheme.colorScheme.primary
@@ -236,7 +228,7 @@ fun DashboardScreen(
                                 }
                             }
                             MoneyText(
-                                amount = bill.effectiveAmountDue(),
+                                amount = bill.amountDue,
                                 style = MaterialTheme.typography.bodyLarge
                             )
                         }
@@ -415,7 +407,7 @@ private fun QuickStatCard(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(16.dp),

@@ -201,6 +201,9 @@ class CypherLogSubscriptionRepository @Inject constructor(
         val reason: String = ""
     )
 
+    fun observeHasData(): Flow<Boolean> =
+        dao.observeCount().map { it > 0 }
+
     fun getAllAsBills(): Flow<List<BillWithSource>> {
         return dao.getAll().map { entities ->
             entities.mapNotNull { entity -> entityToBillWithSource(entity) }

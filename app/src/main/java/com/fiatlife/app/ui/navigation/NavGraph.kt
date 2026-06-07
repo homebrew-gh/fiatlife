@@ -53,12 +53,6 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
-    val mainViewModel: MainAppViewModel = hiltViewModel()
-    val mainState by mainViewModel.state.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    var manualSyncStarted by remember { mutableStateOf(false) }
-    val snackbarHostState = remember { SnackbarHostState() }
-    var lastFailedSync by remember { mutableIntStateOf(0) }
     val currentScreen = Screen.fromRoute(currentDestination?.route)
     val hideGlobalTopBar = currentScreen == Screen.BillDetail ||
         currentScreen == Screen.DebtDetail ||
@@ -66,56 +60,16 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
         currentScreen == Screen.CompanyHistory ||
         currentScreen == Screen.CompanyHistoryDetail
 
-    LaunchedEffect(mainState.isManualSyncing) {
-        if (mainState.isManualSyncing) {
-            manualSyncStarted = true
-            Toast.makeText(context, "Syncing with relay…", Toast.LENGTH_SHORT).show()
-        } else if (manualSyncStarted) {
-            manualSyncStarted = false
-            Toast.makeText(context, "Sync complete", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    // Surface newly-failed background publishes via a snackbar with Retry.
-    LaunchedEffect(mainState.failedSync) {
-        val failed = mainState.failedSync
-        if (failed > lastFailedSync) {
-            val result = snackbarHostState.showSnackbar(
-                message = "$failed change${if (failed == 1) "" else "s"} not synced",
-                actionLabel = "Retry",
-                duration = SnackbarDuration.Long,
-            )
-            if (result == SnackbarResult.ActionPerformed) {
-                mainViewModel.retryFailedSync()
-            }
-        }
-        lastFailedSync = failed
-    }
-
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = { MainAppSnackbarHost() },
         topBar = {
             if (!hideGlobalTopBar) {
-                Surface(
-                    modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
-                    color = MaterialTheme.colorScheme.surface,
-                    shadowElevation = 2.dp
-                ) {
-                    AppBanner(
-                        title = currentScreen?.title ?: "FiatLife",
-                        subtitle = currentScreen?.subtitle?.takeIf { it.isNotBlank() } ?: "Your financial dashboard",
-                        isConnected = mainState.isConnected,
-                        hasData = mainState.hasData,
-                        isSyncing = mainState.isManualSyncing,
-                        onSyncClick = { mainViewModel.manualSyncFromRelay() },
-                        actions = {
-                            IconButton(onClick = { navController.navigate(Screen.Settings.route) }) {
-                                Icon(Icons.Filled.Settings, contentDescription = "Settings")
-                            }
-                        }
-                    )
-                }
+                MainAppTopBar(
+                    title = currentScreen?.title ?: "FiatLife",
+                    subtitle = currentScreen?.subtitle?.takeIf { it.isNotBlank() } ?: "Your financial dashboard",
+                    onSettingsClick = { navController.navigate(Screen.Settings.route) }
+                )
             }
         },
         bottomBar = {
@@ -138,7 +92,6 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
                         label = { Text(screen.title) },
                         selected = selected,
                         onClick = {
-                            // If we're on Settings (or a detail screen), pop first so we're not stuck
                             val isOnNonTabScreen = currentDestination?.route != null &&
                                 currentDestination?.route != screen.route &&
                                 !Screen.bottomNavItems.any { it.route == currentDestination?.route }
@@ -164,73 +117,146 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
         }
     ) { innerPadding ->
         Column(modifier = Modifier.padding(innerPadding)) {
-            SyncStatusBar(
-                pending = mainState.pendingSync,
-                failed = mainState.failedSync,
-                onRetry = { mainViewModel.retryFailedSync() },
-            )
+            MainAppSyncBar()
             NavHost(
                 navController = navController,
-                startDestination = Screen.Dashboard.route,
-                enterTransition = { fadeIn(animationSpec = tween(200)) },
-                exitTransition = { fadeOut(animationSpec = tween(200)) }
+                startDestination = Screen.Dashboard.route
             ) {
-            composable(Screen.Dashboard.route) {
-                DashboardScreen(navController = navController)
-            }
-            composable(Screen.Salary.route) {
-                SalaryScreen()
-            }
-            composable(Screen.Bills.route) {
-                BillsScreen(navController = navController)
-            }
-            composable(Screen.CompanyHistory.route) {
-                CompanyHistoryScreen(navController = navController)
-            }
-            composable(Screen.Debt.route) {
-                DebtScreen(navController = navController)
-            }
-            composable(Screen.DebtPlanner.route) {
-                DebtPlannerScreen(navController = navController)
-            }
-            composable(Screen.Goals.route) {
-                GoalsScreen()
-            }
-            composable(Screen.Settings.route) {
-                SettingsScreen(onLogout = onLogout)
-            }
-            composable(
-                route = Screen.BillDetail.route,
-                arguments = listOf(navArgument("billId") { type = NavType.StringType })
-            ) {
-                BillDetailScreen(navController = navController)
-            }
-            composable(
-                route = Screen.DebtDetail.route,
-                arguments = listOf(navArgument("accountId") { type = NavType.StringType })
-            ) {
-                DebtDetailScreen(navController = navController)
-            }
-            composable(
-                route = Screen.CompanyHistoryDetail.route,
-                arguments = listOf(
-                    navArgument("companyKey") { type = NavType.StringType },
-                    navArgument("companyName") { type = NavType.StringType }
-                )
-            ) { backStackEntry ->
-                val companyKey = android.net.Uri.decode(
-                    backStackEntry.arguments?.getString("companyKey").orEmpty()
-                )
-                val companyName = android.net.Uri.decode(
-                    backStackEntry.arguments?.getString("companyName").orEmpty()
-                )
-                CompanyHistoryDetailScreen(
-                    navController = navController,
-                    companyKey = companyKey,
-                    companyName = companyName
-                )
-            }
+                composable(Screen.Dashboard.route) {
+                    DashboardScreen(navController = navController)
+                }
+                composable(Screen.Salary.route) {
+                    SalaryScreen()
+                }
+                composable(Screen.Bills.route) {
+                    BillsScreen(navController = navController)
+                }
+                composable(Screen.CompanyHistory.route) {
+                    CompanyHistoryScreen(navController = navController)
+                }
+                composable(Screen.Debt.route) {
+                    DebtScreen(navController = navController)
+                }
+                composable(Screen.DebtPlanner.route) {
+                    DebtPlannerScreen(navController = navController)
+                }
+                composable(Screen.Goals.route) {
+                    GoalsScreen()
+                }
+                composable(Screen.Settings.route) {
+                    SettingsScreen(onLogout = onLogout)
+                }
+                composable(
+                    route = Screen.BillDetail.route,
+                    arguments = listOf(navArgument("billId") { type = NavType.StringType })
+                ) {
+                    BillDetailScreen(navController = navController)
+                }
+                composable(
+                    route = Screen.DebtDetail.route,
+                    arguments = listOf(navArgument("accountId") { type = NavType.StringType })
+                ) {
+                    DebtDetailScreen(navController = navController)
+                }
+                composable(
+                    route = Screen.CompanyHistoryDetail.route,
+                    arguments = listOf(
+                        navArgument("companyKey") { type = NavType.StringType },
+                        navArgument("companyName") { type = NavType.StringType }
+                    )
+                ) { backStackEntry ->
+                    val companyKey = android.net.Uri.decode(
+                        backStackEntry.arguments?.getString("companyKey").orEmpty()
+                    )
+                    val companyName = android.net.Uri.decode(
+                        backStackEntry.arguments?.getString("companyName").orEmpty()
+                    )
+                    CompanyHistoryDetailScreen(
+                        navController = navController,
+                        companyKey = companyKey,
+                        companyName = companyName
+                    )
+                }
             }
         }
     }
+}
+
+@Composable
+private fun MainAppTopBar(
+    title: String,
+    subtitle: String,
+    onSettingsClick: () -> Unit
+) {
+    val mainViewModel: MainAppViewModel = hiltViewModel()
+    val mainState by mainViewModel.state.collectAsStateWithLifecycle()
+
+    Surface(
+        modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 2.dp
+    ) {
+        AppBanner(
+            title = title,
+            subtitle = subtitle,
+            isConnected = mainState.isConnected,
+            hasData = mainState.hasData,
+            isSyncing = mainState.isManualSyncing,
+            onSyncClick = { mainViewModel.manualSyncFromRelay() },
+            actions = {
+                IconButton(onClick = onSettingsClick) {
+                    Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun MainAppSyncBar() {
+    val mainViewModel: MainAppViewModel = hiltViewModel()
+    val mainState by mainViewModel.state.collectAsStateWithLifecycle()
+
+    SyncStatusBar(
+        pending = mainState.pendingSync,
+        failed = mainState.failedSync,
+        onRetry = { mainViewModel.retryFailedSync() },
+    )
+}
+
+@Composable
+private fun MainAppSnackbarHost() {
+    val mainViewModel: MainAppViewModel = hiltViewModel()
+    val mainState by mainViewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var manualSyncStarted by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    var lastFailedSync by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(mainState.isManualSyncing) {
+        if (mainState.isManualSyncing) {
+            manualSyncStarted = true
+            Toast.makeText(context, "Syncing with relay…", Toast.LENGTH_SHORT).show()
+        } else if (manualSyncStarted) {
+            manualSyncStarted = false
+            Toast.makeText(context, "Sync complete", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    LaunchedEffect(mainState.failedSync) {
+        val failed = mainState.failedSync
+        if (failed > lastFailedSync) {
+            val result = snackbarHostState.showSnackbar(
+                message = "$failed change${if (failed == 1) "" else "s"} not synced",
+                actionLabel = "Retry",
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                mainViewModel.retryFailedSync()
+            }
+        }
+        lastFailedSync = failed
+    }
+
+    SnackbarHost(snackbarHostState)
 }

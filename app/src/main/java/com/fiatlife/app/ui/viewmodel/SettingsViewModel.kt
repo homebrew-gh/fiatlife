@@ -20,6 +20,8 @@ import com.fiatlife.app.data.notification.KEY_NOTIF_REMINDER_DAYS
 import com.fiatlife.app.data.notification.parseReminderDays
 import com.fiatlife.app.data.notification.KEY_NOTIF_ENABLED
 import com.fiatlife.app.data.notification.NotifDetailLevel
+import com.fiatlife.app.data.network.RelayTlsSettings
+import com.fiatlife.app.data.network.RelayUrlValidator
 import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.nostr.hexToByteArray
 import com.fiatlife.app.data.nostr.toHex
@@ -44,6 +46,7 @@ private val Context.notifPrefsStore by preferencesDataStore(name = "bill_notif_p
 data class SettingsState(
     val relayUrl: String = "",
     val blossomUrl: String = "",
+    val trustSelfSignedLanTls: Boolean = false,
     val publicKeyHex: String = "",
     val authType: String = "",
     val isConnected: Boolean = false,
@@ -64,6 +67,7 @@ class SettingsViewModel @Inject constructor(
     private val dataStore: DataStore<Preferences>,
     private val nostrClient: NostrClient,
     private val blossomClient: BlossomClient,
+    private val relayTlsSettings: RelayTlsSettings,
     private val salaryRepository: SalaryRepository,
     private val billRepository: BillRepository,
     private val goalRepository: GoalRepository,
@@ -109,6 +113,7 @@ class SettingsViewModel @Inject constructor(
                     it.copy(
                         relayUrl = relayUrl,
                         blossomUrl = blossomUrl,
+                        trustSelfSignedLanTls = prefs[MainActivity.KEY_TRUST_SELF_SIGNED_LAN_TLS] ?: false,
                         publicKeyHex = publicKeyHex,
                         authType = authType,
                         isBlossomConfigured = blossomClient.isConfigured(),
@@ -153,15 +158,30 @@ class SettingsViewModel @Inject constructor(
         _state.update { it.copy(blossomUrl = url) }
     }
 
+    fun setTrustSelfSignedLanTls(enabled: Boolean) {
+        _state.update { it.copy(trustSelfSignedLanTls = enabled) }
+        relayTlsSettings.applyTrustSelfSignedLanTls(enabled)
+        viewModelScope.launch {
+            relayTlsSettings.setTrustSelfSignedLanTls(enabled)
+            val relayUrl = normalizeRelayUrl(_state.value.relayUrl)
+            if (relayUrl.isNotEmpty() && nostrClient.hasSigner) {
+                nostrClient.disconnect()
+                nostrClient.connect(relayUrl)
+            }
+        }
+    }
+
     fun saveAndConnect() {
         viewModelScope.launch {
             val relayUrl = normalizeRelayUrl(_state.value.relayUrl)
             val blossomUrl = normalizeBlossomUrl(_state.value.blossomUrl)
             _state.update { it.copy(relayUrl = relayUrl, blossomUrl = blossomUrl) }
 
+            relayTlsSettings.setTrustSelfSignedLanTls(_state.value.trustSelfSignedLanTls)
             dataStore.edit { prefs ->
                 prefs[MainActivity.KEY_RELAY_URL] = relayUrl
                 prefs[MainActivity.KEY_BLOSSOM_URL] = blossomUrl
+                prefs[MainActivity.KEY_TRUST_SELF_SIGNED_LAN_TLS] = _state.value.trustSelfSignedLanTls
             }
             launch { appSettingsRepository.publishBlossomUrl(blossomUrl) }
 
@@ -182,6 +202,7 @@ class SettingsViewModel @Inject constructor(
 
             if (current.relayUrl.isNotEmpty()) {
                 _state.update { it.copy(statusMessage = "Connecting to relay...") }
+                nostrClient.disconnect()
                 nostrClient.connect(current.relayUrl)
 
                 if (nostrClient.awaitReady()) {
@@ -268,10 +289,11 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun logout() {
+    fun logout(onComplete: () -> Unit = {}) {
         viewModelScope.launch {
             nostrClient.clearSigner()
             dataStore.edit { it.clear() }
+            onComplete()
         }
     }
 
@@ -302,12 +324,7 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    private fun normalizeRelayUrl(url: String): String {
-        val trimmed = url.trim()
-        if (trimmed.isEmpty()) return trimmed
-        if (trimmed.startsWith("wss://") || trimmed.startsWith("ws://")) return trimmed
-        return "wss://$trimmed"
-    }
+    private fun normalizeRelayUrl(url: String): String = RelayUrlValidator.normalize(url)
 
     private fun normalizeBlossomUrl(url: String): String {
         val trimmed = url.trim()

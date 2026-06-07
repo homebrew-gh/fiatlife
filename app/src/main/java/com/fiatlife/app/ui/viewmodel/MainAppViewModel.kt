@@ -11,11 +11,10 @@ import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
 import com.fiatlife.app.data.repository.GoalRepository
 import com.fiatlife.app.data.repository.SalaryRepository
+import com.fiatlife.app.data.repository.stateWhileSubscribed
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.joinAll
@@ -49,14 +48,14 @@ class MainAppViewModel @Inject constructor(
 
     private val baseState = combine(
         nostrClient.connectionState,
-        salaryRepository.getSalaryConfig(),
-        billRepository.getAllBills(),
-        cypherLogSubscriptionRepository.getAllAsBills(),
-        goalRepository.getAllGoals()
-    ) { connected, salary, bills, cypherLogBills, goals ->
+        salaryRepository.observeHasData(),
+        billRepository.observeHasData(),
+        cypherLogSubscriptionRepository.observeHasData(),
+        goalRepository.observeHasData()
+    ) { connected, hasSalary, hasBills, hasCypherLog, hasGoals ->
         MainAppState(
             isConnected = connected,
-            hasData = salary != null || bills.isNotEmpty() || cypherLogBills.isNotEmpty() || goals.isNotEmpty(),
+            hasData = hasSalary || hasBills || hasCypherLog || hasGoals,
             isManualSyncing = false
         )
     }
@@ -71,12 +70,8 @@ class MainAppViewModel @Inject constructor(
             pendingSync = outbox.pending,
             failedSync = outbox.failed
         )
-    }.stateIn(
+    }.stateWhileSubscribed(
         scope = viewModelScope,
-        // Lazily: start when first UI subscribes, then keep collecting so the banner
-        // does not sit on initialValue (offline) while combine is inactive, which
-        // happened with WhileSubscribed when collectors briefly dropped.
-        started = SharingStarted.Lazily,
         initialValue = MainAppState()
     )
 
@@ -91,8 +86,6 @@ class MainAppViewModel @Inject constructor(
         viewModelScope.launch {
             _isManualSyncing.update { true }
             try {
-                // Banner can show Offline while the socket is down; sync still queued REQs
-                // and showed "Syncing with relay…". Wait for a real connection first.
                 val relayReady = nostrClient.ensureConnected(15_000)
                 if (!relayReady) {
                     Log.w(TAG, "Manual sync: relay not ready after timeout")

@@ -9,6 +9,9 @@ interface GoalDao {
     @Query("SELECT * FROM goals ORDER BY updatedAt DESC")
     fun getAll(): Flow<List<GoalEntity>>
 
+    @Query("SELECT COUNT(*) FROM goals")
+    fun observeCount(): Flow<Int>
+
     @Query("SELECT * FROM goals WHERE id = :id")
     suspend fun getById(id: String): GoalEntity?
 

@@ -9,6 +9,9 @@ interface SalaryDao {
     @Query("SELECT * FROM salary_configs ORDER BY updatedAt DESC LIMIT 1")
     fun getLatestConfig(): Flow<SalaryEntity?>
 
+    @Query("SELECT COUNT(*) FROM salary_configs")
+    fun observeCount(): Flow<Int>
+
     @Query("SELECT * FROM salary_configs WHERE id = :id")
     suspend fun getById(id: String): SalaryEntity?
 

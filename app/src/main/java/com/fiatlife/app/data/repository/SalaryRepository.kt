@@ -25,6 +25,9 @@ class SalaryRepository @Inject constructor(
         private const val NOSTR_D_TAG = "fiatlife/salary"
     }
 
+    fun observeHasData(): Flow<Boolean> =
+        salaryDao.observeCount().map { it > 0 }
+
     fun getSalaryConfig(): Flow<SalaryConfig?> {
         return salaryDao.getLatestConfig().map { entity ->
             entity?.let { json.decodeFromString<SalaryConfig>(it.jsonData) }

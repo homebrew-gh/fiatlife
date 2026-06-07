@@ -130,6 +130,33 @@ object SalarySummary {
             .sortedByDescending { it.payDate }
     }
 
+    /** Whether scheduled paydays can be compared to the log for this pay frequency. */
+    fun canDetectMissingPaychecks(config: SalaryConfig): Boolean =
+        when (config.payFrequency) {
+            PayFrequency.WEEKLY, PayFrequency.BIWEEKLY ->
+                config.firstPaydayOfYearMillis != null
+            else -> true
+        }
+
+    /** Scheduled paydays in [year] through [asOf] that have no matching log entry. */
+    fun missingPaydaysForYear(
+        config: SalaryConfig,
+        year: Int,
+        asOf: Long = System.currentTimeMillis()
+    ): List<Long> {
+        if (!canDetectMissingPaychecks(config)) return emptyList()
+        val anchor = config.firstPaydayOfYearMillis ?: yearStart(year)
+        val scheduled = enumeratePaydays(
+            anchor,
+            config.payFrequency,
+            yearStart(year),
+            minOf(asOf, yearEnd(year))
+        )
+        if (scheduled.isEmpty()) return emptyList()
+        val loggedDays = logsForYear(config, year).map { startOfDay(it.payDate) }.toSet()
+        return scheduled.filter { it !in loggedDays }
+    }
+
     private fun yearOf(ms: Long): Int {
         val cal = Calendar.getInstance().apply { timeInMillis = ms }
         return cal.get(Calendar.YEAR)

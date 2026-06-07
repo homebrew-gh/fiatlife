@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import com.fiatlife.app.data.network.NetworkClients
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -26,7 +27,7 @@ data class BlobDescriptor(
 
 @Singleton
 class BlossomClient @Inject constructor(
-    private val okHttpClient: OkHttpClient
+    private val networkClients: NetworkClients
 ) {
     private var serverUrl: String = ""
     private var signer: NostrSigner? = null
@@ -61,7 +62,7 @@ class BlossomClient @Inject constructor(
                 requestBuilder.header("X-Filename", filename)
             }
 
-            val response = okHttpClient.newCall(requestBuilder.build()).execute()
+            val response = networkClients.clientFor(serverUrl).newCall(requestBuilder.build()).execute()
             if (!response.isSuccessful) {
                 return@withContext Result.failure(
                     IOException("Upload failed: ${response.code} ${response.body?.string()}")
@@ -93,7 +94,7 @@ class BlossomClient @Inject constructor(
                 .get()
                 .build()
 
-            val response = okHttpClient.newCall(request).execute()
+            val response = networkClients.clientFor(serverUrl).newCall(request).execute()
             if (!response.isSuccessful) {
                 return@withContext Result.failure(
                     IOException("Download failed: ${response.code}")
@@ -124,7 +125,7 @@ class BlossomClient @Inject constructor(
                 .get()
                 .build()
 
-            val response = okHttpClient.newCall(request).execute()
+            val response = networkClients.clientFor(serverUrl).newCall(request).execute()
             if (!response.isSuccessful) {
                 return@withContext Result.failure(
                     IOException("List failed: ${response.code}")
@@ -154,7 +155,7 @@ class BlossomClient @Inject constructor(
                 .delete()
                 .build()
 
-            val response = okHttpClient.newCall(request).execute()
+            val response = networkClients.clientFor(serverUrl).newCall(request).execute()
             if (!response.isSuccessful) {
                 return@withContext Result.failure(
                     IOException("Delete failed: ${response.code}")

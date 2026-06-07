@@ -47,6 +47,7 @@ import com.fiatlife.app.ui.components.EmptyState
 import com.fiatlife.app.ui.components.PercentageTextField
 import com.fiatlife.app.ui.components.formatCurrency
 import com.fiatlife.app.ui.theme.ProfitGreen
+import com.fiatlife.app.ui.viewmodel.BillCardUiModel
 import com.fiatlife.app.ui.viewmodel.BillsViewModel
 import android.widget.Toast
 import java.text.SimpleDateFormat
@@ -84,22 +85,10 @@ fun BillsScreen(
         }
     }
 
-    Scaffold(
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { viewModel.showAddBill() },
-                containerColor = MaterialTheme.colorScheme.primary
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = "Add Bill")
-            }
-        }
-    ) { padding ->
+    Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(16.dp),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // Monthly total card with category totals in header
@@ -331,24 +320,69 @@ fun BillsScreen(
                     )
                 }
                 items(state.billsDueInNext7Days, key = { it.id }) { item ->
-                    val linkedId = item.bill.linkedCreditAccountId
-                    val linkedAccount = state.creditAccounts.find { it.id == linkedId }
-                    BillCard(
+                    BillListCard(
                         item = item,
-                        linkedAccountName = linkedAccount?.name,
-                        linkedAccountId = linkedId,
-                        linkedAccountBalance = linkedAccount?.currentBalance,
+                        cardById = state.billCardById,
                         onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
                         onMarkPaid = { viewModel.recordPayment(item) },
-                        onCreditClick = if (linkedId != null) {
+                        onCreditClick = item.bill.linkedCreditAccountId?.let { linkedId ->
                             { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
-                        } else null
+                        }
                     )
                 }
                 item { Spacer(modifier = Modifier.height(8.dp)) }
             }
 
-            // By category
+            // Subscriptions (pre-grouped off the main thread)
+            if (state.subscriptionGroups.isNotEmpty()) {
+                item(key = "cat_SUBSCRIPTION") {
+                    Text(
+                        text = BillGeneralCategory.SUBSCRIPTION.displayName,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                state.subscriptionGroups.forEach { group ->
+                    val subcategoryKey = group.subcategory.name
+                    val isCollapsible = group.bills.size > 1
+                    val isExpanded = if (isCollapsible) {
+                        subscriptionExpandedBySubcategory.getOrPut(subcategoryKey) { true }
+                    } else {
+                        true
+                    }
+                    item(key = "sub_header_${group.subcategory.name}") {
+                        SubscriptionSubcategoryHeader(
+                            subcategory = group.subcategory,
+                            billCount = group.bills.size,
+                            subtotal = group.subtotal,
+                            expanded = isExpanded,
+                            collapsible = isCollapsible,
+                            onToggle = {
+                                if (isCollapsible) {
+                                    subscriptionExpandedBySubcategory[subcategoryKey] = !isExpanded
+                                }
+                            }
+                        )
+                    }
+                    if (isExpanded) {
+                        items(group.bills, key = { it.id }) { item ->
+                            BillListCard(
+                                item = item,
+                                cardById = state.billCardById,
+                                onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
+                                onMarkPaid = { viewModel.recordPayment(item) },
+                                onCreditClick = item.bill.linkedCreditAccountId?.let { linkedId ->
+                                    { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
+                                }
+                            )
+                        }
+                    }
+                }
+                item(key = "spacer_SUBSCRIPTION") { Spacer(modifier = Modifier.height(4.dp)) }
+            }
+
+            // Other categories
             state.otherBillsByCategory.entries
                 .sortedBy { it.key.displayName }
                 .forEach { (generalCategory, categoryBills) ->
@@ -361,79 +395,16 @@ fun BillsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    if (generalCategory == BillGeneralCategory.SUBSCRIPTION) {
-                        val groupedSubscriptions = categoryBills
-                            .groupBy { it.bill.effectiveSubcategory }
-                            .toList()
-                            .sortedBy { it.first.displayName }
-
-                        groupedSubscriptions.forEach { (subcategory, subBills) ->
-                            val sortedSubBills = subBills.sortedWith(
-                                compareBy<BillWithSource> { item ->
-                                    val b = item.bill
-                                    if (b.isPastDue()) b.lastDueDateMillis() ?: Long.MAX_VALUE
-                                    else b.nextDueDateMillis() ?: Long.MAX_VALUE
-                                }.thenBy { it.bill.name.lowercase() }
-                            )
-                            val subcategoryKey = subcategory.name
-                            val isCollapsible = sortedSubBills.size > 1
-                            val isExpanded = if (isCollapsible) {
-                                subscriptionExpandedBySubcategory
-                                    .getOrPut(subcategoryKey) { true }
-                            } else {
-                                true
+                    items(categoryBills, key = { it.id }) { item ->
+                        BillListCard(
+                            item = item,
+                            cardById = state.billCardById,
+                            onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
+                            onMarkPaid = { viewModel.recordPayment(item) },
+                            onCreditClick = item.bill.linkedCreditAccountId?.let { linkedId ->
+                                { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
                             }
-                            val subtotal = sortedSubBills.sumOf { it.bill.effectiveAmountDue() }
-
-                            item(key = "sub_header_${subcategory.name}") {
-                                SubscriptionSubcategoryHeader(
-                                    subcategory = subcategory,
-                                    billCount = sortedSubBills.size,
-                                    subtotal = subtotal,
-                                    expanded = isExpanded,
-                                    collapsible = isCollapsible,
-                                    onToggle = {
-                                        if (isCollapsible) {
-                                            subscriptionExpandedBySubcategory[subcategoryKey] = !isExpanded
-                                        }
-                                    }
-                                )
-                            }
-
-                            if (isExpanded) {
-                                items(sortedSubBills, key = { it.id }) { item ->
-                                    val linkedId = item.bill.linkedCreditAccountId
-                                    val linkedAccount = state.creditAccounts.find { it.id == linkedId }
-                                    BillCard(
-                                        item = item,
-                                        linkedAccountName = linkedAccount?.name,
-                                        linkedAccountId = linkedId,
-                                        linkedAccountBalance = linkedAccount?.currentBalance,
-                                        onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
-                                        onMarkPaid = { viewModel.recordPayment(item) },
-                                        onCreditClick = if (linkedId != null) {
-                                            { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
-                                        } else null
-                                    )
-                                }
-                            }
-                        }
-                    } else {
-                        items(categoryBills, key = { it.id }) { item ->
-                            val linkedId = item.bill.linkedCreditAccountId
-                            val linkedAccount = state.creditAccounts.find { it.id == linkedId }
-                            BillCard(
-                                item = item,
-                                linkedAccountName = linkedAccount?.name,
-                                linkedAccountId = linkedId,
-                                linkedAccountBalance = linkedAccount?.currentBalance,
-                                onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
-                                onMarkPaid = { viewModel.recordPayment(item) },
-                                onCreditClick = if (linkedId != null) {
-                                    { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
-                                } else null
-                            )
-                        }
+                        )
                     }
                     item(key = "spacer_${generalCategory.name}") { Spacer(modifier = Modifier.height(4.dp)) }
                 }
@@ -448,7 +419,16 @@ fun BillsScreen(
                 }
             }
 
-            item { Spacer(modifier = Modifier.height(80.dp)) }
+            item { Spacer(modifier = Modifier.height(16.dp)) }
+        }
+        FloatingActionButton(
+            onClick = { viewModel.showAddBill() },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(16.dp),
+            containerColor = MaterialTheme.colorScheme.primary
+        ) {
+            Icon(Icons.Filled.Add, contentDescription = "Add Bill")
         }
     }
 
@@ -668,64 +648,42 @@ private enum class CreditCardPaymentMode {
 }
 
 @Composable
-private fun BillCard(
+private fun BillListCard(
     item: BillWithSource,
-    linkedAccountName: String? = null,
-    linkedAccountId: String? = null,
-    linkedAccountBalance: Double? = null,
+    cardById: Map<String, BillCardUiModel>,
+    onClick: () -> Unit,
+    onMarkPaid: () -> Unit,
+    onCreditClick: (() -> Unit)?
+) {
+    val card = cardById[item.id] ?: return
+    BillCard(
+        card = card,
+        onClick = onClick,
+        onMarkPaid = onMarkPaid,
+        onCreditClick = onCreditClick
+    )
+}
+
+@Composable
+private fun BillCard(
+    card: BillCardUiModel,
     onClick: () -> Unit,
     onMarkPaid: () -> Unit,
     onCreditClick: (() -> Unit)? = null
 ) {
+    val item = card.item
     val bill = item.bill
-    val isPaidForCycle = bill.isPaidForCurrentCycle()
-    val effectiveBalance = linkedAccountBalance ?: bill.creditCardDetails?.currentBalance ?: 0.0
-    val showPayButton = if (bill.isCreditOrLoan()) effectiveBalance > 0.0 else !isPaidForCycle
-    val now = System.currentTimeMillis()
-    val dueMillis = if (bill.isCreditOrLoan()) {
-        bill.nextDueDateMillis()
-    } else {
-        if (bill.isPastDue() && !isPaidForCycle) bill.lastDueDateMillis() else bill.nextDueDateMillis()
-    }
-    val showPastDue = bill.isPastDue() &&
-        !isPaidForCycle &&
-        (!bill.isCreditOrLoan() || (dueMillis != null && dueMillis <= now))
-    val overdueReferenceMillis = bill.lastDueDateMillis()
-    val dueDateText = dueMillis?.let { SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(it)) }
-    val daysUntilDue = dueMillis?.let { millis ->
-        val nowCal = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        val dueCal = Calendar.getInstance().apply {
-            timeInMillis = millis
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        ((dueCal.timeInMillis - nowCal.timeInMillis) / 86_400_000L).toInt()
-    }
-    val countdownLabel = when {
-        isPaidForCycle -> "Paid"
-        dueMillis == null -> null
-        showPastDue -> {
-            val overdueFrom = overdueReferenceMillis ?: dueMillis
-            val daysOverdue = (((now - overdueFrom) / 86_400_000L).toInt() + 1).coerceAtLeast(1)
-            "$daysOverdue d overdue"
-        }
-        daysUntilDue == 0 -> "Due today"
-        daysUntilDue == 1 -> "Due tomorrow"
-        else -> "${daysUntilDue ?: 0} d left"
-    }
+    val isPaidForCycle = card.isPaidForCycle
+    val showPayButton = card.showPayButton
+    val showPastDue = card.showPastDue
+    val dueDateText = card.dueDateText
+    val countdownLabel = card.countdownLabel
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
             modifier = Modifier

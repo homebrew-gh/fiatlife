@@ -9,6 +9,9 @@ interface BillDao {
     @Query("SELECT * FROM bills ORDER BY updatedAt DESC")
     fun getAll(): Flow<List<BillEntity>>
 
+    @Query("SELECT COUNT(*) FROM bills")
+    fun observeCount(): Flow<Int>
+
     @Query("SELECT * FROM bills WHERE category = :category ORDER BY updatedAt DESC")
     fun getByCategory(category: String): Flow<List<BillEntity>>
 

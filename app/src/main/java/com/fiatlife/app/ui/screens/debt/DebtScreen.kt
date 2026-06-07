@@ -22,14 +22,13 @@ import com.fiatlife.app.domain.model.CreditAccount
 import com.fiatlife.app.domain.model.CreditAccountType
 import com.fiatlife.app.domain.model.CreditCardMinPaymentType
 import com.fiatlife.app.domain.model.formatPayoffDate
-import com.fiatlife.app.domain.model.isMinimumPaymentTrap
-import com.fiatlife.app.domain.model.monthlyInterest
 import com.fiatlife.app.ui.components.CurrencyTextField
 import com.fiatlife.app.ui.components.EmptyState
 import com.fiatlife.app.ui.components.MoneyText
 import com.fiatlife.app.ui.components.PercentageTextField
 import com.fiatlife.app.ui.components.formatCurrency
 import com.fiatlife.app.ui.navigation.Screen
+import com.fiatlife.app.ui.viewmodel.DebtAccountCardUiModel
 import com.fiatlife.app.ui.viewmodel.DebtViewModel
 import java.util.Calendar
 import java.util.UUID
@@ -42,22 +41,10 @@ fun DebtScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
-    Scaffold(
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { viewModel.showAddAccount() },
-                containerColor = MaterialTheme.colorScheme.primary
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = "Add account")
-            }
-        }
-    ) { padding ->
+    Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(16.dp),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
@@ -256,12 +243,21 @@ fun DebtScreen(
                 items(state.accounts, key = { it.id }) { account ->
                     DebtAccountCard(
                         account = account,
+                        card = state.accountCardById[account.id],
                         onClick = { navController.navigate(Screen.DebtDetail.routeWithId(account.id)) }
                     )
                 }
             }
 
-            item { Spacer(modifier = Modifier.height(80.dp)) }
+        }
+        FloatingActionButton(
+            onClick = { viewModel.showAddAccount() },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(16.dp),
+            containerColor = MaterialTheme.colorScheme.primary
+        ) {
+            Icon(Icons.Filled.Add, contentDescription = "Add account")
         }
     }
 
@@ -285,16 +281,18 @@ fun DebtScreen(
 @Composable
 private fun DebtAccountCard(
     account: CreditAccount,
+    card: DebtAccountCardUiModel?,
     onClick: () -> Unit
 ) {
-    val interest = account.monthlyInterest()
-    val trap = account.isMinimumPaymentTrap()
+    val interest = card?.monthlyInterest ?: 0.0
+    val trap = card?.isMinimumPaymentTrap == true
+    val monthlyPayment = card?.monthlyPayment ?: account.effectiveMonthlyPayment()
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -333,7 +331,7 @@ private fun DebtAccountCard(
                         style = MaterialTheme.typography.titleMedium
                     )
                     Text(
-                        text = "${account.effectiveMonthlyPayment().formatCurrency()}/mo",
+                        text = "${monthlyPayment.formatCurrency()}/mo",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

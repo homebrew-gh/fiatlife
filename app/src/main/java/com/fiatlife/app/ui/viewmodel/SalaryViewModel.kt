@@ -4,8 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.repository.SalaryRepository
+import com.fiatlife.app.data.repository.stateWhileSubscribed
 import com.fiatlife.app.domain.model.*
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -24,6 +26,7 @@ data class SalaryState(
     val ytdSummary: YtdSummary? = null,
     val showLogDialog: Boolean = false,
     val editingLog: PaycheckLogEntry? = null,
+    val logPayDateHint: Long? = null,
     val isEditing: Boolean = false,
     val showDeductionDialog: Boolean = false,
     val showDepositDialog: Boolean = false,
@@ -40,28 +43,34 @@ class SalaryViewModel @Inject constructor(
     private val nostrClient: NostrClient
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(SalaryState())
-    val state: StateFlow<SalaryState> = _state.asStateFlow()
+    private val hasLocalEdits = MutableStateFlow(false)
+    private val localState = MutableStateFlow(SalaryState())
 
-    init {
-        viewModelScope.launch {
-            repository.getSalaryConfig().collect { config ->
-                config?.let {
-                    _state.update { state ->
-                        recalcSummary(
-                            state.copy(
-                                config = it,
-                                calculation = PaycheckCalculator.calculate(it)
-                            )
-                        )
-                    }
-                }
+    val state: StateFlow<SalaryState> = combine(
+        repository.getSalaryConfig()
+            .map { config ->
+                config?.let { cfg -> cfg to PaycheckCalculator.calculate(cfg) }
             }
+            .flowOn(Dispatchers.Default)
+            .distinctUntilChanged(),
+        localState,
+        hasLocalEdits
+    ) { repoPair, local, edits ->
+        if (repoPair != null && !edits) {
+            val (config, calculation) = repoPair
+            val merged = local.copy(config = config, calculation = calculation)
+            when (merged.activeTab) {
+                SalaryTab.ANNUAL -> recalcAnnual(merged)
+                SalaryTab.SUMMARY -> recalcSummary(merged)
+                else -> merged
+            }
+        } else {
+            local
         }
-    }
+    }.stateWhileSubscribed(viewModelScope, SalaryState())
 
     fun setActiveTab(tab: SalaryTab) {
-        _state.update { state ->
+        localState.update { state ->
             val newState = state.copy(activeTab = tab)
             when (tab) {
                 SalaryTab.ANNUAL -> recalcAnnual(newState)
@@ -87,7 +96,7 @@ class SalaryViewModel @Inject constructor(
     }
 
     fun setSummaryYear(year: Int) {
-        _state.update { recalcSummary(it.copy(summaryYear = year)) }
+        localState.update { recalcSummary(it.copy(summaryYear = year)) }
     }
 
     fun updatePayType(type: PayType) {
@@ -98,12 +107,18 @@ class SalaryViewModel @Inject constructor(
         updateConfig { it.copy(annualSalary = amount) }
     }
 
-    fun showLogPaycheck(entry: PaycheckLogEntry?) {
-        _state.update { it.copy(showLogDialog = true, editingLog = entry) }
+    fun showLogPaycheck(entry: PaycheckLogEntry? = null, payDateHint: Long? = null) {
+        localState.update {
+            it.copy(
+                showLogDialog = true,
+                editingLog = entry,
+                logPayDateHint = if (entry == null) payDateHint else null
+            )
+        }
     }
 
     fun dismissLogDialog() {
-        _state.update { it.copy(showLogDialog = false, editingLog = null) }
+        localState.update { it.copy(showLogDialog = false, editingLog = null, logPayDateHint = null) }
     }
 
     fun saveLogPaycheck(entry: PaycheckLogEntry) {
@@ -154,7 +169,7 @@ class SalaryViewModel @Inject constructor(
     }
 
     fun updateAnnualOvertimeHours(hours: Double) {
-        _state.update { state ->
+        localState.update { state ->
             recalcAnnual(state.copy(annualOvertimeHours = hours))
         }
     }
@@ -222,7 +237,7 @@ class SalaryViewModel @Inject constructor(
     }
 
     fun showAddDeduction(isPreTax: Boolean) {
-        _state.update {
+        localState.update {
             it.copy(
                 showDeductionDialog = true,
                 isPreTaxDeduction = isPreTax,
@@ -232,7 +247,7 @@ class SalaryViewModel @Inject constructor(
     }
 
     fun showEditDeduction(deduction: Deduction, isPreTax: Boolean) {
-        _state.update {
+        localState.update {
             it.copy(
                 showDeductionDialog = true,
                 isPreTaxDeduction = isPreTax,
@@ -242,11 +257,11 @@ class SalaryViewModel @Inject constructor(
     }
 
     fun dismissDeductionDialog() {
-        _state.update { it.copy(showDeductionDialog = false, editingDeduction = null) }
+        localState.update { it.copy(showDeductionDialog = false, editingDeduction = null) }
     }
 
     fun saveDeduction(deduction: Deduction) {
-        val isPreTax = _state.value.isPreTaxDeduction
+        val isPreTax = localState.value.isPreTaxDeduction
         val d = if (deduction.id.isEmpty()) deduction.copy(id = UUID.randomUUID().toString()) else deduction
 
         updateConfig { config ->
@@ -276,15 +291,15 @@ class SalaryViewModel @Inject constructor(
     }
 
     fun showAddDeposit() {
-        _state.update { it.copy(showDepositDialog = true, editingDeposit = null) }
+        localState.update { it.copy(showDepositDialog = true, editingDeposit = null) }
     }
 
     fun showEditDeposit(deposit: DirectDeposit) {
-        _state.update { it.copy(showDepositDialog = true, editingDeposit = deposit) }
+        localState.update { it.copy(showDepositDialog = true, editingDeposit = deposit) }
     }
 
     fun dismissDepositDialog() {
-        _state.update { it.copy(showDepositDialog = false, editingDeposit = null) }
+        localState.update { it.copy(showDepositDialog = false, editingDeposit = null) }
     }
 
     fun saveDeposit(deposit: DirectDeposit) {
@@ -307,22 +322,24 @@ class SalaryViewModel @Inject constructor(
 
     fun save() {
         viewModelScope.launch {
-            _state.update { it.copy(isSaving = true) }
+            localState.update { it.copy(isSaving = true) }
             try {
-                repository.saveSalaryConfig(_state.value.config)
-                _state.update { it.copy(isSaving = false, message = "Configuration saved") }
+                repository.saveSalaryConfig(localState.value.config)
+                hasLocalEdits.value = false
+                localState.update { it.copy(isSaving = false, message = "Configuration saved") }
             } catch (e: Exception) {
-                _state.update { it.copy(isSaving = false, message = "Error: ${e.message}") }
+                localState.update { it.copy(isSaving = false, message = "Error: ${e.message}") }
             }
         }
     }
 
     fun clearMessage() {
-        _state.update { it.copy(message = "") }
+        localState.update { it.copy(message = "") }
     }
 
     private fun updateConfig(update: (SalaryConfig) -> SalaryConfig) {
-        _state.update { state ->
+        hasLocalEdits.value = true
+        localState.update { state ->
             val newConfig = update(state.config)
             val newState = state.copy(
                 config = newConfig,

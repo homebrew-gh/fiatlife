@@ -170,6 +170,29 @@ fun SettingsScreen(
                         Icon(Icons.Filled.Link, contentDescription = null)
                     }
                 )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Self-signed LAN certificate",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "Enable for Start9 or other self-hosted relays on your LAN/VPN.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = state.trustSelfSignedLanTls,
+                        onCheckedChange = { viewModel.setTrustSelfSignedLanTls(it) }
+                    )
+                }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = "NIP-42 authentication is handled automatically",
@@ -536,9 +559,8 @@ fun SettingsScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.logout()
                         showLogoutConfirmation = false
-                        onLogout()
+                        viewModel.logout(onComplete = onLogout)
                     },
                     colors = ButtonDefaults.textButtonColors(
                         contentColor = MaterialTheme.colorScheme.error
