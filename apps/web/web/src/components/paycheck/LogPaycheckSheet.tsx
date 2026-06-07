@@ -84,6 +84,7 @@ export function LogPaycheckSheet({
   config,
   calculation,
   editing,
+  payDateHint,
   onSave,
 }: {
   open: boolean;
@@ -91,6 +92,7 @@ export function LogPaycheckSheet({
   config: SalaryConfig;
   calculation: PaycheckCalculation;
   editing: PaycheckLogEntry | null;
+  payDateHint?: number | null;
   onSave: (entry: PaycheckLogEntry) => void;
 }) {
   const initial = useMemo(
@@ -102,7 +104,11 @@ export function LogPaycheckSheet({
   );
 
   const [payDate, setPayDate] = useState(
-    editing ? formatDateInputValue(editing.payDate) : todayDateInputValue(),
+    editing
+      ? formatDateInputValue(editing.payDate)
+      : payDateHint != null
+        ? formatDateInputValue(payDateHint)
+        : todayDateInputValue(),
   );
   const [earnings, setEarnings] = useState<PaycheckLineItem[]>(initial.earnings);
   const [taxes, setTaxes] = useState<PaycheckLineItem[]>(initial.taxes);

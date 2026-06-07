@@ -6,9 +6,11 @@ import { useSalaryData } from "../../lib/salaryData";
 import {
   PAY_FREQUENCY_LABELS,
   PAY_TYPE_LABELS,
+  canDetectMissingPaychecks,
   formatIsoDate,
   formatPercent,
   logsForYear,
+  missingPaydaysForYear,
   parseIsoDate,
   summarizeYtd,
   type DirectDeposit,
@@ -35,6 +37,7 @@ export function PaycheckTab() {
   const [year, setYear] = useState(new Date().getFullYear());
   const [showLog, setShowLog] = useState(false);
   const [editingLog, setEditingLog] = useState<PaycheckLogEntry | null>(null);
+  const [logPayDateHint, setLogPayDateHint] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const ytd = useMemo(
@@ -53,6 +56,11 @@ export function PaycheckTab() {
     [salary.config, year],
   );
 
+  const missingPaydays = useMemo(
+    () => missingPaydaysForYear(salary.config, year),
+    [salary.config, year],
+  );
+
   const onRefresh = async () => {
     if (refreshing) return;
     setRefreshing(true);
@@ -63,15 +71,17 @@ export function PaycheckTab() {
     }
   };
 
-  const openLog = (entry?: PaycheckLogEntry) => {
+  const openLog = (entry?: PaycheckLogEntry, payDateHint?: number) => {
     setEditingLog(entry ?? null);
+    setLogPayDateHint(entry ? null : (payDateHint ?? null));
     setShowLog(true);
   };
 
   const onLogSave = (entry: PaycheckLogEntry) => {
-    if (editingLog) salary.updatePaycheckLog(entry);
+    if (editingLog?.id) salary.updatePaycheckLog(entry);
     else salary.addPaycheckLog(entry);
     setEditingLog(null);
+    setLogPayDateHint(null);
   };
 
   const onSaveAll = async () => {
@@ -146,7 +156,10 @@ export function PaycheckTab() {
               onYearChange={setYear}
               ytd={ytd}
               logs={yearLogs}
+              missingPaydays={missingPaydays}
+              canDetectMissing={canDetectMissingPaychecks(salary.config)}
               onLogPaycheck={() => openLog()}
+              onLogMissingPaycheck={(payDate) => openLog(undefined, payDate)}
               onEditLog={(e) => openLog(e)}
               onDeleteLog={(id) => salary.removePaycheckLog(id)}
               annualNet={salary.annualProjection.annualNetPay}
@@ -172,15 +185,17 @@ export function PaycheckTab() {
       ) : null}
 
       <LogPaycheckSheet
-        key={editingLog?.id ?? "new-log"}
+        key={editingLog?.id ?? logPayDateHint ?? "new-log"}
         open={showLog}
         onClose={() => {
           setShowLog(false);
           setEditingLog(null);
+          setLogPayDateHint(null);
         }}
         config={salary.config}
         calculation={salary.calculation}
         editing={editingLog}
+        payDateHint={logPayDateHint}
         onSave={onLogSave}
       />
     </div>
@@ -192,7 +207,10 @@ function SummaryView({
   onYearChange,
   ytd,
   logs,
+  missingPaydays,
+  canDetectMissing,
   onLogPaycheck,
+  onLogMissingPaycheck,
   onEditLog,
   onDeleteLog,
   annualNet,
@@ -201,7 +219,10 @@ function SummaryView({
   onYearChange: (y: number) => void;
   ytd: ReturnType<typeof summarizeYtd>;
   logs: PaycheckLogEntry[];
+  missingPaydays: number[];
+  canDetectMissing: boolean;
   onLogPaycheck: () => void;
+  onLogMissingPaycheck: (payDate: number) => void;
   onEditLog: (e: PaycheckLogEntry) => void;
   onDeleteLog: (id: string) => void;
   annualNet: number;
@@ -335,50 +356,94 @@ function SummaryView({
 
       <section className="card p-5">
         <h2 className="section-title">Paycheck Log</h2>
-        <p className="text-sm text-muted mt-1 mb-4">
-          {logs.length === 0
-            ? "No paychecks logged for this year yet. Log your first paycheck to track actual earnings."
-            : `${logs.length} paycheck${logs.length === 1 ? "" : "s"} recorded.`}
-        </p>
-        {logs.length === 0 ? null : (
-          <ul className="space-y-2">
-            {logs.map((entry) => (
-              <li
-                key={entry.id}
-                className="flex items-center justify-between gap-3 py-2 divider-line last:border-0"
-              >
-                <div className="min-w-0">
-                  <p className="text-body font-medium">
-                    {formatIsoDate(entry.payDate)}
+        {logs.length === 0 && missingPaydays.length === 0 ? (
+          <p className="text-sm text-muted mt-1">
+            {canDetectMissing
+              ? "No paychecks logged for this year yet. Log your first paycheck to track actual earnings."
+              : "No paychecks logged for this year yet. Set your first payday of the year in the Calculator tab to track missing checks."}
+          </p>
+        ) : (
+          <>
+            {missingPaydays.length > 0 ? (
+              <div className="mt-3 mb-4">
+                <p className="text-sm font-medium text-warn">
+                  {missingPaydays.length} missing paycheck
+                  {missingPaydays.length === 1 ? "" : "s"}
+                </p>
+                <ul className="space-y-2 mt-2">
+                  {missingPaydays.map((payday) => (
+                    <li
+                      key={payday}
+                      className="flex items-center justify-between gap-3 py-2 divider-line last:border-0"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-body font-medium">
+                          {formatIsoDate(payday)}
+                        </p>
+                        <p className="text-xs text-muted">Not logged</p>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-ghost text-xs py-1 px-2 shrink-0"
+                        onClick={() => onLogMissingPaycheck(payday)}
+                      >
+                        Log
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {logs.length > 0 ? (
+              <>
+                {missingPaydays.length > 0 ? (
+                  <p className="text-sm font-medium text-muted mb-2">Logged</p>
+                ) : (
+                  <p className="text-sm text-muted mt-1 mb-4">
+                    {logs.length} paycheck{logs.length === 1 ? "" : "s"} recorded.
                   </p>
-                  <p className="text-xs text-muted truncate">
-                    Gross {formatUsd(entry.grossPay)}
-                    {entry.overtimeHours
-                      ? ` · ${entry.overtimeHours} OT hrs`
-                      : ""}
-                    {entry.notes ? ` · ${entry.notes}` : ""}
-                  </p>
-                </div>
-                <div className="text-right shrink-0 flex items-center gap-2">
-                  <p className="money text-base">{formatUsd(entry.netPay)}</p>
-                  <button
-                    type="button"
-                    className="btn-ghost text-xs py-1 px-2"
-                    onClick={() => onEditLog(entry)}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-ghost text-xs py-1 px-2 text-error"
-                    onClick={() => onDeleteLog(entry.id)}
-                  >
-                    Del
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+                )}
+                <ul className="space-y-2">
+                  {logs.map((entry) => (
+                    <li
+                      key={entry.id}
+                      className="flex items-center justify-between gap-3 py-2 divider-line last:border-0"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-body font-medium">
+                          {formatIsoDate(entry.payDate)}
+                        </p>
+                        <p className="text-xs text-muted truncate">
+                          Gross {formatUsd(entry.grossPay)}
+                          {entry.overtimeHours
+                            ? ` · ${entry.overtimeHours} OT hrs`
+                            : ""}
+                          {entry.notes ? ` · ${entry.notes}` : ""}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0 flex items-center gap-2">
+                        <p className="money text-base">{formatUsd(entry.netPay)}</p>
+                        <button
+                          type="button"
+                          className="btn-ghost text-xs py-1 px-2"
+                          onClick={() => onEditLog(entry)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost text-xs py-1 px-2 text-error"
+                          onClick={() => onDeleteLog(entry.id)}
+                        >
+                          Del
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+          </>
         )}
       </section>
     </div>

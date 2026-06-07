@@ -784,6 +784,34 @@ export function logsForYear(
     .sort((a, b) => b.payDate - a.payDate);
 }
 
+export function canDetectMissingPaychecks(config: SalaryConfig): boolean {
+  if (config.payFrequency === "WEEKLY" || config.payFrequency === "BIWEEKLY") {
+    return config.firstPaydayOfYearMillis != null;
+  }
+  return true;
+}
+
+/** Scheduled paydays in [year] through [asOf] that have no matching log entry. */
+export function missingPaydaysForYear(
+  config: SalaryConfig,
+  year: number,
+  asOf = Date.now(),
+): number[] {
+  if (!canDetectMissingPaychecks(config)) return [];
+  const anchor = config.firstPaydayOfYearMillis ?? yearStart(year);
+  const scheduled = enumeratePaydays(
+    anchor,
+    config.payFrequency,
+    yearStart(year),
+    Math.min(asOf, yearEnd(year)),
+  );
+  if (scheduled.length === 0) return [];
+  const loggedDays = new Set(
+    logsForYear(config, year).map((e) => startOfDay(e.payDate)),
+  );
+  return scheduled.filter((day) => !loggedDays.has(day));
+}
+
 function entryOvertimeHours(e: PaycheckLogEntry): number {
   if (e.overtimeHours != null) return e.overtimeHours;
   const otLine = (e.earnings ?? []).find((l) =>
