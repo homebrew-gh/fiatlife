@@ -379,7 +379,7 @@ fun BillsScreen(
                             val isCollapsible = sortedSubBills.size > 1
                             val isExpanded = if (isCollapsible) {
                                 subscriptionExpandedBySubcategory
-                                    .getOrPut(subcategoryKey) { sortedSubBills.size <= 2 }
+                                    .getOrPut(subcategoryKey) { true }
                             } else {
                                 true
                             }

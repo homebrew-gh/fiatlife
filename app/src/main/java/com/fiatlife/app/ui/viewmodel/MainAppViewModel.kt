@@ -27,7 +27,9 @@ private const val TAG = "MainAppVM"
 data class MainAppState(
     val isConnected: Boolean = false,
     val hasData: Boolean = false,
-    val isManualSyncing: Boolean = false
+    val isManualSyncing: Boolean = false,
+    val pendingSync: Int = 0,
+    val failedSync: Int = 0
 )
 
 @HiltViewModel
@@ -59,8 +61,16 @@ class MainAppViewModel @Inject constructor(
         )
     }
 
-    val state = combine(baseState, isManualSyncing) { base, manualSyncing ->
-        base.copy(isManualSyncing = manualSyncing)
+    val state = combine(
+        baseState,
+        isManualSyncing,
+        nostrClient.outbox
+    ) { base, manualSyncing, outbox ->
+        base.copy(
+            isManualSyncing = manualSyncing,
+            pendingSync = outbox.pending,
+            failedSync = outbox.failed
+        )
     }.stateIn(
         scope = viewModelScope,
         // Lazily: start when first UI subscribes, then keep collecting so the banner
@@ -69,6 +79,11 @@ class MainAppViewModel @Inject constructor(
         started = SharingStarted.Lazily,
         initialValue = MainAppState()
     )
+
+    /** Retry any background relay publishes that exhausted their retries. */
+    fun retryFailedSync() {
+        nostrClient.retryOutbox()
+    }
 
     /** Manual sync trigger from the top-right sync status control. */
     fun manualSyncFromRelay() {

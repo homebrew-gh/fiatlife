@@ -6,7 +6,10 @@ import kotlinx.serialization.Serializable
 data class SalaryConfig(
     val id: String = "",
     val name: String = "My Salary",
+    val payType: PayType = PayType.HOURLY,
     val hourlyRate: Double = 0.0,
+    /** Annual salary used when payType is SALARY. */
+    val annualSalary: Double = 0.0,
     val standardHoursPerPeriod: Double = 80.0,
     val overtimeHours: Double = 0.0,
     val overtimeMultiplier: Double = 1.5,
@@ -21,8 +24,24 @@ data class SalaryConfig(
     val taxOverrides: TaxOverrides = TaxOverrides(),
     /** Optional anchor for exact paycheck counting (first paycheck date in the year). */
     val firstPaydayOfYearMillis: Long? = null,
+    /** Effective-dated raises; the rate in effect = latest change on/before a date. */
+    val payRateHistory: List<PayRateChange> = emptyList(),
+    /** Logged actual paychecks for year-to-date tracking. */
+    val paycheckLog: List<PaycheckLogEntry> = emptyList(),
     val updatedAt: Long = 0L
 )
+
+@Serializable
+enum class PayType {
+    HOURLY,
+    SALARY;
+
+    val displayName: String
+        get() = when (this) {
+            HOURLY -> "Hourly"
+            SALARY -> "Salaried"
+        }
+}
 
 @Serializable
 enum class PayFrequency(val periodsPerYear: Int) {

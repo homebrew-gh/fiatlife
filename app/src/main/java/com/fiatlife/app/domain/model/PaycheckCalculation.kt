@@ -64,8 +64,9 @@ data class AnnualProjection(
 object PaycheckCalculator {
 
     fun calculate(config: SalaryConfig): PaycheckCalculation {
-        val regularPay = config.hourlyRate * config.standardHoursPerPeriod
-        val overtimePay = config.hourlyRate * config.overtimeMultiplier * config.overtimeHours
+        val rate = SalarySummary.effectiveRateAt(config, System.currentTimeMillis())
+        val regularPay = SalarySummary.periodRegularGross(rate, config.payFrequency)
+        val overtimePay = rate.hourlyRate * config.overtimeMultiplier * config.overtimeHours
         val grossPay = regularPay + overtimePay
 
         val enabledPreTax = config.preTaxDeductions.filter { it.isEnabled }
@@ -245,10 +246,37 @@ object PaycheckCalculator {
         return allocations.sortedBy { it.deposit.sortOrder }
     }
 
-    fun calculateAnnual(config: SalaryConfig, annualOvertimeHours: Double): AnnualProjection {
+    private fun annualRegularPayForYear(config: SalaryConfig, year: Int): Double {
         val periodsPerYear = config.payFrequency.periodsPerYear
-        val annualRegularPay = config.hourlyRate * config.standardHoursPerPeriod * periodsPerYear
-        val annualOvertimePay = config.hourlyRate * config.overtimeMultiplier * annualOvertimeHours
+        val anchor = config.firstPaydayOfYearMillis
+        if (config.payRateHistory.isEmpty() || anchor == null) {
+            val rate = SalarySummary.effectiveRateAt(config, anchor ?: System.currentTimeMillis())
+            return SalarySummary.periodRegularGross(rate, config.payFrequency) * periodsPerYear
+        }
+        val cal = java.util.Calendar.getInstance()
+        cal.clear(); cal.set(year, java.util.Calendar.JANUARY, 1, 0, 0, 0)
+        val start = cal.timeInMillis
+        cal.clear(); cal.set(year, java.util.Calendar.DECEMBER, 31, 23, 59, 59)
+        val end = cal.timeInMillis
+        val paydays = SalarySummary.enumeratePaydays(anchor, config.payFrequency, start, end)
+        if (paydays.isEmpty()) {
+            val rate = SalarySummary.effectiveRateAt(config, System.currentTimeMillis())
+            return SalarySummary.periodRegularGross(rate, config.payFrequency) * periodsPerYear
+        }
+        return paydays.sumOf {
+            SalarySummary.periodRegularGross(SalarySummary.effectiveRateAt(config, it), config.payFrequency)
+        }
+    }
+
+    fun calculateAnnual(
+        config: SalaryConfig,
+        annualOvertimeHours: Double,
+        year: Int = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+    ): AnnualProjection {
+        val periodsPerYear = config.payFrequency.periodsPerYear
+        val annualRegularPay = annualRegularPayForYear(config, year)
+        val latestRate = SalarySummary.effectiveRateAt(config, System.currentTimeMillis())
+        val annualOvertimePay = latestRate.hourlyRate * config.overtimeMultiplier * annualOvertimeHours
         val annualGross = annualRegularPay + annualOvertimePay
 
         val perPeriodGross = annualGross / periodsPerYear

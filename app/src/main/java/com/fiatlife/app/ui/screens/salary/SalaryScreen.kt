@@ -2,6 +2,8 @@ package com.fiatlife.app.ui.screens.salary
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.Delete
@@ -13,6 +15,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import java.util.UUID
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fiatlife.app.domain.model.*
@@ -50,25 +54,40 @@ fun SalaryScreen(
         item {
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                 SegmentedButton(
+                    selected = state.activeTab == SalaryTab.SUMMARY,
+                    onClick = { viewModel.setActiveTab(SalaryTab.SUMMARY) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 3)
+                ) { Text("Summary") }
+                SegmentedButton(
                     selected = state.activeTab == SalaryTab.PAYCHECK,
                     onClick = { viewModel.setActiveTab(SalaryTab.PAYCHECK) },
-                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
-                ) { Text("Per Paycheck") }
+                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 3)
+                ) { Text("Calculator") }
                 SegmentedButton(
                     selected = state.activeTab == SalaryTab.ANNUAL,
                     onClick = { viewModel.setActiveTab(SalaryTab.ANNUAL) },
-                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
-                ) { Text("Annual Projection") }
+                    shape = SegmentedButtonDefaults.itemShape(index = 2, count = 3)
+                ) { Text("Annual") }
             }
         }
 
-        if (state.activeTab == SalaryTab.PAYCHECK) {
-            paycheckContent(state, calc, viewModel)
-        } else {
-            annualContent(state, viewModel)
+        when (state.activeTab) {
+            SalaryTab.SUMMARY -> summaryContent(state, viewModel)
+            SalaryTab.PAYCHECK -> paycheckContent(state, calc, viewModel)
+            SalaryTab.ANNUAL -> annualContent(state, viewModel)
         }
 
         item { Spacer(modifier = Modifier.height(80.dp)) }
+    }
+
+    if (state.showLogDialog) {
+        LogPaycheckDialog(
+            editing = state.editingLog,
+            calculation = calc,
+            config = state.config,
+            onDismiss = { viewModel.dismissLogDialog() },
+            onSave = { viewModel.saveLogPaycheck(it) }
+        )
     }
 
     if (state.showDeductionDialog) {
@@ -154,30 +173,31 @@ private fun androidx.compose.foundation.lazy.LazyListScope.paycheckContent(
             var overtimeMultiplier by remember(state.config.overtimeMultiplier) {
                 mutableStateOf(state.config.overtimeMultiplier.toString())
             }
+            var annualSalary by remember(state.config.annualSalary) {
+                mutableStateOf(if (state.config.annualSalary > 0) state.config.annualSalary.toString() else "")
+            }
 
-            CurrencyTextField(
-                value = hourlyRate,
-                onValueChange = {
-                    hourlyRate = it
-                    it.toDoubleOrNull()?.let { v -> viewModel.updateHourlyRate(v) }
-                },
-                label = "Hourly Rate"
-            )
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                PayType.entries.forEachIndexed { index, type ->
+                    SegmentedButton(
+                        selected = state.config.payType == type,
+                        onClick = { viewModel.updatePayType(type) },
+                        shape = SegmentedButtonDefaults.itemShape(index = index, count = PayType.entries.size)
+                    ) { Text(type.displayName) }
+                }
+            }
             Spacer(modifier = Modifier.height(8.dp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = standardHours,
+            if (state.config.payType == PayType.SALARY) {
+                CurrencyTextField(
+                    value = annualSalary,
                     onValueChange = {
-                        standardHours = it
-                        it.toDoubleOrNull()?.let { v -> viewModel.updateStandardHours(v) }
+                        annualSalary = it
+                        it.toDoubleOrNull()?.let { v -> viewModel.updateAnnualSalary(v) }
                     },
-                    label = { Text("Standard Hours") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    shape = MaterialTheme.shapes.medium,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                    label = "Annual Salary"
                 )
+                Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
                     value = overtimeHours,
                     onValueChange = {
@@ -185,11 +205,48 @@ private fun androidx.compose.foundation.lazy.LazyListScope.paycheckContent(
                         it.toDoubleOrNull()?.let { v -> viewModel.updateOvertimeHours(v) }
                     },
                     label = { Text("OT Hours") },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     shape = MaterialTheme.shapes.medium,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                 )
+            } else {
+                CurrencyTextField(
+                    value = hourlyRate,
+                    onValueChange = {
+                        hourlyRate = it
+                        it.toDoubleOrNull()?.let { v -> viewModel.updateHourlyRate(v) }
+                    },
+                    label = "Hourly Rate"
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = standardHours,
+                        onValueChange = {
+                            standardHours = it
+                            it.toDoubleOrNull()?.let { v -> viewModel.updateStandardHours(v) }
+                        },
+                        label = { Text("Standard Hours") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        shape = MaterialTheme.shapes.medium,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                    )
+                    OutlinedTextField(
+                        value = overtimeHours,
+                        onValueChange = {
+                            overtimeHours = it
+                            it.toDoubleOrNull()?.let { v -> viewModel.updateOvertimeHours(v) }
+                        },
+                        label = { Text("OT Hours") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        shape = MaterialTheme.shapes.medium,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -540,6 +597,34 @@ private fun androidx.compose.foundation.lazy.LazyListScope.paycheckContent(
         }
     }
 
+    // Pay Rate History (raises)
+    item {
+        SectionCard(
+            title = "Pay Rate History (Raises)",
+            icon = Icons.Filled.TrendingUp,
+            action = {
+                IconButton(onClick = { viewModel.addRaise() }) {
+                    Icon(Icons.Filled.Add, "Add raise")
+                }
+            }
+        ) {
+            Text(
+                text = "Record raises with their effective date. Projections and estimated " +
+                        "YTD use the rate in effect on each payday.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            val sorted = state.config.payRateHistory.sortedByDescending { it.effectiveDate }
+            sorted.forEach { change ->
+                RaiseRow(
+                    change = change,
+                    onChange = { viewModel.updateRaise(it) },
+                    onDelete = { viewModel.removeRaise(change.id) }
+                )
+            }
+        }
+    }
+
     // Save button
     item {
         Button(
@@ -816,6 +901,583 @@ private fun androidx.compose.foundation.lazy.LazyListScope.annualContent(
             AnnualLine("Post-Tax Deductions", -proj.annualPostTaxDeductions, color = LossRed)
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             AnnualLine("Net Take Home", proj.annualNetPay, bold = true, color = ProfitGreen)
+        }
+    }
+}
+
+private fun androidx.compose.foundation.lazy.LazyListScope.summaryContent(
+    state: com.fiatlife.app.ui.viewmodel.SalaryState,
+    viewModel: SalaryViewModel
+) {
+    val ytd = state.ytdSummary
+    val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+
+    // Year selector + Log button
+    item {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { viewModel.setSummaryYear(state.summaryYear - 1) }) {
+                    Icon(Icons.Filled.ChevronLeft, "Previous year")
+                }
+                Text(
+                    text = state.summaryYear.toString(),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                IconButton(
+                    onClick = { viewModel.setSummaryYear(state.summaryYear + 1) },
+                    enabled = state.summaryYear < currentYear
+                ) {
+                    Icon(Icons.Filled.ChevronRight, "Next year")
+                }
+            }
+            Button(onClick = { viewModel.showLogPaycheck(null) }) {
+                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Log Paycheck")
+            }
+        }
+    }
+
+    if (ytd == null) {
+        item {
+            SectionCard(title = "No data yet", icon = Icons.Filled.Info) {
+                Text(
+                    text = "Set up your pay in the Calculator tab, then log paychecks to track " +
+                            "year-to-date earnings, taxes, and deductions here.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        return
+    }
+
+    // Hero net card
+    item {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.extraLarge,
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer
+            )
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(24.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Year-To-Date Net",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        text = if (ytd.source == YtdSummary.Source.LOGGED) "Logged" else "Estimated",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                    )
+                }
+                MoneyText(
+                    amount = ytd.netPay,
+                    style = MaterialTheme.typography.displaySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = { (ytd.progressPercent / 100.0).toFloat().coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = "${ytd.progressPercent.toInt()}% of projected annual net " +
+                            "(${ytd.annualNetTarget.formatCurrency()})",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                if (ytd.source == YtdSummary.Source.LOGGED && kotlin.math.abs(ytd.netVariance) >= 1.0) {
+                    Text(
+                        text = (if (ytd.netVariance >= 0) "+" else "−") +
+                                kotlin.math.abs(ytd.netVariance).formatCurrency() +
+                                " vs projected for ${ytd.paycheckCount} paycheck" +
+                                if (ytd.paycheckCount == 1) "" else "s",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (ytd.netVariance >= 0) ProfitGreen else LossRed,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+        }
+    }
+
+    // Stat row
+    item {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            StatTile("Gross YTD", ytd.grossPay.formatCurrency())
+            StatTile("Taxes YTD", ytd.totalTaxes.formatCurrency())
+            StatTile("Deductions", (ytd.totalPreTaxDeductions + ytd.totalPostTaxDeductions).formatCurrency())
+            StatTile("OT hours", "%.1f".format(ytd.overtimeHours))
+        }
+    }
+
+    item {
+        SectionCard(title = "Pace", icon = Icons.Filled.CalendarMonth) {
+            Text(
+                text = "${ytd.scheduledPaychecksYtd} paychecks received so far · " +
+                        "${ytd.remainingPaychecks} remaining (${ytd.scheduledPaychecksInYear} total)",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+
+    item {
+        BreakdownCardCompose("Earnings", ytd.earnings, ytd.grossPay, negative = false)
+    }
+    item {
+        BreakdownCardCompose(
+            title = "Taxes",
+            lines = ytd.taxes,
+            total = ytd.totalTaxes,
+            negative = true,
+            footer = "Effective rate ${
+                if (ytd.grossPay > 0) "%.1f%%".format(ytd.totalTaxes / ytd.grossPay * 100) else "0.0%"
+            } · projected ${ytd.projectedAnnualTaxes.formatCurrency()} for the year"
+        )
+    }
+    if (ytd.preTaxDeductions.isNotEmpty()) {
+        item { BreakdownCardCompose("Pre-Tax Deductions", ytd.preTaxDeductions, ytd.totalPreTaxDeductions, negative = true) }
+    }
+    if (ytd.postTaxDeductions.isNotEmpty()) {
+        item { BreakdownCardCompose("Post-Tax Deductions", ytd.postTaxDeductions, ytd.totalPostTaxDeductions, negative = true) }
+    }
+    if (ytd.employerContributions.isNotEmpty()) {
+        item {
+            BreakdownCardCompose(
+                "Employer Contributions",
+                ytd.employerContributions,
+                ytd.employerContributions.sumOf { it.amount },
+                negative = false
+            )
+        }
+    }
+
+    // Paycheck log
+    item {
+        SectionCard(title = "Paycheck Log", icon = Icons.Filled.ReceiptLong) {
+            val logs = SalarySummary.logsForYear(state.config, state.summaryYear)
+            if (logs.isEmpty()) {
+                Text(
+                    text = "No paychecks logged for ${state.summaryYear} yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                logs.forEach { entry ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(formatIsoDate(entry.payDate), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                            Text(
+                                "Gross ${entry.grossPay.formatCurrency()}" +
+                                        (entry.overtimeHours?.let { if (it > 0) " · ${it} OT hrs" else "" } ?: "") +
+                                        (entry.notes?.let { if (it.isNotBlank()) " · $it" else "" } ?: ""),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        MoneyText(amount = entry.netPay, style = MaterialTheme.typography.bodyLarge)
+                        IconButton(onClick = { viewModel.showLogPaycheck(entry) }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Filled.Edit, "Edit", modifier = Modifier.size(18.dp))
+                        }
+                        IconButton(onClick = { viewModel.removeLogPaycheck(entry.id) }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Outlined.Delete, "Delete", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatTile(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun BreakdownCardCompose(
+    title: String,
+    lines: List<YtdBreakdownLine>,
+    total: Double,
+    negative: Boolean,
+    footer: String? = null
+) {
+    if (lines.isEmpty()) return
+    SectionCard(title = title, icon = Icons.Filled.Receipt, action = {
+        Text(
+            text = (if (negative) "−" else "") + total.formatCurrency(),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = if (negative) LossRed else MaterialTheme.colorScheme.onSurface
+        )
+    }) {
+        lines.forEach { line ->
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = line.label + if (line.hours > 0) " · %.1f hrs".format(line.hours) else "",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = (if (negative) "−" else "") + line.amount.formatCurrency(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (negative) LossRed else MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+        if (footer != null) {
+            Spacer(Modifier.height(4.dp))
+            Text(footer, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RaiseRow(
+    change: PayRateChange,
+    onChange: (PayRateChange) -> Unit,
+    onDelete: () -> Unit
+) {
+    Column(modifier = Modifier.padding(vertical = 6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            var dateText by remember(change.id, change.effectiveDate) {
+                mutableStateOf(formatIsoDate(change.effectiveDate))
+            }
+            OutlinedTextField(
+                value = dateText,
+                onValueChange = {
+                    dateText = it.take(10)
+                    parseIsoDate(it)?.let { ms -> onChange(change.copy(effectiveDate = ms)) }
+                },
+                label = { Text("Effective date") },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                shape = MaterialTheme.shapes.medium,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
+            val isSalary = change.payType == PayType.SALARY
+            var rateText by remember(change.id) {
+                mutableStateOf(
+                    (if (isSalary) change.annualSalary else change.hourlyRate)
+                        ?.let { if (it > 0) it.toString() else "" } ?: ""
+                )
+            }
+            OutlinedTextField(
+                value = rateText,
+                onValueChange = {
+                    rateText = it
+                    val v = it.toDoubleOrNull()
+                    onChange(if (isSalary) change.copy(annualSalary = v) else change.copy(hourlyRate = v))
+                },
+                label = { Text(if (isSalary) "Salary" else "Rate") },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                shape = MaterialTheme.shapes.medium,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+            )
+            IconButton(onClick = onDelete, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Outlined.Delete, "Remove", modifier = Modifier.size(18.dp))
+            }
+        }
+        var noteText by remember(change.id) { mutableStateOf(change.note ?: "") }
+        OutlinedTextField(
+            value = noteText,
+            onValueChange = { noteText = it; onChange(change.copy(note = it)) },
+            label = { Text("Note (e.g. merit raise)") },
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            singleLine = true,
+            shape = MaterialTheme.shapes.medium
+        )
+    }
+}
+
+private data class LogLinesUi(
+    val earnings: List<PaycheckLineItem>,
+    val taxes: List<PaycheckLineItem>,
+    val preTax: List<PaycheckLineItem>,
+    val postTax: List<PaycheckLineItem>
+)
+
+private fun linesFromEntryAndroid(entry: PaycheckLogEntry?): LogLinesUi {
+    if (entry == null) return LogLinesUi(emptyList(), emptyList(), emptyList(), emptyList())
+    fun id() = UUID.randomUUID().toString()
+    val earnings = if (entry.earnings.isNotEmpty()) entry.earnings
+    else listOf(PaycheckLineItem(id(), "Regular", entry.grossPay))
+    val taxes = if (entry.taxes.isNotEmpty()) entry.taxes
+    else entry.totalTaxes?.let { listOf(PaycheckLineItem(id(), "Taxes", it)) } ?: emptyList()
+    val preTax = if (entry.preTaxDeductions.isNotEmpty()) entry.preTaxDeductions
+    else entry.totalPreTaxDeductions?.let { listOf(PaycheckLineItem(id(), "Pre-tax", it)) } ?: emptyList()
+    val postTax = if (entry.postTaxDeductions.isNotEmpty()) entry.postTaxDeductions
+    else entry.totalPostTaxDeductions?.let { listOf(PaycheckLineItem(id(), "Post-tax", it)) } ?: emptyList()
+    return LogLinesUi(earnings, taxes, preTax, postTax)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LogPaycheckDialog(
+    editing: PaycheckLogEntry?,
+    calculation: PaycheckCalculation,
+    config: SalaryConfig,
+    onDismiss: () -> Unit,
+    onSave: (PaycheckLogEntry) -> Unit
+) {
+    val initial = remember(editing) { linesFromEntryAndroid(editing) }
+    var payDate by remember { mutableStateOf(formatIsoDate(editing?.payDate ?: System.currentTimeMillis())) }
+    var earnings by remember { mutableStateOf(initial.earnings) }
+    var taxes by remember { mutableStateOf(initial.taxes) }
+    var preTax by remember { mutableStateOf(initial.preTax) }
+    var postTax by remember { mutableStateOf(initial.postTax) }
+    var notes by remember { mutableStateOf(editing?.notes ?: "") }
+
+    val gross = earnings.sumOf { it.amount }
+    val totalTaxes = taxes.sumOf { it.amount }
+    val totalPre = preTax.sumOf { it.amount }
+    val totalPost = postTax.sumOf { it.amount }
+    val net = gross - totalTaxes - totalPre - totalPost
+
+    val lastEntry = config.paycheckLog.filter { it.id != editing?.id }.maxByOrNull { it.payDate }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(shape = MaterialTheme.shapes.large) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 620.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = if (editing == null) "Log Paycheck" else "Edit Paycheck",
+                    style = MaterialTheme.typography.titleLarge
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (calculation.grossPay > 0) {
+                        OutlinedButton(onClick = {
+                            val l = SalarySummary.lineItemsFromCalculation(calculation, config.overtimeHours)
+                            earnings = l.earnings; taxes = l.taxes
+                            preTax = l.preTaxDeductions; postTax = l.postTaxDeductions
+                        }) { Text("Prefill calc") }
+                    }
+                    if (lastEntry != null) {
+                        OutlinedButton(onClick = {
+                            val l = linesFromEntryAndroid(lastEntry)
+                            fun reid(list: List<PaycheckLineItem>) = list.map { it.copy(id = UUID.randomUUID().toString()) }
+                            earnings = reid(l.earnings); taxes = reid(l.taxes)
+                            preTax = reid(l.preTax); postTax = reid(l.postTax)
+                        }) { Text("Copy last") }
+                    }
+                }
+                OutlinedTextField(
+                    value = payDate,
+                    onValueChange = { payDate = it.take(10) },
+                    label = { Text("Pay date (YYYY-MM-DD)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        SummaryLine("Gross", gross, false)
+                        SummaryLine("Taxes", totalTaxes, true)
+                        SummaryLine("Deductions", totalPre + totalPost, true)
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Net", fontWeight = FontWeight.SemiBold)
+                            MoneyText(amount = net, style = MaterialTheme.typography.titleMedium)
+                        }
+                    }
+                }
+                LogLineSection("Earnings", earnings, showHours = true) { earnings = it }
+                LogLineSection("Taxes", taxes, showHours = false) { taxes = it }
+                LogLineSection("Pre-Tax Deductions", preTax, showHours = false) { preTax = it }
+                LogLineSection("Post-Tax Deductions", postTax, showHours = false) { postTax = it }
+                OutlinedTextField(
+                    value = notes,
+                    onValueChange = { notes = it },
+                    label = { Text("Notes (optional)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.End)) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Button(
+                        onClick = {
+                            val dateMs = parseIsoDate(payDate) ?: System.currentTimeMillis()
+                            val otRegex = Regex("overtime|^ot\\b", RegexOption.IGNORE_CASE)
+                            val otLine = earnings.firstOrNull { otRegex.containsMatchIn(it.label) }
+                            fun clean(list: List<PaycheckLineItem>) = list
+                                .map { it.copy(label = it.label.ifBlank { "Other" }) }
+                                .filter { it.amount != 0.0 || (it.hours ?: 0.0) != 0.0 }
+                            onSave(
+                                PaycheckLogEntry(
+                                    id = editing?.id ?: "",
+                                    payDate = dateMs,
+                                    grossPay = gross,
+                                    netPay = net,
+                                    totalTaxes = totalTaxes,
+                                    totalPreTaxDeductions = totalPre,
+                                    totalPostTaxDeductions = totalPost,
+                                    overtimeHours = otLine?.hours,
+                                    notes = notes.ifBlank { null },
+                                    earnings = clean(earnings),
+                                    taxes = clean(taxes),
+                                    preTaxDeductions = clean(preTax),
+                                    postTaxDeductions = clean(postTax)
+                                )
+                            )
+                        },
+                        enabled = earnings.isNotEmpty()
+                    ) { Text(if (editing == null) "Log" else "Update") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SummaryLine(label: String, amount: Double, negative: Boolean) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            text = (if (negative) "−" else "") + amount.formatCurrency(),
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (negative) LossRed else MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LogLineSection(
+    title: String,
+    lines: List<PaycheckLineItem>,
+    showHours: Boolean,
+    onLinesChange: (List<PaycheckLineItem>) -> Unit
+) {
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    lines.sumOf { it.amount }.formatCurrency(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                TextButton(onClick = {
+                    onLinesChange(lines + PaycheckLineItem(id = UUID.randomUUID().toString(), label = ""))
+                }) { Text("+ Add") }
+            }
+        }
+        lines.forEach { line ->
+            LineEditorRow(
+                line = line,
+                showHours = showHours,
+                onChange = { updated -> onLinesChange(lines.map { if (it.id == line.id) updated else it }) },
+                onRemove = { onLinesChange(lines.filter { it.id != line.id }) }
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LineEditorRow(
+    line: PaycheckLineItem,
+    showHours: Boolean,
+    onChange: (PaycheckLineItem) -> Unit,
+    onRemove: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        OutlinedTextField(
+            value = line.label,
+            onValueChange = { onChange(line.copy(label = it)) },
+            label = { Text("Label") },
+            modifier = Modifier.weight(1f),
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodySmall,
+            shape = MaterialTheme.shapes.small
+        )
+        if (showHours) {
+            var hoursText by remember(line.id) {
+                mutableStateOf(line.hours?.let { if (it > 0) it.toString() else "" } ?: "")
+            }
+            OutlinedTextField(
+                value = hoursText,
+                onValueChange = { hoursText = it; onChange(line.copy(hours = it.toDoubleOrNull())) },
+                label = { Text("hrs") },
+                modifier = Modifier.width(64.dp),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                shape = MaterialTheme.shapes.small
+            )
+        }
+        var amtText by remember(line.id) {
+            mutableStateOf(if (line.amount != 0.0) line.amount.toString() else "")
+        }
+        OutlinedTextField(
+            value = amtText,
+            onValueChange = { amtText = it; onChange(line.copy(amount = it.toDoubleOrNull() ?: 0.0)) },
+            label = { Text("$") },
+            modifier = Modifier.width(96.dp),
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodySmall,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            shape = MaterialTheme.shapes.small
+        )
+        IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
+            Icon(Icons.Outlined.Delete, "Remove", modifier = Modifier.size(16.dp))
         }
     }
 }

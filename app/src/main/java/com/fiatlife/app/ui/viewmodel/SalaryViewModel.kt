@@ -11,15 +11,19 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 import javax.inject.Inject
 
-enum class SalaryTab { PAYCHECK, ANNUAL }
+enum class SalaryTab { SUMMARY, PAYCHECK, ANNUAL }
 
 data class SalaryState(
     val config: SalaryConfig = SalaryConfig(),
     val calculation: PaycheckCalculation = PaycheckCalculation(),
-    val activeTab: SalaryTab = SalaryTab.PAYCHECK,
+    val activeTab: SalaryTab = SalaryTab.SUMMARY,
     val annualOvertimeHours: Double = 0.0,
     val annualProjection: AnnualProjection = AnnualProjection(),
     val annualBaseProjection: AnnualProjection = AnnualProjection(),
+    val summaryYear: Int = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR),
+    val ytdSummary: YtdSummary? = null,
+    val showLogDialog: Boolean = false,
+    val editingLog: PaycheckLogEntry? = null,
     val isEditing: Boolean = false,
     val showDeductionDialog: Boolean = false,
     val showDepositDialog: Boolean = false,
@@ -44,9 +48,11 @@ class SalaryViewModel @Inject constructor(
             repository.getSalaryConfig().collect { config ->
                 config?.let {
                     _state.update { state ->
-                        state.copy(
-                            config = it,
-                            calculation = PaycheckCalculator.calculate(it)
+                        recalcSummary(
+                            state.copy(
+                                config = it,
+                                calculation = PaycheckCalculator.calculate(it)
+                            )
                         )
                     }
                 }
@@ -57,7 +63,93 @@ class SalaryViewModel @Inject constructor(
     fun setActiveTab(tab: SalaryTab) {
         _state.update { state ->
             val newState = state.copy(activeTab = tab)
-            if (tab == SalaryTab.ANNUAL) recalcAnnual(newState) else newState
+            when (tab) {
+                SalaryTab.ANNUAL -> recalcAnnual(newState)
+                SalaryTab.SUMMARY -> recalcSummary(newState)
+                else -> newState
+            }
+        }
+    }
+
+    private fun recalcSummary(state: SalaryState): SalaryState {
+        val annual = PaycheckCalculator.calculateAnnual(
+            state.config,
+            state.annualOvertimeHours,
+            state.summaryYear
+        )
+        val summary = SalarySummary.summarize(
+            state.config,
+            state.calculation,
+            annual,
+            state.summaryYear
+        )
+        return state.copy(ytdSummary = summary)
+    }
+
+    fun setSummaryYear(year: Int) {
+        _state.update { recalcSummary(it.copy(summaryYear = year)) }
+    }
+
+    fun updatePayType(type: PayType) {
+        updateConfig { it.copy(payType = type) }
+    }
+
+    fun updateAnnualSalary(amount: Double) {
+        updateConfig { it.copy(annualSalary = amount) }
+    }
+
+    fun showLogPaycheck(entry: PaycheckLogEntry?) {
+        _state.update { it.copy(showLogDialog = true, editingLog = entry) }
+    }
+
+    fun dismissLogDialog() {
+        _state.update { it.copy(showLogDialog = false, editingLog = null) }
+    }
+
+    fun saveLogPaycheck(entry: PaycheckLogEntry) {
+        val e = if (entry.id.isEmpty()) entry.copy(id = UUID.randomUUID().toString()) else entry
+        updateConfig { config ->
+            val updated = config.paycheckLog.toMutableList()
+            val idx = updated.indexOfFirst { it.id == e.id }
+            if (idx >= 0) updated[idx] = e else updated.add(e)
+            config.copy(paycheckLog = updated)
+        }
+        dismissLogDialog()
+        save()
+    }
+
+    fun removeLogPaycheck(id: String) {
+        updateConfig { config ->
+            config.copy(paycheckLog = config.paycheckLog.filter { it.id != id })
+        }
+        save()
+    }
+
+    fun addRaise() {
+        updateConfig { config ->
+            config.copy(
+                payRateHistory = config.payRateHistory + PayRateChange(
+                    id = UUID.randomUUID().toString(),
+                    effectiveDate = System.currentTimeMillis(),
+                    payType = config.payType,
+                    hourlyRate = if (config.payType == PayType.HOURLY) config.hourlyRate else null,
+                    annualSalary = if (config.payType == PayType.SALARY) config.annualSalary else null
+                )
+            )
+        }
+    }
+
+    fun updateRaise(change: PayRateChange) {
+        updateConfig { config ->
+            config.copy(payRateHistory = config.payRateHistory.map {
+                if (it.id == change.id) change else it
+            })
+        }
+    }
+
+    fun removeRaise(id: String) {
+        updateConfig { config ->
+            config.copy(payRateHistory = config.payRateHistory.filter { it.id != id })
         }
     }
 
@@ -236,7 +328,11 @@ class SalaryViewModel @Inject constructor(
                 config = newConfig,
                 calculation = PaycheckCalculator.calculate(newConfig)
             )
-            if (state.activeTab == SalaryTab.ANNUAL) recalcAnnual(newState) else newState
+            when (state.activeTab) {
+                SalaryTab.ANNUAL -> recalcAnnual(newState)
+                SalaryTab.SUMMARY -> recalcSummary(newState)
+                else -> newState
+            }
         }
     }
 }

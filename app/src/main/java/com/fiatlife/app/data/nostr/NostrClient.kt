@@ -4,6 +4,8 @@ import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.*
 import okhttp3.*
@@ -29,6 +31,12 @@ data class PublishStatus(
     val detail: String = ""
 )
 
+/** Background relay-publish queue state (drives the "not synced" badge). */
+data class OutboxState(
+    val pending: Int = 0,
+    val failed: Int = 0,
+)
+
 @Singleton
 class NostrClient @Inject constructor(
     private val okHttpClient: OkHttpClient
@@ -48,6 +56,19 @@ class NostrClient @Inject constructor(
 
     private val pendingQueue = Channel<String>(Channel.BUFFERED)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // --- Background relay-publish outbox ---------------------------------
+    // Events are signed synchronously (so signer rejections still surface to
+    // the caller) but the relay round-trip happens here in the background with
+    // retry + backoff, so the UI is never blocked waiting on the network.
+    private val _outbox = MutableStateFlow(OutboxState())
+    val outbox: StateFlow<OutboxState> = _outbox.asStateFlow()
+
+    private data class OutboxJob(val id: Long, val label: String, val signedJson: String)
+    private val outboxMutex = Mutex()
+    private val failedJobs = mutableListOf<OutboxJob>()
+    private var outboxSeq = 0L
+    private val outboxBackoffsMs = longArrayOf(1000, 3000, 8000, 20000)
 
     val hasSigner: Boolean get() = signer != null
     val currentSigner: NostrSigner? get() = signer
@@ -159,6 +180,60 @@ class NostrClient @Inject constructor(
         return sendOrQueue(message)
     }
 
+    /**
+     * Hand a signed event to the background outbox and return immediately.
+     * Delivery (connect + AUTH + send) happens off the UI path with retry.
+     */
+    fun enqueueSignedEvent(signedEventJson: String, label: String) {
+        _outbox.update { it.copy(pending = it.pending + 1) }
+        val job = OutboxJob(id = ++outboxSeq, label = label, signedJson = signedEventJson)
+        scope.launch { runOutboxJob(job) }
+    }
+
+    private suspend fun runOutboxJob(job: OutboxJob) {
+        var attempt = 0
+        while (true) {
+            val ready = ensureConnected()
+            if (ready && publishSignedEventJson(job.signedJson)) {
+                _outbox.update { it.copy(pending = (it.pending - 1).coerceAtLeast(0)) }
+                Log.d(TAG, "outbox delivered ${job.label}")
+                return
+            }
+            if (attempt >= outboxBackoffsMs.size) {
+                outboxMutex.withLock { failedJobs.add(job) }
+                _outbox.update {
+                    it.copy(
+                        pending = (it.pending - 1).coerceAtLeast(0),
+                        failed = it.failed + 1,
+                    )
+                }
+                Log.w(TAG, "outbox gave up on ${job.label} after ${attempt + 1} attempts")
+                return
+            }
+            delay(outboxBackoffsMs[attempt])
+            attempt++
+        }
+    }
+
+    /** Re-attempt all previously-failed background sends. */
+    fun retryOutbox() {
+        scope.launch {
+            val jobs = outboxMutex.withLock {
+                val copy = failedJobs.toList()
+                failedJobs.clear()
+                copy
+            }
+            if (jobs.isEmpty()) return@launch
+            _outbox.update {
+                it.copy(
+                    failed = (it.failed - jobs.size).coerceAtLeast(0),
+                    pending = it.pending + jobs.size,
+                )
+            }
+            jobs.forEach { job -> launch { runOutboxJob(job) } }
+        }
+    }
+
     suspend fun publishEvent(event: NostrEvent): Boolean {
         val message = buildJsonArray {
             add("EVENT")
@@ -220,9 +295,9 @@ class NostrClient @Inject constructor(
             return false
         }
 
-        val sent = publishSignedEventJson(signedJson)
-        Log.d(TAG, "publishEncryptedAppData: dTag=$dTag, sent=$sent")
-        return sent
+        enqueueSignedEvent(signedJson, "app-data:$dTag")
+        Log.d(TAG, "publishEncryptedAppData: dTag=$dTag enqueued for background delivery")
+        return true
     }
 
     /**
@@ -250,9 +325,9 @@ class NostrClient @Inject constructor(
             return false
         }
 
-        val sent = publishSignedEventJson(signedJson)
-        Log.d(TAG, "publishDeletion: aTag=$aTag, sent=$sent")
-        return sent
+        enqueueSignedEvent(signedJson, "deletion:$aTag")
+        Log.d(TAG, "publishDeletion: aTag=$aTag enqueued for background delivery")
+        return true
     }
 
     /**
@@ -327,18 +402,9 @@ class NostrClient @Inject constructor(
                 }
             )
         }
-        val sent = publishSignedEventJson(signedJson)
-        Log.d(TAG, "publishReplaceable37004: d=$dTag sent=$sent")
-        return if (sent) {
-            PublishStatus(success = true, stage = "ok")
-        } else {
-            PublishStatus(
-                success = false,
-                stage = "publish_event",
-                detail = if (!ready) "Relay not ready/auth pending; event was not sent."
-                else "Relay send returned false."
-            )
-        }
+        enqueueSignedEvent(signedJson, "cypherlog:$dTag")
+        Log.d(TAG, "publishReplaceable37004: d=$dTag enqueued for background delivery")
+        return PublishStatus(success = true, stage = "ok")
     }
 
     /**
@@ -382,18 +448,9 @@ class NostrClient @Inject constructor(
                 }
             )
         }
-        val sent = publishSignedEventJson(signedJson)
-        Log.d(TAG, "publishReplaceable30078: d=$dTag sent=$sent")
-        return if (sent) {
-            PublishStatus(success = true, stage = "ok")
-        } else {
-            PublishStatus(
-                success = false,
-                stage = "publish_event",
-                detail = if (!ready) "Relay not ready/auth pending; event was not sent."
-                else "Relay send returned false."
-            )
-        }
+        enqueueSignedEvent(signedJson, "cypherlog30078:$dTag")
+        Log.d(TAG, "publishReplaceable30078: d=$dTag enqueued for background delivery")
+        return PublishStatus(success = true, stage = "ok")
     }
 
     /**

@@ -2,6 +2,7 @@ package com.fiatlife.app.ui.navigation
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
@@ -12,6 +13,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -29,6 +31,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
 import com.fiatlife.app.ui.components.AppBanner
+import com.fiatlife.app.ui.components.SyncStatusBar
 import com.fiatlife.app.ui.navigation.Screen
 import com.fiatlife.app.ui.screens.bills.BillDetailScreen
 import com.fiatlife.app.ui.screens.bills.BillsScreen
@@ -54,6 +57,8 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
     val mainState by mainViewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var manualSyncStarted by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    var lastFailedSync by remember { mutableIntStateOf(0) }
     val currentScreen = Screen.fromRoute(currentDestination?.route)
     val hideGlobalTopBar = currentScreen == Screen.BillDetail ||
         currentScreen == Screen.DebtDetail ||
@@ -71,8 +76,25 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
         }
     }
 
+    // Surface newly-failed background publishes via a snackbar with Retry.
+    LaunchedEffect(mainState.failedSync) {
+        val failed = mainState.failedSync
+        if (failed > lastFailedSync) {
+            val result = snackbarHostState.showSnackbar(
+                message = "$failed change${if (failed == 1) "" else "s"} not synced",
+                actionLabel = "Retry",
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                mainViewModel.retryFailedSync()
+            }
+        }
+        lastFailedSync = failed
+    }
+
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             if (!hideGlobalTopBar) {
                 Surface(
@@ -141,13 +163,18 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
             }
         }
     ) { innerPadding ->
-        NavHost(
-            navController = navController,
-            startDestination = Screen.Dashboard.route,
-            modifier = Modifier.padding(innerPadding),
-            enterTransition = { fadeIn(animationSpec = tween(200)) },
-            exitTransition = { fadeOut(animationSpec = tween(200)) }
-        ) {
+        Column(modifier = Modifier.padding(innerPadding)) {
+            SyncStatusBar(
+                pending = mainState.pendingSync,
+                failed = mainState.failedSync,
+                onRetry = { mainViewModel.retryFailedSync() },
+            )
+            NavHost(
+                navController = navController,
+                startDestination = Screen.Dashboard.route,
+                enterTransition = { fadeIn(animationSpec = tween(200)) },
+                exitTransition = { fadeOut(animationSpec = tween(200)) }
+            ) {
             composable(Screen.Dashboard.route) {
                 DashboardScreen(navController = navController)
             }
@@ -202,6 +229,7 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
                     companyKey = companyKey,
                     companyName = companyName
                 )
+            }
             }
         }
     }
