@@ -33,6 +33,7 @@ import {
 import { useBankAccountsData } from "../../lib/bankAccountsData";
 import { useBillersData } from "../../lib/billersData";
 import { useBillsData } from "../../lib/billsData";
+import type { CreditAccount } from "../../lib/creditAccount";
 import { useDebtData } from "../../lib/debtData";
 import { formatUsd } from "../../lib/format";
 import { useRecordBillPayment } from "../../lib/useBillPayment";
@@ -48,7 +49,6 @@ export function BillsTab() {
     saving,
     reload,
     deleteBill,
-    togglePaid,
   } = useBillsData();
   const recordBillPayment = useRecordBillPayment();
   const saveBillWithBiller = useSaveBill();
@@ -179,20 +179,8 @@ export function BillsTab() {
     }
   };
 
-  const onMarkPaid = async (item: BillWithSource) => {
-    if (isCreditOrLoan(item.bill)) {
-      setPayItem(item);
-      return;
-    }
-    await recordBillPayment(item, effectiveAmountDue(item.bill));
-  };
-
-  const onTogglePaidState = async (item: BillWithSource) => {
-    if (isPaidForCurrentCycle(item.bill, now)) {
-      await togglePaid(item);
-      return;
-    }
-    await onMarkPaid(item);
+  const onMarkPaid = (item: BillWithSource) => {
+    setPayItem(item);
   };
 
   return (
@@ -350,7 +338,8 @@ export function BillsTab() {
                   setSheetOpen(true);
                 }}
                 onDelete={() => void onDeleteBill(item)}
-                onTogglePaid={() => void onTogglePaidState(item)}
+                creditAccounts={creditAccounts}
+                onMarkPaid={() => void onMarkPaid(item)}
               />
             ))}
           </ul>
@@ -426,7 +415,8 @@ export function BillsTab() {
                             setSheetOpen(true);
                           }}
                           onDelete={() => void onDeleteBill(item)}
-                          onTogglePaid={() => void onTogglePaidState(item)}
+                          creditAccounts={creditAccounts}
+                          onMarkPaid={() => void onMarkPaid(item)}
                         />
                       ))}
                     </ul>
@@ -468,8 +458,10 @@ export function BillsTab() {
         item={payItem}
         open={payItem != null}
         onClose={() => setPayItem(null)}
-        onConfirm={async (amount, newBalance) => {
-          if (payItem) await recordBillPayment(payItem, amount, newBalance);
+        onConfirm={async (amount, newBalance, paymentDate) => {
+          if (payItem) {
+            await recordBillPayment(payItem, amount, newBalance, paymentDate);
+          }
         }}
         saving={saving}
       />
@@ -506,43 +498,64 @@ function groupBySubcategory(
   return map;
 }
 
+function creditBalanceForBill(
+  bill: BillWithSource["bill"],
+  creditAccounts: CreditAccount[],
+): number {
+  if (bill.linkedCreditAccountId) {
+    const linked = creditAccounts.find((a) => a.id === bill.linkedCreditAccountId);
+    return linked?.currentBalance ?? 0;
+  }
+  return bill.creditCardDetails?.currentBalance ?? 0;
+}
+
 function BillCard({
   item,
   now,
   saving,
   deletingId,
+  creditAccounts,
   onOpen,
   onEdit,
   onDelete,
-  onTogglePaid,
+  onMarkPaid,
 }: {
   item: BillWithSource;
   now: number;
   saving: boolean;
   deletingId: string | null;
+  creditAccounts: CreditAccount[];
   onOpen: () => void;
   onEdit: () => void;
   onDelete: () => void;
-  onTogglePaid: () => void;
+  onMarkPaid: () => void;
 }) {
   const { bill } = item;
   const pastDue = isPastDue(bill, now);
   const paidCycle = isPaidForCurrentCycle(bill, now);
   const cat = generalCategoryForBill(bill);
+  const creditBalance = creditBalanceForBill(bill, creditAccounts);
+  const showPayButton = isCreditOrLoan(bill)
+    ? creditBalance > 0
+    : !paidCycle;
 
   return (
     <li className="card px-4 py-3">
       <div className="flex items-center gap-3">
-        <label className="flex items-center cursor-pointer shrink-0">
-          <input
-            type="checkbox"
-            className="h-4 w-4 accent-primary rounded"
-            checked={paidCycle}
+        {showPayButton ? (
+          <button
+            type="button"
+            className="btn-paid"
             disabled={saving}
-            onChange={onTogglePaid}
-          />
-          <span className="sr-only">Mark {bill.name} paid</span>
-        </label>
+            onClick={onMarkPaid}
+          >
+            Paid
+          </button>
+        ) : paidCycle ? (
+          <span className="badge-success text-xs px-2.5 py-1 rounded-pill font-medium shrink-0">
+            Paid
+          </span>
+        ) : null}
         <button
           type="button"
           className="flex-1 min-w-0 text-left"

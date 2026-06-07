@@ -11,6 +11,7 @@ mod crypto;
 mod error;
 mod fiatlife_tags;
 mod nostr_support;
+mod outbox;
 mod relay_raw;
 mod routes;
 mod session;

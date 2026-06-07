@@ -5,14 +5,13 @@ Personal finance tracker — bills, paycheck breakdowns, debt, and savings goals
 ## What this package does
 
 - Stores your Nostr secret key (nsec) **encrypted at rest** on your Start9 server.
-- Connects to your Nostr relay and syncs FiatLife kind `30078` events.
-- Shows a dashboard with relay sync status and data counts by category.
+- Connects to your Nostr relay and syncs FiatLife kind `30078` app data and CypherLog kind `37004` subscriptions.
+- Bills, paycheck, debt (with payoff planner), goals, settings, and company history — full web parity with Android.
 
-## What this package does **not** do (yet)
+## What this package does **not** do
 
 - It does **not** run a Nostr relay — install **Nostr RS Relay** separately or use an external `wss://` relay.
 - It does **not** include Blossom — bill/debt statement attachments are Android-only until Blossom is added.
-- Bills, paycheck, debt, and goals screens are placeholders; the dashboard proves relay parity today.
 
 ## Setup
 

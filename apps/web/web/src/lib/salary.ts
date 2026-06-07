@@ -59,6 +59,50 @@ export type TaxOverrides = {
   customMedicareRate?: number | null;
 };
 
+export type PayType = "HOURLY" | "SALARY";
+
+export const PAY_TYPE_LABELS: Record<PayType, string> = {
+  HOURLY: "Hourly",
+  SALARY: "Salaried",
+};
+
+/** A single editable money line on a logged paystub (earning, tax, or deduction). */
+export type PaycheckLineItem = {
+  id: string;
+  label: string;
+  amount: number;
+  /** Hours, only meaningful for earnings lines like Regular/Overtime. */
+  hours?: number;
+};
+
+/** Suggested earnings categories shown when adding an earnings line. */
+export const EARNINGS_CATEGORIES = [
+  "Regular",
+  "Overtime",
+  "Bonus",
+  "Commission",
+  "Holiday",
+  "PTO",
+  "Tips",
+  "Reimbursement",
+  "Other",
+] as const;
+
+/**
+ * An effective-dated pay-rate change (raise). The rate in effect for any given
+ * date is the most recent change on or before that date, falling back to the
+ * base config rate.
+ */
+export type PayRateChange = {
+  id: string;
+  effectiveDate: number;
+  payType?: PayType;
+  hourlyRate?: number;
+  annualSalary?: number;
+  standardHoursPerPeriod?: number;
+  note?: string;
+};
+
 /** Web extension — Android ignores unknown JSON keys. */
 export type PaycheckLogEntry = {
   id: string;
@@ -70,12 +114,25 @@ export type PaycheckLogEntry = {
   totalPostTaxDeductions?: number;
   overtimeHours?: number;
   notes?: string;
+  /** Itemized breakdown captured from the actual paystub. */
+  earnings?: PaycheckLineItem[];
+  taxes?: PaycheckLineItem[];
+  preTaxDeductions?: PaycheckLineItem[];
+  postTaxDeductions?: PaycheckLineItem[];
+  /** Employer-side contributions (401k match, HSA) — tracked, not part of net. */
+  employerContributions?: PaycheckLineItem[];
+  /** Blossom hash + label of an attached paystub image/PDF. */
+  attachmentHash?: string;
+  attachmentLabel?: string;
 };
 
 export type SalaryConfig = {
   id: string;
   name: string;
+  payType: PayType;
   hourlyRate: number;
+  /** Annual salary when payType is SALARY. */
+  annualSalary?: number;
   standardHoursPerPeriod: number;
   overtimeHours: number;
   overtimeMultiplier: number;
@@ -89,8 +146,18 @@ export type SalaryConfig = {
   directDeposits: DirectDeposit[];
   taxOverrides: TaxOverrides;
   firstPaydayOfYearMillis?: number | null;
+  /** Effective-dated raises; rate in effect = latest change on/before a date. */
+  payRateHistory?: PayRateChange[];
   paycheckLog?: PaycheckLogEntry[];
   updatedAt: number;
+};
+
+/** The pay rate in effect at a point in time, resolved from base + history. */
+export type EffectiveRate = {
+  payType: PayType;
+  hourlyRate: number;
+  annualSalary: number;
+  standardHoursPerPeriod: number;
 };
 
 export type DeductionLine = {
@@ -167,6 +234,13 @@ export type AnnualProjection = {
   annualGrossPay: number;
   annualPreTaxDeductions: number;
   annualTotalTaxes: number;
+  annualFederalTax: number;
+  annualStateTax: number;
+  annualCountyTax: number;
+  annualSocialSecurity: number;
+  annualMedicare: number;
+  preTaxDeductionBreakdown: DeductionLine[];
+  postTaxDeductionBreakdown: DeductionLine[];
   annualPostTaxDeductions: number;
   annualNetPay: number;
   effectiveTaxRate: number;
@@ -174,6 +248,8 @@ export type AnnualProjection = {
   overtimeHoursUsed: number;
   perPaycheckNet: number;
 };
+
+export type YtdBreakdownLine = { label: string; amount: number; hours?: number };
 
 export type YtdSummary = {
   year: number;
@@ -185,16 +261,54 @@ export type YtdSummary = {
   netPay: number;
   totalTaxes: number;
   totalDeductions: number;
+  totalPreTaxDeductions: number;
+  totalPostTaxDeductions: number;
+  overtimeHours: number;
+  earnings: YtdBreakdownLine[];
+  taxes: YtdBreakdownLine[];
+  preTaxDeductions: YtdBreakdownLine[];
+  postTaxDeductions: YtdBreakdownLine[];
+  employerContributions: YtdBreakdownLine[];
   annualNetTarget: number;
   progressPercent: number;
   remainingPaychecks: number;
+  /** Net we'd expect for the paychecks received so far (from projection). */
+  expectedNetToDate: number;
+  /** Logged net minus expected net (positive = ahead of projection). */
+  netVariance: number;
+  /** Projected full-year tax withholding (from annual projection). */
+  projectedAnnualTaxes: number;
 };
+
+/** Merge line items across entries, summing amounts/hours grouped by label. */
+function mergeLines(groups: PaycheckLineItem[][]): YtdBreakdownLine[] {
+  const map = new Map<string, YtdBreakdownLine>();
+  for (const group of groups) {
+    for (const item of group) {
+      const label = item.label || "Other";
+      const existing = map.get(label);
+      if (existing) {
+        existing.amount += item.amount;
+        if (item.hours) existing.hours = (existing.hours ?? 0) + item.hours;
+      } else {
+        map.set(label, {
+          label,
+          amount: item.amount,
+          hours: item.hours,
+        });
+      }
+    }
+  }
+  return [...map.values()].filter((l) => l.amount !== 0 || (l.hours ?? 0) !== 0);
+}
 
 export function defaultSalaryConfig(): SalaryConfig {
   return {
     id: "",
     name: "My Salary",
+    payType: "HOURLY",
     hourlyRate: 0,
+    annualSalary: 0,
     standardHoursPerPeriod: 80,
     overtimeHours: 0,
     overtimeMultiplier: 1.0,
@@ -206,9 +320,45 @@ export function defaultSalaryConfig(): SalaryConfig {
     postTaxDeductions: [],
     directDeposits: [],
     taxOverrides: {},
+    payRateHistory: [],
     paycheckLog: [],
     updatedAt: 0,
   };
+}
+
+/** Resolve the pay rate in effect at `whenMs` from base config + raise history. */
+export function effectiveRateAt(
+  config: SalaryConfig,
+  whenMs: number,
+): EffectiveRate {
+  const base: EffectiveRate = {
+    payType: config.payType ?? "HOURLY",
+    hourlyRate: config.hourlyRate,
+    annualSalary: config.annualSalary ?? 0,
+    standardHoursPerPeriod: config.standardHoursPerPeriod,
+  };
+  const applicable = (config.payRateHistory ?? [])
+    .filter((c) => c.effectiveDate <= whenMs)
+    .sort((a, b) => b.effectiveDate - a.effectiveDate)[0];
+  if (!applicable) return base;
+  return {
+    payType: applicable.payType ?? base.payType,
+    hourlyRate: applicable.hourlyRate ?? base.hourlyRate,
+    annualSalary: applicable.annualSalary ?? base.annualSalary,
+    standardHoursPerPeriod:
+      applicable.standardHoursPerPeriod ?? base.standardHoursPerPeriod,
+  };
+}
+
+/** Regular (base) gross for one pay period at a given effective rate. */
+export function periodRegularGross(
+  rate: EffectiveRate,
+  frequency: PayFrequency,
+): number {
+  if (rate.payType === "SALARY") {
+    return rate.annualSalary / PERIODS_PER_YEAR[frequency];
+  }
+  return rate.hourlyRate * rate.standardHoursPerPeriod;
 }
 
 function deductionAmount(
@@ -231,10 +381,14 @@ function calcDeductionLines(
   return { lines, total: lines.reduce((s, l) => s + l.amount, 0) };
 }
 
-export function calculatePaycheck(config: SalaryConfig): PaycheckCalculation {
-  const regularPay = config.hourlyRate * config.standardHoursPerPeriod;
+export function calculatePaycheck(
+  config: SalaryConfig,
+  asOf = Date.now(),
+): PaycheckCalculation {
+  const rate = effectiveRateAt(config, asOf);
+  const regularPay = periodRegularGross(rate, config.payFrequency);
   const overtimePay =
-    config.hourlyRate * config.overtimeMultiplier * config.overtimeHours;
+    rate.hourlyRate * config.overtimeMultiplier * config.overtimeHours;
   const grossPay = regularPay + overtimePay;
   const periodsPerYear = PERIODS_PER_YEAR[config.payFrequency];
   const overrides = config.taxOverrides ?? {};
@@ -328,15 +482,42 @@ export function calculatePaycheck(config: SalaryConfig): PaycheckCalculation {
   };
 }
 
+/** Sum of base/regular gross across a year's paydays, honoring mid-year raises. */
+function annualRegularPayForYear(config: SalaryConfig, year: number): number {
+  const periodsPerYear = PERIODS_PER_YEAR[config.payFrequency];
+  const history = config.payRateHistory ?? [];
+  const anchor = config.firstPaydayOfYearMillis;
+  if (history.length === 0 || !anchor) {
+    const rate = effectiveRateAt(config, anchor ?? Date.now());
+    return periodRegularGross(rate, config.payFrequency) * periodsPerYear;
+  }
+  const paydays = enumeratePaydays(
+    anchor,
+    config.payFrequency,
+    yearStart(year),
+    yearEnd(year),
+  );
+  if (paydays.length === 0) {
+    const rate = effectiveRateAt(config, Date.now());
+    return periodRegularGross(rate, config.payFrequency) * periodsPerYear;
+  }
+  return paydays.reduce(
+    (sum, d) =>
+      sum + periodRegularGross(effectiveRateAt(config, d), config.payFrequency),
+    0,
+  );
+}
+
 export function calculateAnnual(
   config: SalaryConfig,
   annualOvertimeHours: number,
+  year = new Date().getFullYear(),
 ): AnnualProjection {
   const periodsPerYear = PERIODS_PER_YEAR[config.payFrequency];
-  const annualRegularPay =
-    config.hourlyRate * config.standardHoursPerPeriod * periodsPerYear;
+  const annualRegularPay = annualRegularPayForYear(config, year);
+  const latestRate = effectiveRateAt(config, Date.now());
   const annualOvertimePay =
-    config.hourlyRate * config.overtimeMultiplier * annualOvertimeHours;
+    latestRate.hourlyRate * config.overtimeMultiplier * annualOvertimeHours;
   const annualGross = annualRegularPay + annualOvertimePay;
   const perPeriodGross = annualGross / periodsPerYear;
   const overrides = config.taxOverrides ?? {};
@@ -398,12 +579,13 @@ export function calculateAnnual(
     annualFederalTax + annualStateTax + annualCountyTax + annualSS + annualMedicare;
 
   const postEnabled = config.postTaxDeductions.filter((d) => d.isEnabled);
-  const annualPostTax = postEnabled.reduce((sum, d) => {
+  const postTaxBreakdown = postEnabled.map((d) => {
     const perPeriod = d.isPercentage
       ? perPeriodGross * (d.amount / 100)
       : d.amount;
-    return sum + perPeriod * periodsPerYear;
-  }, 0);
+    return { name: d.name, amount: perPeriod * periodsPerYear };
+  });
+  const annualPostTax = postTaxBreakdown.reduce((s, l) => s + l.amount, 0);
 
   const annualNet =
     annualGross - annualPreTax - annualTotalTaxes - annualPostTax;
@@ -414,6 +596,13 @@ export function calculateAnnual(
     annualGrossPay: annualGross,
     annualPreTaxDeductions: annualPreTax,
     annualTotalTaxes,
+    annualFederalTax,
+    annualStateTax,
+    annualCountyTax,
+    annualSocialSecurity: annualSS,
+    annualMedicare,
+    preTaxDeductionBreakdown: preTaxBreakdown,
+    postTaxDeductionBreakdown: postTaxBreakdown,
     annualPostTaxDeductions: annualPostTax,
     annualNetPay: annualNet,
     effectiveTaxRate: annualGross > 0 ? annualTotalTaxes / annualGross : 0,
@@ -494,6 +683,63 @@ export function countPaychecksInRange(
   return count;
 }
 
+/** Enumerate payday timestamps within [rangeStart, rangeEnd] (inclusive). */
+export function enumeratePaydays(
+  firstPaydayMillis: number,
+  frequency: PayFrequency,
+  rangeStart: number,
+  rangeEnd: number,
+): number[] {
+  const days: number[] = [];
+  if (frequency === "SEMIMONTHLY") {
+    const start = new Date(rangeStart);
+    const end = new Date(rangeEnd);
+    const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+    while (cursor <= end) {
+      const y = cursor.getFullYear();
+      const m = cursor.getMonth();
+      const mid = new Date(y, m, 15).getTime();
+      const monthEnd = new Date(y, m + 1, 0).getTime();
+      if (mid >= rangeStart && mid <= rangeEnd) days.push(mid);
+      if (monthEnd >= rangeStart && monthEnd <= rangeEnd) days.push(monthEnd);
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+    return days.sort((a, b) => a - b);
+  }
+  if (frequency === "MONTHLY") {
+    const cursor = new Date(
+      new Date(rangeStart).getFullYear(),
+      new Date(rangeStart).getMonth(),
+      1,
+    );
+    const end = new Date(rangeEnd);
+    while (cursor <= end) {
+      const payday = new Date(
+        cursor.getFullYear(),
+        cursor.getMonth(),
+        Math.min(
+          new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate(),
+          15,
+        ),
+      ).getTime();
+      if (payday >= rangeStart && payday <= rangeEnd) days.push(payday);
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+    return days.sort((a, b) => a - b);
+  }
+
+  const stepMs =
+    frequency === "WEEKLY"
+      ? 7 * 24 * 60 * 60 * 1000
+      : 14 * 24 * 60 * 60 * 1000;
+  let payday = startOfDay(firstPaydayMillis);
+  for (let i = 0; i < 500 && payday <= rangeEnd; i++) {
+    if (payday >= rangeStart) days.push(payday);
+    payday += stepMs;
+  }
+  return days;
+}
+
 export function scheduledPaychecksYtd(
   config: SalaryConfig,
   year: number,
@@ -538,6 +784,26 @@ export function logsForYear(
     .sort((a, b) => b.payDate - a.payDate);
 }
 
+function entryOvertimeHours(e: PaycheckLogEntry): number {
+  if (e.overtimeHours != null) return e.overtimeHours;
+  const otLine = (e.earnings ?? []).find((l) =>
+    /overtime|^ot\b/i.test(l.label),
+  );
+  return otLine?.hours ?? 0;
+}
+
+function entryEarnings(e: PaycheckLogEntry): PaycheckLineItem[] {
+  if (e.earnings && e.earnings.length > 0) return e.earnings;
+  return [{ id: e.id, label: "Earnings", amount: e.grossPay }];
+}
+
+function entryTaxes(e: PaycheckLogEntry): PaycheckLineItem[] {
+  if (e.taxes && e.taxes.length > 0) return e.taxes;
+  return e.totalTaxes != null
+    ? [{ id: e.id, label: "Taxes", amount: e.totalTaxes }]
+    : [];
+}
+
 export function summarizeYtd(
   config: SalaryConfig,
   calc: PaycheckCalculation,
@@ -549,16 +815,22 @@ export function summarizeYtd(
   const scheduledYtd = scheduledPaychecksYtd(config, year, asOf);
   const scheduledInYear = scheduledPaychecksInYear(config, year);
   const remaining = Math.max(0, scheduledInYear - scheduledYtd);
+  const perPaycheckNet = annual.perPaycheckNet;
 
   if (logs.length > 0) {
     const grossPay = logs.reduce((s, e) => s + e.grossPay, 0);
     const netPay = logs.reduce((s, e) => s + e.netPay, 0);
     const totalTaxes = logs.reduce((s, e) => s + (e.totalTaxes ?? 0), 0);
-    const totalDeductions = logs.reduce(
-      (s, e) =>
-        s + (e.totalPreTaxDeductions ?? 0) + (e.totalPostTaxDeductions ?? 0),
+    const totalPreTax = logs.reduce(
+      (s, e) => s + (e.totalPreTaxDeductions ?? 0),
       0,
     );
+    const totalPostTax = logs.reduce(
+      (s, e) => s + (e.totalPostTaxDeductions ?? 0),
+      0,
+    );
+    const overtimeHours = logs.reduce((s, e) => s + entryOvertimeHours(e), 0);
+    const expectedNetToDate = perPaycheckNet * logs.length;
     return {
       year,
       source: "logged",
@@ -568,34 +840,138 @@ export function summarizeYtd(
       grossPay,
       netPay,
       totalTaxes,
-      totalDeductions,
+      totalDeductions: totalPreTax + totalPostTax,
+      totalPreTaxDeductions: totalPreTax,
+      totalPostTaxDeductions: totalPostTax,
+      overtimeHours,
+      earnings: mergeLines(logs.map(entryEarnings)),
+      taxes: mergeLines(logs.map(entryTaxes)),
+      preTaxDeductions: mergeLines(logs.map((e) => e.preTaxDeductions ?? [])),
+      postTaxDeductions: mergeLines(logs.map((e) => e.postTaxDeductions ?? [])),
+      employerContributions: mergeLines(
+        logs.map((e) => e.employerContributions ?? []),
+      ),
       annualNetTarget: annual.annualNetPay,
       progressPercent:
         annual.annualNetPay > 0 ? (netPay / annual.annualNetPay) * 100 : 0,
       remainingPaychecks: remaining,
+      expectedNetToDate,
+      netVariance: netPay - expectedNetToDate,
+      projectedAnnualTaxes: annual.annualTotalTaxes,
     };
   }
 
-  const grossPay = calc.grossPay * scheduledYtd;
-  const netPay = calc.netPay * scheduledYtd;
-  const totalTaxes = calc.totalTaxes * scheduledYtd;
-  const totalDeductions =
-    (calc.totalPreTaxDeductions + calc.totalPostTaxDeductions) * scheduledYtd;
+  const n = scheduledYtd;
+  const grossPay = calc.grossPay * n;
+  const netPay = calc.netPay * n;
+  const totalTaxes = calc.totalTaxes * n;
+  const totalPreTax = calc.totalPreTaxDeductions * n;
+  const totalPostTax = calc.totalPostTaxDeductions * n;
+
+  const earnings: YtdBreakdownLine[] = [
+    { label: "Regular", amount: calc.regularPay * n },
+  ];
+  if (calc.overtimePay > 0) {
+    earnings.push({
+      label: "Overtime",
+      amount: calc.overtimePay * n,
+      hours: config.overtimeHours * n,
+    });
+  }
+  const taxes: YtdBreakdownLine[] = [
+    { label: "Federal income tax", amount: calc.federalTax * n },
+    { label: "State income tax", amount: calc.stateTax * n },
+    { label: "Social Security", amount: calc.socialSecurity * n },
+    { label: "Medicare", amount: calc.medicare * n },
+  ];
+  if (calc.countyTax > 0) {
+    taxes.splice(2, 0, {
+      label: config.county.trim() ? `${config.county} tax` : "Local tax",
+      amount: calc.countyTax * n,
+    });
+  }
 
   return {
     year,
     source: "estimated",
-    paycheckCount: scheduledYtd,
+    paycheckCount: n,
     scheduledPaychecksYtd: scheduledYtd,
     scheduledPaychecksInYear: scheduledInYear,
     grossPay,
     netPay,
     totalTaxes,
-    totalDeductions,
+    totalDeductions: totalPreTax + totalPostTax,
+    totalPreTaxDeductions: totalPreTax,
+    totalPostTaxDeductions: totalPostTax,
+    overtimeHours: config.overtimeHours * n,
+    earnings,
+    taxes: taxes.filter((t) => t.amount !== 0),
+    preTaxDeductions: calc.preTaxDeductionBreakdown.map((l) => ({
+      label: l.name || "Pre-tax",
+      amount: l.amount * n,
+    })),
+    postTaxDeductions: calc.postTaxDeductionBreakdown.map((l) => ({
+      label: l.name || "Post-tax",
+      amount: l.amount * n,
+    })),
+    employerContributions: [],
     annualNetTarget: annual.annualNetPay,
     progressPercent:
       annual.annualNetPay > 0 ? (netPay / annual.annualNetPay) * 100 : 0,
     remainingPaychecks: remaining,
+    expectedNetToDate: perPaycheckNet * n,
+    netVariance: 0,
+    projectedAnnualTaxes: annual.annualTotalTaxes,
+  };
+}
+
+function lineId(): string {
+  return crypto.randomUUID();
+}
+
+/** Build the itemized earnings/taxes/deduction lines from a calculation. */
+export function lineItemsFromCalculation(
+  calc: PaycheckCalculation,
+  overtimeHours?: number,
+): {
+  earnings: PaycheckLineItem[];
+  taxes: PaycheckLineItem[];
+  preTaxDeductions: PaycheckLineItem[];
+  postTaxDeductions: PaycheckLineItem[];
+} {
+  const earnings: PaycheckLineItem[] = [
+    { id: lineId(), label: "Regular", amount: calc.regularPay },
+  ];
+  if (calc.overtimePay > 0) {
+    earnings.push({
+      id: lineId(),
+      label: "Overtime",
+      amount: calc.overtimePay,
+      hours: overtimeHours,
+    });
+  }
+  const taxes: PaycheckLineItem[] = [
+    { id: lineId(), label: "Federal income tax", amount: calc.federalTax },
+    { id: lineId(), label: "State income tax", amount: calc.stateTax },
+    { id: lineId(), label: "Social Security", amount: calc.socialSecurity },
+    { id: lineId(), label: "Medicare", amount: calc.medicare },
+  ];
+  if (calc.countyTax > 0) {
+    taxes.push({ id: lineId(), label: "Local tax", amount: calc.countyTax });
+  }
+  return {
+    earnings,
+    taxes,
+    preTaxDeductions: calc.preTaxDeductionBreakdown.map((l) => ({
+      id: lineId(),
+      label: l.name,
+      amount: l.amount,
+    })),
+    postTaxDeductions: calc.postTaxDeductionBreakdown.map((l) => ({
+      id: lineId(),
+      label: l.name,
+      amount: l.amount,
+    })),
   };
 }
 
@@ -605,6 +981,7 @@ export function logEntryFromCalculation(
   overtimeHours?: number,
   notes?: string,
 ): PaycheckLogEntry {
+  const lines = lineItemsFromCalculation(calc, overtimeHours);
   return {
     id: crypto.randomUUID(),
     payDate,
@@ -615,6 +992,29 @@ export function logEntryFromCalculation(
     totalPostTaxDeductions: calc.totalPostTaxDeductions,
     overtimeHours,
     notes,
+    ...lines,
+  };
+}
+
+/** Recompute aggregate totals on an entry from its itemized lines. */
+export function recomputeEntryTotals(entry: PaycheckLogEntry): PaycheckLogEntry {
+  const sum = (lines?: PaycheckLineItem[]) =>
+    (lines ?? []).reduce((s, l) => s + (Number.isFinite(l.amount) ? l.amount : 0), 0);
+  const grossPay = sum(entry.earnings);
+  const totalTaxes = sum(entry.taxes);
+  const totalPreTaxDeductions = sum(entry.preTaxDeductions);
+  const totalPostTaxDeductions = sum(entry.postTaxDeductions);
+  const otLine = (entry.earnings ?? []).find((l) =>
+    /overtime|^ot\b/i.test(l.label),
+  );
+  return {
+    ...entry,
+    grossPay,
+    totalTaxes,
+    totalPreTaxDeductions,
+    totalPostTaxDeductions,
+    netPay: grossPay - totalTaxes - totalPreTaxDeductions - totalPostTaxDeductions,
+    overtimeHours: otLine?.hours ?? entry.overtimeHours,
   };
 }
 
@@ -634,10 +1034,13 @@ export function normalizeSalaryConfig(
   return {
     ...base,
     ...raw,
+    payType: (raw.payType as PayType) ?? base.payType,
+    annualSalary: raw.annualSalary ?? base.annualSalary,
     preTaxDeductions: raw.preTaxDeductions ?? base.preTaxDeductions,
     postTaxDeductions: raw.postTaxDeductions ?? base.postTaxDeductions,
     directDeposits: raw.directDeposits ?? base.directDeposits,
     taxOverrides: { ...base.taxOverrides, ...raw.taxOverrides },
+    payRateHistory: raw.payRateHistory ?? base.payRateHistory,
     paycheckLog: raw.paycheckLog ?? base.paycheckLog,
     payFrequency: (raw.payFrequency as PayFrequency) ?? base.payFrequency,
     filingStatus: (raw.filingStatus as FilingStatus) ?? base.filingStatus,

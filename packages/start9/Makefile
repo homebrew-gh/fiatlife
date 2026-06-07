@@ -1,7 +1,11 @@
 # StartOS 0.4.x package (TypeScript SDK + start-cli).
 #
-#   make x86-import   # build image + pack → fiatlife_x86_64.s9pk
-#   make x86-pack       # pack only (image must exist)
+# Prereqs: Node.js/npm, start-cli, Docker (or use image-import fallback below).
+#
+#   make x86-import   # build image + pack → fiatlife_x86_64.s9pk (recommended)
+#   make x86-pack     # pack only (image must exist)
+#   make x86          # docker buildx path (needs docker-buildx-plugin)
+#   make install      # install latest .s9pk to ~/.startos/config.yaml host
 #
 # Docs: https://docs.start9.com/packaging/0.4.0.x/
 
@@ -27,11 +31,11 @@ arm-pack: check-deps
 
 image-import: check-deps
 	@chmod +x scripts/build-image-import.sh scripts/docker.sh
-	@scripts/build-image-import.sh "start9/fiatlife/main:0.1.0"
+	@scripts/build-image-import.sh "start9/fiatlife/main:0.4.0"
 	@echo "Local Docker image ready."
 
 verify: check-deps
-	@test -f fiatlife_x86_64.s9pk || (echo "Error: fiatlife_x86_64.s9pk not found. Run: make x86-import" && exit 1)
+	@test -f fiatlife_x86_64.s9pk || (echo "Error: fiatlife_x86_64.s9pk not found. Run: make x86-import or make x86-pack" && exit 1)
 	start-cli s9pk inspect fiatlife_x86_64.s9pk manifest >/dev/null
 	@echo "OK: fiatlife_x86_64.s9pk"
 
@@ -40,6 +44,7 @@ clean-rootfs:
 
 include s9pk.mk
 
+# Override s9pk.mk pack rules: start-cli needs Docker + tar2sqfs on PATH.
 $(BASE_NAME).s9pk: $(INGREDIENTS) $(GIT_DEPS)
 	@$(MAKE) --no-print-directory ingredients
 	@echo "   Packing '$@'..."

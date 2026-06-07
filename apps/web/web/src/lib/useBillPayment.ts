@@ -14,8 +14,13 @@ export function useRecordBillPayment() {
   const { getAccountById, setBalanceFromPayment } = useDebtData();
 
   return useCallback(
-    async (item: BillWithSource, amount: number, newBalance?: number) => {
-      await recordPayment(item, amount, newBalance);
+    async (
+      item: BillWithSource,
+      amount: number,
+      newBalance?: number,
+      paymentDate?: number,
+    ) => {
+      await recordPayment(item, amount, newBalance, paymentDate);
 
       const accountId = item.bill.linkedCreditAccountId;
       if (!accountId) return;

@@ -7,25 +7,29 @@ import {
 } from './relay'
 import { uiPort } from './utils'
 
+function relayUrlsFromInterface(urls: string[] | null | undefined) {
+  const internal =
+    urls?.find((u) => u.startsWith('ws://') && u.includes('.startos')) ??
+    urls?.find((u) => u.startsWith('ws://')) ??
+    nostrRelayInternalUrl
+  const suggested = urls?.find((u) => u.startsWith('wss://')) ?? null
+  return { internal, suggested }
+}
+
 export const main = sdk.setupMain(async ({ effects }) => {
   console.info(i18n('Starting FiatLife'))
 
-  const internalRelayUrl =
+  const formattedUrls =
     (await sdk.serviceInterface
       .get(
         effects,
         { id: nostrRelayInterfaceId, packageId: nostrRelayPackageId },
-        (i) => {
-          const urls = i?.addressInfo?.format()
-          if (!urls || urls.length === 0) return null
-          return (
-            urls.find((u) => u.startsWith('ws://')) ??
-            urls.find((u) => u.startsWith('wss://')) ??
-            urls[0]
-          )
-        },
+        (i) => i?.addressInfo?.format() ?? null,
       )
-      .const()) ?? nostrRelayInternalUrl
+      .const()) ?? null
+
+  const { internal: internalRelayUrl, suggested: suggestedRelayUrl } =
+    relayUrlsFromInterface(formattedUrls)
 
   const subcontainer = await sdk.SubContainer.of(
     effects,
@@ -39,13 +43,18 @@ export const main = sdk.setupMain(async ({ effects }) => {
     'fiatlife-sub',
   )
 
+  const relayEnv: Record<string, string> = {
+    FL_INTERNAL_RELAY_URL: internalRelayUrl,
+  }
+  if (suggestedRelayUrl) {
+    relayEnv.FL_SUGGESTED_RELAY_URL = suggestedRelayUrl
+  }
+
   return sdk.Daemons.of(effects).addDaemon('primary', {
     subcontainer,
     exec: {
       command: ['/usr/local/bin/fiatlife-web'],
-      env: {
-        FL_INTERNAL_RELAY_URL: internalRelayUrl,
-      },
+      env: relayEnv,
     },
     ready: {
       display: i18n('Web UI'),

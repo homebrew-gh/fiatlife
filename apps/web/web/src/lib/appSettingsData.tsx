@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { ApiError, api } from "./api";
+import { useOptionalSyncStatus } from "./syncStatus";
 import {
   APP_SETTINGS_D_TAG,
   defaultAppSettings,
@@ -32,6 +33,7 @@ export function AppSettingsDataProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const { notify, refresh } = useOptionalSyncStatus();
 
   const reload = useCallback(async () => {
     setError(null);
@@ -60,29 +62,33 @@ export function AppSettingsDataProvider({ children }: { children: ReactNode }) {
 
   const saveSettings = useCallback(
     async (partial: Partial<AppSettings>) => {
+      const prev = settings;
+      const next = defaultAppSettings({
+        ...settings,
+        ...partial,
+        updatedAt: Date.now(),
+      });
+      setSettings(next);
       setSaving(true);
       setError(null);
       try {
-        const next = defaultAppSettings({
-          ...settings,
-          ...partial,
-          updatedAt: Date.now(),
-        });
         await api.publishAppData({
           d_tag: APP_SETTINGS_D_TAG,
           plaintext: serializeAppSettings(next),
         });
-        setSettings(next);
-        await reload();
+        refresh();
         return next;
       } catch (e) {
-        setError(e instanceof ApiError ? e.message : "Save failed.");
+        setSettings(prev);
+        const msg = e instanceof ApiError ? e.message : "Save failed.";
+        setError(msg);
+        notify(msg, "error");
         throw e;
       } finally {
         setSaving(false);
       }
     },
-    [settings, reload],
+    [settings, notify, refresh],
   );
 
   const value = useMemo(

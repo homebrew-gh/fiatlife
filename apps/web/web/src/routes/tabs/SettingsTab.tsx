@@ -12,6 +12,7 @@ import {
   hasRelayConfigured,
   isAllowedRelayUrl,
   relayHostLabel,
+  relayPrefillFromStatus,
   relayUrlsFromStatus,
   RELAY_URL_POLICY,
 } from "../../lib/relayUrl";
@@ -50,6 +51,19 @@ export function SettingsTab() {
   const [relayUrl, setRelayUrl] = useState(
     () => relayUrlsFromStatus(status)[0] ?? "wss://",
   );
+
+  useEffect(() => {
+    const urls = relayUrlsFromStatus(status);
+    if (urls.length > 0) {
+      setRelayUrl(urls[0] ?? "wss://");
+    }
+  }, [
+    status?.relay_url,
+    status?.relay_urls,
+    status?.detected_relay_url,
+    status?.suggested_relay_url,
+    status?.relay_prefill_url,
+  ]);
   const [relaySaving, setRelaySaving] = useState(false);
   const [relayError, setRelayError] = useState<string | null>(null);
   const [relayOk, setRelayOk] = useState(false);
@@ -141,7 +155,7 @@ export function SettingsTab() {
   };
 
   return (
-    <div className="space-y-6 max-w-lg">
+    <div className="mx-auto w-full max-w-lg space-y-6">
       <div>
         <h1 className="page-title">Settings</h1>
         <p className="text-sm text-muted mt-1">
@@ -257,6 +271,30 @@ export function SettingsTab() {
 
       <section className="card p-5">
         <h2 className="font-medium text-body mb-3">Nostr Relay</h2>
+        {(() => {
+          const prefill = relayPrefillFromStatus(status);
+          if (!prefill || prefill === relayUrl.trim()) return null;
+          return (
+            <div className="notice-panel p-3 text-sm space-y-2 mb-3">
+              <p className="text-body">
+                This server has{" "}
+                <span className="font-semibold">
+                  {status?.detected_relay_label?.trim() || "Nostr RS Relay"}
+                </span>{" "}
+                available at:
+              </p>
+              <p className="font-mono text-xs text-muted break-all">{prefill}</p>
+              <button
+                type="button"
+                className="btn-ghost text-sm"
+                disabled={relaySaving}
+                onClick={() => setRelayUrl(prefill)}
+              >
+                Use detected relay
+              </button>
+            </div>
+          );
+        })()}
         <form className="space-y-3" onSubmit={saveRelay}>
           <input
             className="input font-mono text-sm"

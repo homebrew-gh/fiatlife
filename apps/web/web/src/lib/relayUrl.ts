@@ -13,10 +13,25 @@ export function isAllowedRelayUrl(url: string): boolean {
   }
 }
 
+export function relayPrefillFromStatus(status: {
+  relay_prefill_url?: string | null;
+  suggested_relay_url?: string | null;
+  detected_relay_url?: string | null;
+} | null | undefined): string | null {
+  const prefill = status?.relay_prefill_url?.trim();
+  if (prefill) return prefill;
+  const suggested = status?.suggested_relay_url?.trim();
+  if (suggested) return suggested;
+  const detected = status?.detected_relay_url?.trim();
+  return detected || null;
+}
+
 export function relayUrlsFromStatus(status: {
   relay_url?: string | null;
   relay_urls?: string[] | null;
   detected_relay_url?: string | null;
+  suggested_relay_url?: string | null;
+  relay_prefill_url?: string | null;
 } | null | undefined): string[] {
   if (status?.relay_urls?.length) return status.relay_urls;
   const single = status?.relay_url?.trim();
@@ -29,6 +44,8 @@ export function hasRelayConfigured(status: {
   relay_url?: string | null;
   relay_urls?: string[] | null;
   detected_relay_url?: string | null;
+  suggested_relay_url?: string | null;
+  relay_prefill_url?: string | null;
 } | null | undefined): boolean {
   return relayUrlsFromStatus(status).length > 0;
 }

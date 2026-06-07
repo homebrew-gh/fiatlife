@@ -5,6 +5,7 @@ import { formatUsd } from "../../lib/format";
 import { useSalaryData } from "../../lib/salaryData";
 import {
   PAY_FREQUENCY_LABELS,
+  PAY_TYPE_LABELS,
   formatIsoDate,
   formatPercent,
   logsForYear,
@@ -12,8 +13,11 @@ import {
   summarizeYtd,
   type DirectDeposit,
   type PayFrequency,
+  type PayRateChange,
+  type PayType,
   type PaycheckLogEntry,
   type TaxOverrides,
+  type YtdBreakdownLine,
 } from "../../lib/salary";
 import { FILING_STATUS_LABELS, type FilingStatus } from "../../lib/tax";
 
@@ -261,16 +265,25 @@ function SummaryView({
           {ytd.progressPercent.toFixed(0)}% of projected annual net (
           {formatUsd(annualNet)})
         </p>
+        {ytd.source === "logged" && Math.abs(ytd.netVariance) >= 1 ? (
+          <p
+            className={clsx(
+              "text-xs mt-1 font-medium",
+              ytd.netVariance >= 0 ? "text-success" : "text-error",
+            )}
+          >
+            {ytd.netVariance >= 0 ? "+" : "−"}
+            {formatUsd(Math.abs(ytd.netVariance))} vs projected for{" "}
+            {ytd.paycheckCount} paycheck{ytd.paycheckCount === 1 ? "" : "s"}
+          </p>
+        ) : null}
       </section>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat label="Gross YTD" value={formatUsd(ytd.grossPay)} />
         <Stat label="Taxes YTD" value={formatUsd(ytd.totalTaxes)} />
         <Stat label="Deductions YTD" value={formatUsd(ytd.totalDeductions)} />
-        <Stat
-          label={ytd.source === "logged" ? "Paychecks logged" : "Paychecks est."}
-          value={String(ytd.paycheckCount)}
-        />
+        <Stat label="OT hours YTD" value={ytd.overtimeHours.toFixed(1)} />
       </div>
 
       <section className="card-quiet p-4 text-sm text-muted">
@@ -283,6 +296,42 @@ function SummaryView({
           remaining this year ({ytd.scheduledPaychecksInYear} total)
         </p>
       </section>
+
+      <BreakdownCard title="Earnings" lines={ytd.earnings} total={ytd.grossPay} />
+      <BreakdownCard
+        title="Taxes"
+        lines={ytd.taxes}
+        total={ytd.totalTaxes}
+        negative
+        footer={`Effective tax rate ${
+          ytd.grossPay > 0
+            ? ((ytd.totalTaxes / ytd.grossPay) * 100).toFixed(1)
+            : "0.0"
+        }% · projected ${formatUsd(ytd.projectedAnnualTaxes)} for the year`}
+      />
+      {ytd.preTaxDeductions.length > 0 ? (
+        <BreakdownCard
+          title="Pre-Tax Deductions"
+          lines={ytd.preTaxDeductions}
+          total={ytd.totalPreTaxDeductions}
+          negative
+        />
+      ) : null}
+      {ytd.postTaxDeductions.length > 0 ? (
+        <BreakdownCard
+          title="Post-Tax Deductions"
+          lines={ytd.postTaxDeductions}
+          total={ytd.totalPostTaxDeductions}
+          negative
+        />
+      ) : null}
+      {ytd.employerContributions.length > 0 ? (
+        <BreakdownCard
+          title="Employer Contributions"
+          lines={ytd.employerContributions}
+          total={ytd.employerContributions.reduce((s, l) => s + l.amount, 0)}
+        />
+      ) : null}
 
       <section className="card p-5">
         <h2 className="section-title">Paycheck Log</h2>
@@ -379,20 +428,46 @@ function CalculatorView({
 
       <section className="card p-5 space-y-4">
         <h2 className="section-title">Pay Rate & Hours</h2>
-        <NumberField
-          label="Hourly rate"
-          value={config.hourlyRate}
-          onChange={(v) => setConfig((c) => ({ ...c, hourlyRate: v }))}
-          money
-        />
-        <div className="grid grid-cols-2 gap-3">
+        <div className="flex gap-2">
+          {(Object.keys(PAY_TYPE_LABELS) as PayType[]).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setConfig((c) => ({ ...c, payType: t }))}
+              className={clsx(
+                "flex-1",
+                config.payType === t ? "filter-chip-active" : "filter-chip",
+              )}
+            >
+              {PAY_TYPE_LABELS[t]}
+            </button>
+          ))}
+        </div>
+        {config.payType === "SALARY" ? (
           <NumberField
-            label="Standard hours"
-            value={config.standardHoursPerPeriod}
-            onChange={(v) =>
-              setConfig((c) => ({ ...c, standardHoursPerPeriod: v }))
-            }
+            label="Annual salary"
+            value={config.annualSalary ?? 0}
+            onChange={(v) => setConfig((c) => ({ ...c, annualSalary: v }))}
+            money
           />
+        ) : (
+          <NumberField
+            label="Hourly rate"
+            value={config.hourlyRate}
+            onChange={(v) => setConfig((c) => ({ ...c, hourlyRate: v }))}
+            money
+          />
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          {config.payType === "SALARY" ? null : (
+            <NumberField
+              label="Standard hours"
+              value={config.standardHoursPerPeriod}
+              onChange={(v) =>
+                setConfig((c) => ({ ...c, standardHoursPerPeriod: v }))
+              }
+            />
+          )}
           <NumberField
             label="OT hours"
             value={config.overtimeHours}
@@ -615,7 +690,111 @@ function CalculatorView({
         allocations={calc.depositAllocations}
         onChange={(list) => setConfig((c) => ({ ...c, directDeposits: list }))}
       />
+
+      <PayRateHistorySection
+        payType={config.payType}
+        history={config.payRateHistory ?? []}
+        onChange={(list) => setConfig((c) => ({ ...c, payRateHistory: list }))}
+      />
     </div>
+  );
+}
+
+function PayRateHistorySection({
+  payType,
+  history,
+  onChange,
+}: {
+  payType: PayType;
+  history: PayRateChange[];
+  onChange: (list: PayRateChange[]) => void;
+}) {
+  const sorted = [...history].sort((a, b) => b.effectiveDate - a.effectiveDate);
+  const add = () => {
+    onChange([
+      ...history,
+      {
+        id: crypto.randomUUID(),
+        effectiveDate: Date.now(),
+        payType,
+        hourlyRate: payType === "HOURLY" ? 0 : undefined,
+        annualSalary: payType === "SALARY" ? 0 : undefined,
+        note: "",
+      },
+    ]);
+  };
+  const update = (id: string, patch: Partial<PayRateChange>) =>
+    onChange(history.map((h) => (h.id === id ? { ...h, ...patch } : h)));
+
+  return (
+    <section className="card p-5 space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="section-title">Pay Rate History (Raises)</h2>
+        <button type="button" className="btn-ghost text-sm py-1" onClick={add}>
+          Add
+        </button>
+      </div>
+      <p className="text-sm text-muted">
+        Record raises with their effective date. Projections and estimated YTD
+        use the rate in effect on each payday.
+      </p>
+      {sorted.length === 0 ? null : (
+        <ul className="space-y-3">
+          {sorted.map((h) => (
+            <li key={h.id} className="space-y-2 pb-3 divider-line last:border-0">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="label">Effective date</label>
+                  <input
+                    className="input"
+                    type="date"
+                    value={
+                      h.effectiveDate ? formatIsoDate(h.effectiveDate) : ""
+                    }
+                    onChange={(e) =>
+                      update(h.id, {
+                        effectiveDate:
+                          parseIsoDate(e.target.value) ?? h.effectiveDate,
+                      })
+                    }
+                  />
+                </div>
+                <NumberField
+                  label={h.payType === "SALARY" ? "Annual salary" : "Hourly rate"}
+                  value={
+                    h.payType === "SALARY"
+                      ? (h.annualSalary ?? 0)
+                      : (h.hourlyRate ?? 0)
+                  }
+                  onChange={(v) =>
+                    update(
+                      h.id,
+                      h.payType === "SALARY"
+                        ? { annualSalary: v }
+                        : { hourlyRate: v },
+                    )
+                  }
+                  money
+                />
+              </div>
+              <input
+                className="input text-sm"
+                value={h.note ?? ""}
+                onChange={(e) => update(h.id, { note: e.target.value })}
+                placeholder="Note (e.g. annual merit raise)"
+              />
+              <button
+                type="button"
+                className="btn-ghost text-xs text-error py-1"
+                onClick={() => onChange(history.filter((x) => x.id !== h.id))}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -890,11 +1069,98 @@ function AnnualView({
         />
       </div>
 
-      <section className="card-quiet p-4 text-sm text-muted">
-        Marginal federal rate: {formatPercent(projection.marginalFederalRate)} ·
-        Effective tax rate: {formatPercent(projection.effectiveTaxRate)}
-      </section>
+      <BreakdownCard
+        title="Annual Taxes"
+        lines={[
+          { label: "Federal income tax", amount: projection.annualFederalTax },
+          { label: "State income tax", amount: projection.annualStateTax },
+          ...(projection.annualCountyTax > 0
+            ? [{ label: "County/local tax", amount: projection.annualCountyTax }]
+            : []),
+          { label: "Social Security", amount: projection.annualSocialSecurity },
+          { label: "Medicare", amount: projection.annualMedicare },
+        ]}
+        total={projection.annualTotalTaxes}
+        negative
+        footer={`Marginal federal ${formatPercent(
+          projection.marginalFederalRate,
+        )} · effective ${formatPercent(projection.effectiveTaxRate)}`}
+      />
+
+      {projection.preTaxDeductionBreakdown.length > 0 ? (
+        <BreakdownCard
+          title="Annual Pre-Tax Deductions"
+          lines={projection.preTaxDeductionBreakdown.map((l) => ({
+            label: l.name || "Pre-tax",
+            amount: l.amount,
+          }))}
+          total={projection.annualPreTaxDeductions}
+          negative
+        />
+      ) : null}
+      {projection.postTaxDeductionBreakdown.length > 0 ? (
+        <BreakdownCard
+          title="Annual Post-Tax Deductions"
+          lines={projection.postTaxDeductionBreakdown.map((l) => ({
+            label: l.name || "Post-tax",
+            amount: l.amount,
+          }))}
+          total={projection.annualPostTaxDeductions}
+          negative
+        />
+      ) : null}
     </div>
+  );
+}
+
+function BreakdownCard({
+  title,
+  lines,
+  total,
+  negative = false,
+  footer,
+}: {
+  title: string;
+  lines: YtdBreakdownLine[];
+  total: number;
+  negative?: boolean;
+  footer?: string;
+}) {
+  if (lines.length === 0) return null;
+  return (
+    <section className="card p-5">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="section-title">{title}</h2>
+        <span className={clsx("money font-semibold", negative && "text-error")}>
+          {negative ? "−" : ""}
+          {formatUsd(total)}
+        </span>
+      </div>
+      <ul className="mt-3 space-y-1.5">
+        {lines.map((line) => (
+          <li
+            key={line.label}
+            className="flex items-center justify-between gap-2 text-sm"
+          >
+            <span className="text-muted truncate">
+              {line.label}
+              {line.hours ? (
+                <span className="text-xs"> · {line.hours.toFixed(1)} hrs</span>
+              ) : null}
+            </span>
+            <span className={clsx("money shrink-0", negative && "text-error")}>
+              {negative ? "−" : ""}
+              {formatUsd(line.amount)}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {footer ? (
+        <p className="text-xs text-muted mt-3 border-t border-border pt-2">
+          {footer}
+        </p>
+      ) : null}
+    </section>
   );
 }
 

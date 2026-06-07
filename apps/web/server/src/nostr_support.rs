@@ -378,38 +378,46 @@ pub async fn fetch_decrypted_app_data(
 }
 
 
-pub async fn publish_app_data_plaintext(
+/// Sign (and encrypt) a kind-30078 app-data event without sending it.
+/// Splitting signing from sending lets handlers return an `event_id`
+/// immediately and hand the relay round-trip off to the background outbox.
+pub fn build_app_data_event(
     keys: &Keys,
-    relay_urls: &[String],
     d_tag: &str,
     plaintext: &str,
-    relay_opts: impl Fn(&str) -> RelayConnectOptions,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<Event> {
     if d_tag.trim().is_empty() {
         return Err(anyhow!("d_tag cannot be empty"));
     }
+    let ciphertext = encrypt_to_self(keys, plaintext)?;
+    EventBuilder::new(Kind::Custom(KIND_APP_DATA), ciphertext)
+        .tag(Tag::identifier(d_tag))
+        .sign_with_keys(keys)
+        .map_err(|e| anyhow!("sign event: {e}"))
+}
+
+/// Send an already-signed event to every relay. Succeeds if any relay accepts.
+pub async fn send_event_to_relays(
+    keys: &Keys,
+    relay_urls: &[String],
+    event: &Event,
+    relay_opts: impl Fn(&str) -> RelayConnectOptions,
+) -> anyhow::Result<()> {
     if relay_urls.is_empty() {
         return Err(anyhow!("no relay urls configured"));
     }
-
-    let ciphertext = encrypt_to_self(keys, plaintext)?;
-    let event = EventBuilder::new(Kind::Custom(KIND_APP_DATA), ciphertext)
-        .tag(Tag::identifier(d_tag))
-        .sign_with_keys(keys)
-        .map_err(|e| anyhow!("sign event: {e}"))?;
-    let event_id = event.id.to_string();
 
     let mut errors = Vec::new();
     let mut any_ok = false;
     for relay_url in relay_urls {
         let opts = relay_opts(relay_url);
-        match send_signed_event(keys, relay_url, &event, opts).await {
+        match send_signed_event(keys, relay_url, event, opts).await {
             Ok(()) => {
-                tracing::debug!(%relay_url, %d_tag, "published app-data event");
+                tracing::debug!(%relay_url, "published event to relay");
                 any_ok = true;
             }
             Err(err) => {
-                tracing::warn!(%relay_url, %d_tag, ?err, "relay publish failed");
+                tracing::warn!(%relay_url, ?err, "relay publish failed");
                 errors.push(format!("{relay_url}: {err}"));
             }
         }
@@ -421,22 +429,18 @@ pub async fn publish_app_data_plaintext(
             errors.join("; ")
         ));
     }
-
-    Ok(event_id)
+    Ok(())
 }
+
 
 /// Publish a tag-based kind-37004 CypherLog subscription event.
 /// Content is empty; bill fields live in event tags — matches Android
 /// `publishReplaceable37004Detailed`.
-pub async fn publish_cypherlog_subscription_tags(
+/// Sign a kind-37004 CypherLog subscription event without sending it.
+pub fn build_cypherlog_subscription_event(
     keys: &Keys,
-    relay_urls: &[String],
     tags: &[Vec<String>],
-    relay_opts: impl Fn(&str) -> RelayConnectOptions,
-) -> anyhow::Result<String> {
-    if relay_urls.is_empty() {
-        return Err(anyhow!("no relay urls configured"));
-    }
+) -> anyhow::Result<Event> {
     if tags.is_empty() {
         return Err(anyhow!("tags cannot be empty"));
     }
@@ -452,87 +456,32 @@ pub async fn publish_cypherlog_subscription_tags(
         );
     }
 
-    let event = builder
+    builder
         .sign_with_keys(keys)
-        .map_err(|e| anyhow!("sign event: {e}"))?;
-    let event_id = event.id.to_string();
-
-    let mut errors = Vec::new();
-    let mut any_ok = false;
-    for relay_url in relay_urls {
-        let opts = relay_opts(relay_url);
-        match send_signed_event(keys, relay_url, &event, opts).await {
-            Ok(()) => {
-                tracing::debug!(%relay_url, "published CypherLog kind-37004 subscription");
-                any_ok = true;
-            }
-            Err(err) => {
-                tracing::warn!(%relay_url, ?err, "CypherLog subscription publish failed");
-                errors.push(format!("{relay_url}: {err}"));
-            }
-        }
-    }
-
-    if !any_ok {
-        return Err(anyhow!(
-            "failed to publish subscription to any relay: {}",
-            errors.join("; ")
-        ));
-    }
-
-    Ok(event_id)
+        .map_err(|e| anyhow!("sign event: {e}"))
 }
 
+
 /// NIP-09 deletion for addressable events (`kind:pubkey:d-tag`).
-pub async fn publish_addressable_deletion(
+/// Sign a NIP-09 deletion event for an addressable event without sending it.
+pub fn build_addressable_deletion_event(
     keys: &Keys,
-    relay_urls: &[String],
     kind: u16,
     d_tag: &str,
-    relay_opts: impl Fn(&str) -> RelayConnectOptions,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<Event> {
     if d_tag.trim().is_empty() {
         return Err(anyhow!("d_tag cannot be empty"));
     }
-    if relay_urls.is_empty() {
-        return Err(anyhow!("no relay urls configured"));
-    }
-
     let a_tag = format!("{kind}:{}:{}", keys.public_key(), d_tag.trim());
-    let event = EventBuilder::new(Kind::Custom(KIND_EVENT_DELETION), "")
+    EventBuilder::new(Kind::Custom(KIND_EVENT_DELETION), "")
         .tag(
             Tag::parse(vec!["a".to_string(), a_tag])
                 .map_err(|e| anyhow!("invalid deletion tag: {e}"))?,
         )
         .sign_with_keys(keys)
-        .map_err(|e| anyhow!("sign deletion: {e}"))?;
-    let event_id = event.id.to_string();
-
-    let mut errors = Vec::new();
-    let mut any_ok = false;
-    for relay_url in relay_urls {
-        let opts = relay_opts(relay_url);
-        match send_signed_event(keys, relay_url, &event, opts).await {
-            Ok(()) => {
-                tracing::debug!(%relay_url, %d_tag, kind, "published NIP-09 deletion");
-                any_ok = true;
-            }
-            Err(err) => {
-                tracing::warn!(%relay_url, %d_tag, kind, ?err, "deletion publish failed");
-                errors.push(format!("{relay_url}: {err}"));
-            }
-        }
-    }
-
-    if !any_ok {
-        return Err(anyhow!(
-            "failed to publish deletion to any relay: {}",
-            errors.join("; ")
-        ));
-    }
-
-    Ok(event_id)
+        .map_err(|e| anyhow!("sign deletion: {e}"))
 }
+
 
 #[cfg(test)]
 mod tests {

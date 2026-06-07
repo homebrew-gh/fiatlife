@@ -10,6 +10,8 @@ import { BillsDataProvider } from "../lib/billsData";
 import { DebtDataProvider } from "../lib/debtData";
 import { GoalsDataProvider } from "../lib/goalsData";
 import { SalaryDataProvider } from "../lib/salaryData";
+import { SyncStatusProvider } from "../lib/syncStatus";
+import { SyncStatusOverlay } from "../components/SyncStatusOverlay";
 import { useAuth } from "../lib/auth";
 import { hasRelayConfigured } from "../lib/relayUrl";
 
@@ -44,6 +46,7 @@ export function AppShell() {
   };
 
   return (
+    <SyncStatusProvider>
     <BillsDataProvider>
     <BillersDataProvider>
     <AppSettingsDataProvider>
@@ -91,6 +94,7 @@ export function AppShell() {
           ))}
         </div>
       </nav>
+      <SyncStatusOverlay />
     </div>
     </DebtDataProvider>
     </GoalsDataProvider>
@@ -99,5 +103,6 @@ export function AppShell() {
     </AppSettingsDataProvider>
     </BillersDataProvider>
     </BillsDataProvider>
+    </SyncStatusProvider>
   );
 }

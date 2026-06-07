@@ -6,6 +6,10 @@ export type AuthStatus = {
   relay_urls?: string[];
   detected_relay_url?: string | null;
   detected_relay_label?: string | null;
+  /** LAN wss:// URL from linked nostr-rs-relay, when available. */
+  suggested_relay_url?: string | null;
+  /** Best URL to pre-fill on setup (suggested, else internal detected). */
+  relay_prefill_url?: string | null;
 };
 
 export type AppDataRecord = {
@@ -15,6 +19,19 @@ export type AppDataRecord = {
   plaintext?: string | null;
   decrypt_error?: string | null;
   tags?: string[][];
+};
+
+export type OutboxFailedItem = {
+  id: number;
+  label: string;
+  error: string;
+};
+
+/** Background relay-publish queue state (drives the "not synced" badge). */
+export type OutboxStatus = {
+  pending: number;
+  failed: number;
+  failed_items: OutboxFailedItem[];
 };
 
 export type SetupBody = {
@@ -139,6 +156,9 @@ export const api = {
       method: "POST",
       json: body,
     }),
+  outboxStatus: () => request<OutboxStatus>("/api/nostr/outbox"),
+  outboxRetry: () =>
+    request<OutboxStatus>("/api/nostr/outbox/retry", { method: "POST" }),
   blossomStatus: () =>
     request<{ configured: boolean; url: string | null }>("/api/blossom/status"),
   blossomUpload: async (file: File) => {

@@ -1,16 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { AuthCard } from "../components/AuthCard";
 import { DetectedRelayNotice, hasDetectedRelay } from "../components/DetectedRelayNotice";
 import { SecretInput } from "../components/SecretInput";
 import { ApiError, api } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { isAllowedRelayUrl, RELAY_URL_POLICY } from "../lib/relayUrl";
+import {
+  isAllowedRelayUrl,
+  relayPrefillFromStatus,
+  RELAY_URL_POLICY,
+} from "../lib/relayUrl";
 
 export function SetupRoute() {
   const { status, loading, refresh } = useAuth();
   const navigate = useNavigate();
-  const autoRelay = hasDetectedRelay(status);
+  const prefilled = useRef(false);
 
   const [nsec, setNsec] = useState("");
   const [passphrase, setPassphrase] = useState("");
@@ -18,6 +22,15 @@ export function SetupRoute() {
   const [relayUrl, setRelayUrl] = useState("wss://");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (prefilled.current) return;
+    const prefill = relayPrefillFromStatus(status);
+    if (prefill) {
+      setRelayUrl(prefill);
+      prefilled.current = true;
+    }
+  }, [status]);
 
   useEffect(() => {
     setError(null);
@@ -44,7 +57,7 @@ export function SetupRoute() {
       setError("Passphrases do not match.");
       return;
     }
-    if (!autoRelay && !isAllowedRelayUrl(relayUrl)) {
+    if (!isAllowedRelayUrl(relayUrl)) {
       setError(RELAY_URL_POLICY);
       return;
     }
@@ -54,7 +67,7 @@ export function SetupRoute() {
       await api.authSetup({
         nsec,
         passphrase,
-        ...(autoRelay ? {} : { relay_url: relayUrl }),
+        relay_url: relayUrl,
       });
       await refresh();
       navigate("/app", { replace: true });
@@ -71,7 +84,6 @@ export function SetupRoute() {
       subtitle="Paste the same nsec you use on Android. Your passphrase encrypts it on this server only."
     >
       <form className="space-y-4" onSubmit={onSubmit}>
-        {status && autoRelay ? <DetectedRelayNotice status={status} /> : null}
         <div>
           <label className="label" htmlFor="nsec">
             Nostr secret key (nsec)
@@ -84,23 +96,24 @@ export function SetupRoute() {
             onChange={(e) => setNsec(e.target.value.trim())}
           />
         </div>
-        {!autoRelay ? (
-          <div>
-            <label className="label" htmlFor="relay">
-              Relay URL
-            </label>
-            <input
-              id="relay"
-              className="input"
-              type="url"
-              autoComplete="off"
-              placeholder="wss://relay.example.com"
-              value={relayUrl}
-              onChange={(e) => setRelayUrl(e.target.value.trim())}
-            />
-            <p className="text-xs text-muted mt-1">{RELAY_URL_POLICY}</p>
-          </div>
+        {status && hasDetectedRelay(status) ? (
+          <DetectedRelayNotice status={status} />
         ) : null}
+        <div>
+          <label className="label" htmlFor="relay">
+            Relay URL
+          </label>
+          <input
+            id="relay"
+            className="input font-mono text-sm"
+            type="url"
+            autoComplete="off"
+            placeholder="wss://relay.example.com"
+            value={relayUrl}
+            onChange={(e) => setRelayUrl(e.target.value.trim())}
+          />
+          <p className="text-xs text-muted mt-1">{RELAY_URL_POLICY}</p>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="label" htmlFor="pass">

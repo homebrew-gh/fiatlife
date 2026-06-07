@@ -4,11 +4,13 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { ApiError, api } from "./api";
 import { useBillsData } from "./billsData";
+import { useOptionalSyncStatus } from "./syncStatus";
 import { uploadBlob } from "./blossom";
 import {
   ensureBillsForAccount,
@@ -73,6 +75,12 @@ function DebtDataProviderInner({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const { notify, refresh } = useOptionalSyncStatus();
+
+  const accountsRef = useRef(accounts);
+  useEffect(() => {
+    accountsRef.current = accounts;
+  }, [accounts]);
 
   const billOps = useMemo<BillOps>(
     () => ({
@@ -113,13 +121,29 @@ function DebtDataProviderInner({ children }: { children: ReactNode }) {
 
   const publishAccount = useCallback(
     async (account: CreditAccount) => {
-      await api.publishAppData({
-        d_tag: creditAccountDTag(account.id),
-        plaintext: serializeCreditAccount(account),
-      });
-      await reload();
+      const prev = accountsRef.current.find((a) => a.id === account.id);
+      setAccounts((list) =>
+        sortCreditAccounts([
+          ...list.filter((a) => a.id !== account.id),
+          account,
+        ]),
+      );
+      try {
+        await api.publishAppData({
+          d_tag: creditAccountDTag(account.id),
+          plaintext: serializeCreditAccount(account),
+        });
+        refresh();
+      } catch (e) {
+        setAccounts((list) => {
+          const without = list.filter((a) => a.id !== account.id);
+          return prev ? sortCreditAccounts([...without, prev]) : without;
+        });
+        notify(e instanceof ApiError ? e.message : "Save failed.", "error");
+        throw e;
+      }
     },
-    [reload],
+    [notify, refresh],
   );
 
   const persistWithBilling = useCallback(
@@ -220,6 +244,8 @@ function DebtDataProviderInner({ children }: { children: ReactNode }) {
 
   const deleteAccount = useCallback(
     async (account: CreditAccount) => {
+      const prev = accountsRef.current.find((a) => a.id === account.id);
+      setAccounts((list) => list.filter((a) => a.id !== account.id));
       setSaving(true);
       setError(null);
       try {
@@ -238,15 +264,21 @@ function DebtDataProviderInner({ children }: { children: ReactNode }) {
           d_tag: creditAccountDTag(account.id),
           plaintext: JSON.stringify({ deleted: true }),
         });
-        await reload();
+        refresh();
       } catch (e) {
-        setError(e instanceof ApiError ? e.message : "Delete failed.");
+        setAccounts((list) => {
+          const without = list.filter((a) => a.id !== account.id);
+          return prev ? sortCreditAccounts([...without, prev]) : without;
+        });
+        const msg = e instanceof ApiError ? e.message : "Delete failed.";
+        setError(msg);
+        notify(msg, "error");
         throw e;
       } finally {
         setSaving(false);
       }
     },
-    [deleteBill, getBillById, getBillsLinkedToAccount, reload],
+    [deleteBill, getBillById, getBillsLinkedToAccount, notify, refresh],
   );
 
   const attachStatement = useCallback(

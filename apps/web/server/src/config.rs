@@ -113,6 +113,24 @@ pub fn detected_relay_url() -> Option<String> {
     }
 }
 
+/// LAN `wss://` URL from the linked nostr-rs-relay interface — used to pre-fill setup.
+pub fn suggested_relay_url() -> Option<String> {
+    let raw = std::env::var("FL_SUGGESTED_RELAY_URL")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())?;
+    let normalized = normalize_relay_url(&raw);
+    if normalized.starts_with("wss://") {
+        Some(normalized)
+    } else {
+        None
+    }
+}
+
+pub fn relay_prefill_url() -> Option<String> {
+    suggested_relay_url().or_else(detected_relay_url)
+}
+
 pub fn resolve_relay_url(url: &str) -> String {
     normalize_relay_url(&resolve_relay_url_with(
         url,

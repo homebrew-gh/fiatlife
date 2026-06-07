@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { ApiError, api } from "./api";
+import { useOptionalSyncStatus } from "./syncStatus";
 import {
   SALARY_D_TAG,
   calculateAnnual,
@@ -66,6 +67,7 @@ export function SalaryDataProvider({ children }: { children: ReactNode }) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [savedSnapshot, setSavedSnapshot] = useState("");
+  const { notify, refresh } = useOptionalSyncStatus();
 
   const reload = useCallback(async () => {
     setError(null);
@@ -117,20 +119,24 @@ export function SalaryDataProvider({ children }: { children: ReactNode }) {
         ? next
         : { ...next, id: crypto.randomUUID() };
       const payload = serializeSalary(withId);
+      setConfigState(withId);
+      setSavedSnapshot(payload);
+      setDirty(false);
       await api.publishAppData({
         d_tag: SALARY_D_TAG,
         plaintext: payload,
       });
-      setConfigState(withId);
-      setSavedSnapshot(payload);
-      setDirty(false);
+      refresh();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not save paycheck data.");
+      const msg =
+        e instanceof ApiError ? e.message : "Could not save paycheck data.";
+      setError(msg);
+      notify(msg, "error");
       throw e;
     } finally {
       setSaving(false);
     }
-  }, []);
+  }, [notify, refresh]);
 
   const save = useCallback(async () => {
     await persist(config);

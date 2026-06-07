@@ -4,10 +4,12 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { ApiError, api } from "./api";
+import { useOptionalSyncStatus } from "./syncStatus";
 import {
   BANK_ACCOUNT_D_TAG_PREFIX,
   bankAccountDTag,
@@ -39,6 +41,20 @@ export function BankAccountsDataProvider({ children }: { children: ReactNode }) 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const { notify, refresh } = useOptionalSyncStatus();
+
+  const accountsRef = useRef(accounts);
+  useEffect(() => {
+    accountsRef.current = accounts;
+  }, [accounts]);
+
+  const sortAccounts = useCallback(
+    (list: BankAccount[]) =>
+      [...list].sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+      ),
+    [],
+  );
 
   const reload = useCallback(async () => {
     setError(null);
@@ -72,31 +88,43 @@ export function BankAccountsDataProvider({ children }: { children: ReactNode }) 
 
   const saveAccount = useCallback(
     async (account: BankAccount) => {
+      const withId = account.id
+        ? account
+        : { ...account, id: newBankAccountId() };
+      const normalized = { ...withId, name: withId.name.trim() };
+      const prev = accountsRef.current.find((a) => a.id === normalized.id);
+      setAccounts((list) =>
+        sortAccounts([...list.filter((a) => a.id !== normalized.id), normalized]),
+      );
       setSaving(true);
       setError(null);
       try {
-        const withId = account.id
-          ? account
-          : { ...account, id: newBankAccountId() };
-        const normalized = { ...withId, name: withId.name.trim() };
         await api.publishAppData({
           d_tag: bankAccountDTag(normalized.id),
           plaintext: serializeBankAccount(normalized),
         });
-        await reload();
+        refresh();
         return normalized;
       } catch (e) {
-        setError(e instanceof ApiError ? e.message : "Save failed.");
+        setAccounts((list) => {
+          const without = list.filter((a) => a.id !== normalized.id);
+          return prev ? sortAccounts([...without, prev]) : without;
+        });
+        const msg = e instanceof ApiError ? e.message : "Save failed.";
+        setError(msg);
+        notify(msg, "error");
         throw e;
       } finally {
         setSaving(false);
       }
     },
-    [reload],
+    [notify, refresh, sortAccounts],
   );
 
   const deleteAccount = useCallback(
     async (account: BankAccount) => {
+      const prev = accountsRef.current.find((a) => a.id === account.id);
+      setAccounts((list) => list.filter((a) => a.id !== account.id));
       setSaving(true);
       setError(null);
       try {
@@ -104,15 +132,21 @@ export function BankAccountsDataProvider({ children }: { children: ReactNode }) 
           d_tag: bankAccountDTag(account.id),
           plaintext: JSON.stringify({ deleted: true }),
         });
-        await reload();
+        refresh();
       } catch (e) {
-        setError(e instanceof ApiError ? e.message : "Delete failed.");
+        setAccounts((list) => {
+          const without = list.filter((a) => a.id !== account.id);
+          return prev ? sortAccounts([...without, prev]) : without;
+        });
+        const msg = e instanceof ApiError ? e.message : "Delete failed.";
+        setError(msg);
+        notify(msg, "error");
         throw e;
       } finally {
         setSaving(false);
       }
     },
-    [reload],
+    [notify, refresh, sortAccounts],
   );
 
   const value = useMemo(

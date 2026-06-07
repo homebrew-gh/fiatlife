@@ -11,8 +11,8 @@ import {
   frequencyLabel,
   generalCategoryForBill,
   GENERAL_CATEGORY_LABELS,
-  isCreditOrLoan,
   isPaidForCurrentCycle,
+  nextDueDateMillis,
   isPastDue,
   subcategoryLabel,
   effectiveSubcategory,
@@ -90,6 +90,7 @@ export function BillDetailRoute() {
   const now = Date.now();
   const pastDue = isPastDue(bill, now);
   const paidCycle = isPaidForCurrentCycle(bill, now);
+  const nextDue = nextDueDateMillis(bill, now);
 
   const onSaveEdit = async (input: BillSheetInput) => {
     await saveBillWithBiller(input, item);
@@ -105,8 +106,12 @@ export function BillDetailRoute() {
     navigate("/app/bills", { replace: true });
   };
 
-  const onPay = async (amount: number, newBalance?: number) => {
-    await recordBillPayment(item, amount, newBalance);
+  const onPay = async (
+    amount: number,
+    newBalance?: number,
+    paymentDate?: number,
+  ) => {
+    await recordBillPayment(item, amount, newBalance, paymentDate);
   };
 
   return (
@@ -174,6 +179,8 @@ export function BillDetailRoute() {
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
           <dt className="text-muted">Due day</dt>
           <dd>{bill.dueDay ?? 1}</dd>
+          <dt className="text-muted">Next due</dt>
+          <dd>{nextDue != null ? formatDate(nextDue) : "—"}</dd>
           {bill.billerName ? (
             <>
               <dt className="text-muted">Biller</dt>
@@ -277,11 +284,7 @@ export function BillDetailRoute() {
               type="button"
               className="btn-primary"
               disabled={saving}
-              onClick={() =>
-                isCreditOrLoan(bill)
-                  ? setShowPay(true)
-                  : void onPay(effectiveAmountDue(bill))
-              }
+              onClick={() => setShowPay(true)}
             >
               Mark paid
             </button>

@@ -1,16 +1,32 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { AuthCard } from "../components/AuthCard";
+import { DetectedRelayNotice, hasDetectedRelay } from "../components/DetectedRelayNotice";
 import { ApiError, api } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { hasRelayConfigured, isAllowedRelayUrl, RELAY_URL_POLICY } from "../lib/relayUrl";
+import {
+  hasRelayConfigured,
+  isAllowedRelayUrl,
+  relayPrefillFromStatus,
+  RELAY_URL_POLICY,
+} from "../lib/relayUrl";
 
 export function RelaySetupRoute() {
   const { status, loading, refresh } = useAuth();
   const navigate = useNavigate();
-  const [relayUrl, setRelayUrl] = useState(status?.relay_url ?? "wss://");
+  const prefilled = useRef(false);
+  const [relayUrl, setRelayUrl] = useState("wss://");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (prefilled.current) return;
+    const prefill = relayPrefillFromStatus(status) ?? status?.relay_url?.trim();
+    if (prefill) {
+      setRelayUrl(prefill);
+      prefilled.current = true;
+    }
+  }, [status]);
 
   if (loading) return null;
   if (!status?.has_state) return <Navigate to="/setup" replace />;
@@ -42,13 +58,16 @@ export function RelaySetupRoute() {
       subtitle="Use the same relay URL as your Android FiatLife app."
     >
       <form className="space-y-4" onSubmit={onSubmit}>
+        {status && hasDetectedRelay(status) ? (
+          <DetectedRelayNotice status={status} />
+        ) : null}
         <div>
           <label className="label" htmlFor="relay">
             Relay URL
           </label>
           <input
             id="relay"
-            className="input"
+            className="input font-mono text-sm"
             type="url"
             autoComplete="off"
             placeholder="wss://relay.example.com"

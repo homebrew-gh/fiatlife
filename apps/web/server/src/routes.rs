@@ -20,15 +20,19 @@ use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::config::{detected_relay_url, normalize_relay_url, Config, DETECTED_RELAY_LABEL};
+use crate::config::{
+    detected_relay_url, normalize_relay_url, relay_prefill_url, suggested_relay_url, Config,
+    DETECTED_RELAY_LABEL,
+};
 use crate::crypto::{open as crypto_open, seal};
 use crate::error::{AppError, AppResult};
 use crate::fiatlife_tags::is_fiatlife_d_tag;
 use crate::nostr_support::{
+    build_addressable_deletion_event, build_app_data_event, build_cypherlog_subscription_event,
     decrypt_from_self, encrypt_to_self, fetch_cypherlog_subscription_records, parse_nsec,
-    publish_addressable_deletion, publish_app_data_plaintext, publish_cypherlog_subscription_tags,
     CypherLogSubscriptionRecord, KIND_APP_DATA, KIND_CYPHERLOG_SUBSCRIPTION,
 };
+use crate::outbox::{Outbox, OutboxStatus};
 use crate::session::{SessionStore, SESSION_COOKIE};
 use crate::state::{dedupe_relay_urls, PersistentState, SealedRecord};
 
@@ -38,6 +42,7 @@ pub struct AppState {
     pub sessions: SessionStore,
     pub persistent: Arc<Mutex<PersistentState>>,
     pub cookie_key: Key,
+    pub outbox: Outbox,
 }
 
 pub async fn build_router(cfg: Config) -> anyhow::Result<Router> {
@@ -50,6 +55,7 @@ pub async fn build_router(cfg: Config) -> anyhow::Result<Router> {
         sessions,
         persistent: Arc::new(Mutex::new(persistent)),
         cookie_key,
+        outbox: Outbox::new(),
     };
 
     let assets_service = ServeDir::new(cfg.static_dir.join("assets"));
@@ -75,6 +81,8 @@ pub async fn build_router(cfg: Config) -> anyhow::Result<Router> {
             post(publish_cypherlog_subscription),
         )
         .route("/nostr/deletion", post(publish_nostr_deletion))
+        .route("/nostr/outbox", get(outbox_status))
+        .route("/nostr/outbox/retry", post(outbox_retry))
         .route("/blossom/status", get(blossom_status))
         .route("/blossom/upload", post(blossom_upload))
         .route("/blossom/:sha256", get(blossom_download_handler));
@@ -119,18 +127,27 @@ pub struct AuthStatus {
     relay_urls: Vec<String>,
     detected_relay_url: Option<String>,
     detected_relay_label: Option<String>,
+    suggested_relay_url: Option<String>,
+    relay_prefill_url: Option<String>,
 }
 
 fn auth_status_from(p: &PersistentState, unlocked: bool) -> AuthStatus {
     let detected = detected_relay_url();
+    let suggested = suggested_relay_url();
+    let prefill = relay_prefill_url();
     AuthStatus {
         has_state: p.sealed.is_some(),
         unlocked,
         npub: p.npub.clone(),
         relay_url: p.primary_relay_url().map(str::to_string),
         relay_urls: p.relay_urls().to_vec(),
-        detected_relay_label: detected.as_ref().map(|_| DETECTED_RELAY_LABEL.to_string()),
+        detected_relay_label: detected
+            .as_ref()
+            .or(suggested.as_ref())
+            .map(|_| DETECTED_RELAY_LABEL.to_string()),
         detected_relay_url: detected,
+        suggested_relay_url: suggested,
+        relay_prefill_url: prefill,
     }
 }
 
@@ -458,15 +475,12 @@ async fn publish_cypherlog_subscription(
     }
     let (keys, _) = require_keys(&s, &jar).await?;
     let relay_urls = configured_relay_urls(&s).await?;
-    let cfg = s.cfg.clone();
-    let event_id = publish_cypherlog_subscription_tags(
-        &keys,
-        &relay_urls,
-        &body.tags,
-        |url| cfg.relay_connect_options(url),
-    )
-    .await
-    .map_err(|e| AppError::BadRequest(format!("relay publish failed: {e}")))?;
+    let event = build_cypherlog_subscription_event(&keys, &body.tags)
+        .map_err(|e| AppError::BadRequest(format!("sign failed: {e}")))?;
+    let event_id = event.id.to_string();
+    s.outbox
+        .enqueue(s.cfg.clone(), keys, event, relay_urls, "subscription".into())
+        .await;
     Ok(Json(PublishAppDataResponse { event_id }))
 }
 
@@ -492,16 +506,12 @@ async fn publish_nostr_deletion(
     }
     let (keys, _) = require_keys(&s, &jar).await?;
     let relay_urls = configured_relay_urls(&s).await?;
-    let cfg = s.cfg.clone();
-    let event_id = publish_addressable_deletion(
-        &keys,
-        &relay_urls,
-        body.kind,
-        &body.d_tag,
-        |url| cfg.relay_connect_options(url),
-    )
-    .await
-    .map_err(|e| AppError::BadRequest(format!("deletion publish failed: {e}")))?;
+    let event = build_addressable_deletion_event(&keys, body.kind, &body.d_tag)
+        .map_err(|e| AppError::BadRequest(format!("sign deletion failed: {e}")))?;
+    let event_id = event.id.to_string();
+    s.outbox
+        .enqueue(s.cfg.clone(), keys, event, relay_urls, "deletion".into())
+        .await;
     Ok(Json(PublishAppDataResponse { event_id }))
 }
 
@@ -517,17 +527,54 @@ async fn publish_app_data(
     }
     let (keys, _) = require_keys(&s, &jar).await?;
     let relay_urls = configured_relay_urls(&s).await?;
-    let cfg = s.cfg.clone();
-    let event_id = publish_app_data_plaintext(
-        &keys,
-        &relay_urls,
-        &body.d_tag,
-        &body.plaintext,
-        |url| cfg.relay_connect_options(url),
-    )
-    .await
-    .map_err(|e| AppError::BadRequest(format!("relay publish failed: {e}")))?;
+    let event = build_app_data_event(&keys, &body.d_tag, &body.plaintext)
+        .map_err(|e| AppError::BadRequest(format!("sign failed: {e}")))?;
+    let event_id = event.id.to_string();
+    s.outbox
+        .enqueue(s.cfg.clone(), keys, event, relay_urls, body.d_tag.clone())
+        .await;
     Ok(Json(PublishAppDataResponse { event_id }))
+}
+
+#[derive(Serialize)]
+struct OutboxStatusResponse {
+    pending: usize,
+    failed: usize,
+    failed_items: Vec<OutboxItemView>,
+}
+
+#[derive(Serialize)]
+struct OutboxItemView {
+    id: u64,
+    label: String,
+    error: String,
+}
+
+impl From<OutboxStatus> for OutboxStatusResponse {
+    fn from(s: OutboxStatus) -> Self {
+        OutboxStatusResponse {
+            pending: s.pending,
+            failed: s.failed,
+            failed_items: s
+                .failed_items
+                .into_iter()
+                .map(|f| OutboxItemView {
+                    id: f.id,
+                    label: f.label,
+                    error: f.error,
+                })
+                .collect(),
+        }
+    }
+}
+
+async fn outbox_status(State(s): State<AppState>) -> Json<OutboxStatusResponse> {
+    Json(s.outbox.status().await.into())
+}
+
+async fn outbox_retry(State(s): State<AppState>) -> Json<OutboxStatusResponse> {
+    s.outbox.retry_failed().await;
+    Json(s.outbox.status().await.into())
 }
 
 async fn blossom_status(

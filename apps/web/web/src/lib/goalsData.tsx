@@ -4,10 +4,12 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { ApiError, api } from "./api";
+import { useOptionalSyncStatus } from "./syncStatus";
 import {
   GOAL_D_TAG_PREFIX,
   defaultGoal,
@@ -43,6 +45,20 @@ export function GoalsDataProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const { notify, refresh } = useOptionalSyncStatus();
+
+  const goalsRef = useRef(goals);
+  useEffect(() => {
+    goalsRef.current = goals;
+  }, [goals]);
+
+  const sortGoals = useCallback(
+    (list: FinancialGoal[]) =>
+      [...list].sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+      ),
+    [],
+  );
 
   const reload = useCallback(async () => {
     setError(null);
@@ -74,6 +90,10 @@ export function GoalsDataProvider({ children }: { children: ReactNode }) {
 
   const publish = useCallback(
     async (goal: FinancialGoal) => {
+      const prev = goalsRef.current.find((g) => g.id === goal.id);
+      setGoals((list) =>
+        sortGoals([...list.filter((g) => g.id !== goal.id), goal]),
+      );
       setSaving(true);
       setError(null);
       try {
@@ -81,15 +101,21 @@ export function GoalsDataProvider({ children }: { children: ReactNode }) {
           d_tag: goalDTag(goal.id),
           plaintext: serializeGoal(goal),
         });
-        await reload();
+        refresh();
       } catch (e) {
-        setError(e instanceof ApiError ? e.message : "Save failed.");
+        setGoals((list) => {
+          const without = list.filter((g) => g.id !== goal.id);
+          return prev ? sortGoals([...without, prev]) : without;
+        });
+        const msg = e instanceof ApiError ? e.message : "Save failed.";
+        setError(msg);
+        notify(msg, "error");
         throw e;
       } finally {
         setSaving(false);
       }
     },
-    [reload],
+    [notify, refresh, sortGoals],
   );
 
   const saveGoal = useCallback(
@@ -132,6 +158,8 @@ export function GoalsDataProvider({ children }: { children: ReactNode }) {
 
   const deleteGoal = useCallback(
     async (goal: FinancialGoal) => {
+      const prev = goalsRef.current.find((g) => g.id === goal.id);
+      setGoals((list) => list.filter((g) => g.id !== goal.id));
       setSaving(true);
       setError(null);
       try {
@@ -139,15 +167,21 @@ export function GoalsDataProvider({ children }: { children: ReactNode }) {
           d_tag: goalDTag(goal.id),
           plaintext: JSON.stringify({ deleted: true }),
         });
-        await reload();
+        refresh();
       } catch (e) {
-        setError(e instanceof ApiError ? e.message : "Delete failed.");
+        setGoals((list) => {
+          const without = list.filter((g) => g.id !== goal.id);
+          return prev ? sortGoals([...without, prev]) : without;
+        });
+        const msg = e instanceof ApiError ? e.message : "Delete failed.";
+        setError(msg);
+        notify(msg, "error");
         throw e;
       } finally {
         setSaving(false);
       }
     },
-    [reload],
+    [notify, refresh, sortGoals],
   );
 
   const value = useMemo(

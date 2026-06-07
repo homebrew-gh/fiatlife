@@ -4,10 +4,12 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { ApiError, api } from "./api";
+import { useOptionalSyncStatus } from "./syncStatus";
 import {
   BILLER_D_TAG_PREFIX,
   billerDTag,
@@ -50,6 +52,20 @@ export function BillersDataProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const { notify, refresh } = useOptionalSyncStatus();
+
+  const billersRef = useRef(billers);
+  useEffect(() => {
+    billersRef.current = billers;
+  }, [billers]);
+
+  const sortBillers = useCallback(
+    (list: Biller[]) =>
+      [...list].sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+      ),
+    [],
+  );
 
   const reload = useCallback(async () => {
     setError(null);
@@ -81,6 +97,10 @@ export function BillersDataProvider({ children }: { children: ReactNode }) {
 
   const publish = useCallback(
     async (biller: Biller) => {
+      const prev = billersRef.current.find((b) => b.id === biller.id);
+      setBillers((list) =>
+        sortBillers([...list.filter((b) => b.id !== biller.id), biller]),
+      );
       setSaving(true);
       setError(null);
       try {
@@ -88,15 +108,21 @@ export function BillersDataProvider({ children }: { children: ReactNode }) {
           d_tag: billerDTag(biller.id),
           plaintext: serializeBiller(biller),
         });
-        await reload();
+        refresh();
       } catch (e) {
-        setError(e instanceof ApiError ? e.message : "Save failed.");
+        setBillers((list) => {
+          const without = list.filter((b) => b.id !== biller.id);
+          return prev ? sortBillers([...without, prev]) : without;
+        });
+        const msg = e instanceof ApiError ? e.message : "Save failed.";
+        setError(msg);
+        notify(msg, "error");
         throw e;
       } finally {
         setSaving(false);
       }
     },
-    [reload],
+    [notify, refresh, sortBillers],
   );
 
   const getBillerById = useCallback(
@@ -178,6 +204,8 @@ export function BillersDataProvider({ children }: { children: ReactNode }) {
 
   const deleteBiller = useCallback(
     async (biller: Biller) => {
+      const prev = billersRef.current.find((b) => b.id === biller.id);
+      setBillers((list) => list.filter((b) => b.id !== biller.id));
       setSaving(true);
       setError(null);
       try {
@@ -185,15 +213,21 @@ export function BillersDataProvider({ children }: { children: ReactNode }) {
           d_tag: billerDTag(biller.id),
           plaintext: JSON.stringify({ deleted: true }),
         });
-        await reload();
+        refresh();
       } catch (e) {
-        setError(e instanceof ApiError ? e.message : "Delete failed.");
+        setBillers((list) => {
+          const without = list.filter((b) => b.id !== biller.id);
+          return prev ? sortBillers([...without, prev]) : without;
+        });
+        const msg = e instanceof ApiError ? e.message : "Delete failed.";
+        setError(msg);
+        notify(msg, "error");
         throw e;
       } finally {
         setSaving(false);
       }
     },
-    [reload],
+    [notify, refresh, sortBillers],
   );
 
   const setCompanyArchived = useCallback(

@@ -4,10 +4,12 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { ApiError, api, type AppDataRecord } from "./api";
+import { useOptionalSyncStatus } from "./syncStatus";
 import { uploadBlob } from "./blossom";
 import {
   billDTag,
@@ -60,6 +62,7 @@ type BillsDataContextValue = {
     item: BillWithSource,
     amount: number,
     newBalance?: number,
+    paymentDate?: number,
   ) => Promise<void>;
   cancelSubscription: (item: BillWithSource, note?: string) => Promise<void>;
   reactivateSubscription: (item: BillWithSource) => Promise<void>;
@@ -77,6 +80,35 @@ type BillsDataContextValue = {
 };
 
 const BillsDataContext = createContext<BillsDataContextValue | null>(null);
+
+function sortBills(list: BillWithSource[]): BillWithSource[] {
+  return [...list].sort((a, b) =>
+    a.bill.name.localeCompare(b.bill.name, undefined, { sensitivity: "base" }),
+  );
+}
+
+/** Insert or replace a bill by id, keeping the list name-sorted. */
+function upsertBillById(
+  list: BillWithSource[],
+  item: BillWithSource,
+): BillWithSource[] {
+  const idx = list.findIndex((i) => i.bill.id === item.bill.id);
+  const next =
+    idx >= 0
+      ? [...list.slice(0, idx), item, ...list.slice(idx + 1)]
+      : [...list, item];
+  return sortBills(next);
+}
+
+/** Restore a single record to its previous value (or remove if it was new). */
+function restoreBillById(
+  list: BillWithSource[],
+  id: string,
+  prev: BillWithSource | undefined,
+): BillWithSource[] {
+  const without = list.filter((i) => i.bill.id !== id);
+  return prev ? sortBills([...without, prev]) : without;
+}
 
 function isBillDTag(dTag: string): boolean {
   return dTag.startsWith("fiatlife/bill/") || dTag.startsWith(SUBSCRIPTION_DTAG_PREFIX);
@@ -128,6 +160,12 @@ export function BillsDataProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const { notify, refresh } = useOptionalSyncStatus();
+
+  const allBillsRef = useRef(allBills);
+  useEffect(() => {
+    allBillsRef.current = allBills;
+  }, [allBills]);
 
   const reload = useCallback(async () => {
     setError(null);
@@ -162,6 +200,16 @@ export function BillsDataProvider({ children }: { children: ReactNode }) {
       dTag: string,
       preservedTags?: Record<string, string[]>,
     ) => {
+      // Optimistic: reflect the change in the UI immediately, then publish.
+      const prevItem = allBillsRef.current.find((i) => i.bill.id === bill.id);
+      const optimistic: BillWithSource = {
+        bill,
+        source,
+        dTag,
+        isCypherLog: source === "CYPHERLOG",
+        preservedTags,
+      };
+      setAllBills((list) => upsertBillById(list, optimistic));
       setSaving(true);
       setError(null);
       try {
@@ -186,15 +234,19 @@ export function BillsDataProvider({ children }: { children: ReactNode }) {
             plaintext: serializeBill(bill),
           });
         }
-        await reload();
+        refresh();
       } catch (e) {
-        setError(e instanceof ApiError ? e.message : "Save failed.");
+        // Roll back just this record and surface the failure.
+        setAllBills((list) => restoreBillById(list, bill.id, prevItem));
+        const msg = e instanceof ApiError ? e.message : "Save failed.";
+        setError(msg);
+        notify(msg, "error");
         throw e;
       } finally {
         setSaving(false);
       }
     },
-    [reload],
+    [notify, refresh],
   );
 
   const getBillById = useCallback(
@@ -225,6 +277,10 @@ export function BillsDataProvider({ children }: { children: ReactNode }) {
 
   const deleteBill = useCallback(
     async (item: BillWithSource) => {
+      const prevItem = allBillsRef.current.find(
+        (i) => i.bill.id === item.bill.id,
+      );
+      setAllBills((list) => list.filter((i) => i.bill.id !== item.bill.id));
       setSaving(true);
       setError(null);
       try {
@@ -256,15 +312,18 @@ export function BillsDataProvider({ children }: { children: ReactNode }) {
             plaintext: JSON.stringify({ deleted: true }),
           });
         }
-        await reload();
+        refresh();
       } catch (e) {
-        setError(e instanceof ApiError ? e.message : "Delete failed.");
+        setAllBills((list) => restoreBillById(list, item.bill.id, prevItem));
+        const msg = e instanceof ApiError ? e.message : "Delete failed.";
+        setError(msg);
+        notify(msg, "error");
         throw e;
       } finally {
         setSaving(false);
       }
     },
-    [reload],
+    [notify, refresh],
   );
 
   const togglePaid = useCallback(
@@ -279,9 +338,14 @@ export function BillsDataProvider({ children }: { children: ReactNode }) {
   );
 
   const recordPayment = useCallback(
-    async (item: BillWithSource, amount: number, newBalance?: number) => {
-      const now = Date.now();
-      let updated = markBillPaid(item.bill, amount, now);
+    async (
+      item: BillWithSource,
+      amount: number,
+      newBalance?: number,
+      paymentDate?: number,
+    ) => {
+      const paidAt = paymentDate ?? Date.now();
+      let updated = markBillPaid(item.bill, amount, paidAt);
       if (newBalance != null && updated.creditCardDetails) {
         updated = {
           ...updated,
