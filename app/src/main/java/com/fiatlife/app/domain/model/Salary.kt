@@ -31,6 +31,9 @@ data class SalaryConfig(
     val updatedAt: Long = 0L
 )
 
+/** True when tax location still needs user input for accurate withholding. */
+fun SalaryConfig.isTaxSetupIncomplete(): Boolean = state.isBlank()
+
 @Serializable
 enum class PayType {
     HOURLY,

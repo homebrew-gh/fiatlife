@@ -78,6 +78,15 @@ object FederalTaxTables {
         FilingStatus.MARRIED_FILING_SEPARATELY -> 15_000.0
         FilingStatus.HEAD_OF_HOUSEHOLD -> 22_500.0
     }
+
+    fun calculateTax(taxableIncome: Double, status: FilingStatus): Double {
+        for (bracket in bracketsFor(status).reversed()) {
+            if (taxableIncome > bracket.min) {
+                return bracket.baseTax + (taxableIncome - bracket.min) * bracket.rate
+            }
+        }
+        return 0.0
+    }
 }
 
 object FicaTaxRates {

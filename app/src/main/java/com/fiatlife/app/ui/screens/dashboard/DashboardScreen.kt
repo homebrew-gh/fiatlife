@@ -18,10 +18,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import com.fiatlife.app.domain.model.BillGeneralCategory
+import com.fiatlife.app.domain.model.MonthlyTakeHomeSource
 import com.fiatlife.app.ui.components.*
 import com.fiatlife.app.ui.navigation.Screen
 import com.fiatlife.app.ui.theme.*
 import com.fiatlife.app.ui.viewmodel.DashboardViewModel
+import com.fiatlife.app.ui.viewmodel.DashboardYtdSource
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -40,7 +42,18 @@ fun DashboardScreen(
             TakeHomeCard(
                 takeHome = state.takeHomePay,
                 grossPay = state.grossPay,
-                effectiveTaxRate = state.effectiveTaxRate
+                effectiveTaxRate = state.effectiveTaxRate,
+                source = state.monthlyTakeHomeSource,
+                loggedTakeHome = state.monthlyLoggedTakeHome,
+                projectedRemainder = state.monthlyProjectedRemainder,
+                loggedPaycheckCount = state.monthlyLoggedPaycheckCount,
+                remainingPaycheckCount = state.monthlyRemainingPaycheckCount,
+                loggedOvertimeHours = state.monthlyLoggedOvertimeHours,
+                loggedBonus = state.monthlyLoggedBonus,
+                perPaycheckEstimate = state.monthlyPerPaycheckEstimate,
+                hasSalary = state.takeHomePay > 0.0 || state.grossPay > 0.0,
+                ytdNetPay = state.ytdNetPay,
+                ytdSource = state.ytdSource
             )
         }
 
@@ -325,7 +338,18 @@ fun DashboardScreen(
 private fun TakeHomeCard(
     takeHome: Double,
     grossPay: Double,
-    effectiveTaxRate: Double
+    effectiveTaxRate: Double,
+    source: MonthlyTakeHomeSource,
+    loggedTakeHome: Double,
+    projectedRemainder: Double,
+    loggedPaycheckCount: Int,
+    remainingPaycheckCount: Int,
+    loggedOvertimeHours: Double,
+    loggedBonus: Double,
+    perPaycheckEstimate: Double,
+    hasSalary: Boolean,
+    ytdNetPay: Double,
+    ytdSource: DashboardYtdSource
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -353,10 +377,82 @@ private fun TakeHomeCard(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "actual monthly combined total",
+                text = when {
+                    !hasSalary -> "Add paycheck info for take-home estimate"
+                    source == MonthlyTakeHomeSource.LOGGED ->
+                        "From $loggedPaycheckCount logged paycheck" +
+                            (if (loggedPaycheckCount == 1) "" else "s") + " this month"
+                    source == MonthlyTakeHomeSource.MIXED ->
+                        "Logged paychecks + projected remainder at base pay (no OT)"
+                    else -> "Estimated from current pay rate (no OT)"
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
             )
+            if (hasSalary && (loggedTakeHome > 0.0 || projectedRemainder > 0.0)) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    if (loggedTakeHome > 0.0) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                "Paid so far",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                            )
+                            Text(
+                                loggedTakeHome.formatCurrency(),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                    if (projectedRemainder > 0.0) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = buildString {
+                                    append("Projected remainder")
+                                    if (remainingPaycheckCount > 0) {
+                                        append(" ($remainingPaycheckCount × ${perPaycheckEstimate.formatCurrency()})")
+                                    }
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                projectedRemainder.formatCurrency(),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                    if (loggedOvertimeHours > 0.0) {
+                        Text(
+                            text = "Includes %.1f OT hrs from logged paychecks".format(loggedOvertimeHours),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                        )
+                    }
+                    if (loggedBonus > 0.0) {
+                        Text(
+                            text = "Includes ${loggedBonus.formatCurrency()} in logged bonuses",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                        )
+                    }
+                }
+            }
             Spacer(modifier = Modifier.height(16.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -387,6 +483,21 @@ private fun TakeHomeCard(
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
+                }
+                if (ytdSource != DashboardYtdSource.NONE) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "YTD net",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                        )
+                        Text(
+                            text = ytdNetPay.formatCurrency(),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
                 }
             }
         }

@@ -1,5 +1,8 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package com.fiatlife.app.ui.screens.salary
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
@@ -22,6 +25,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fiatlife.app.domain.model.*
 import com.fiatlife.app.ui.components.*
 import com.fiatlife.app.ui.theme.*
+import com.fiatlife.app.ui.viewmodel.DepositEditTarget
 import com.fiatlife.app.ui.viewmodel.SalaryTab
 import com.fiatlife.app.ui.viewmodel.SalaryViewModel
 
@@ -33,6 +37,8 @@ fun SalaryScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val calc = state.calculation
     val snackbarHostState = remember { SnackbarHostState() }
+    var showTaxSetup by remember { mutableStateOf(false) }
+    var summaryStatsAnnual by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.message) {
         if (state.message.isNotBlank()) {
@@ -50,34 +56,75 @@ fun SalaryScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Tab toggle
+        // Tab toggle + tax setup
         item {
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                SegmentedButton(
-                    selected = state.activeTab == SalaryTab.SUMMARY,
-                    onClick = { viewModel.setActiveTab(SalaryTab.SUMMARY) },
-                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 3)
-                ) { Text("Summary") }
-                SegmentedButton(
-                    selected = state.activeTab == SalaryTab.PAYCHECK,
-                    onClick = { viewModel.setActiveTab(SalaryTab.PAYCHECK) },
-                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 3)
-                ) { Text("Calculator") }
-                SegmentedButton(
-                    selected = state.activeTab == SalaryTab.ANNUAL,
-                    onClick = { viewModel.setActiveTab(SalaryTab.ANNUAL) },
-                    shape = SegmentedButtonDefaults.itemShape(index = 2, count = 3)
-                ) { Text("Annual") }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.weight(1f)) {
+                    SegmentedButton(
+                        selected = state.activeTab == SalaryTab.SUMMARY,
+                        onClick = { viewModel.setActiveTab(SalaryTab.SUMMARY) },
+                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+                    ) { Text("Summary") }
+                    SegmentedButton(
+                        selected = state.activeTab == SalaryTab.WHATIF,
+                        onClick = { viewModel.setActiveTab(SalaryTab.WHATIF) },
+                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+                    ) { Text("Model") }
+                }
+                BadgedBox(
+                    badge = {
+                        if (state.config.isTaxSetupIncomplete()) {
+                            Badge(
+                                modifier = Modifier.size(8.dp),
+                                containerColor = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                ) {
+                    OutlinedButton(
+                        onClick = { showTaxSetup = true },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.primary
+                        )
+                    ) {
+                        Text(
+                            text = "Tax",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1
+                        )
+                    }
+                }
             }
         }
 
         when (state.activeTab) {
-            SalaryTab.SUMMARY -> summaryContent(state, viewModel)
-            SalaryTab.PAYCHECK -> paycheckContent(state, calc, viewModel)
-            SalaryTab.ANNUAL -> annualContent(state, viewModel)
+            SalaryTab.SUMMARY -> summaryContent(
+                state,
+                viewModel,
+                summaryStatsAnnual,
+                onSummaryStatsAnnualChange = { summaryStatsAnnual = it },
+            )
+            SalaryTab.WHATIF -> whatIfContent(state, calc, viewModel)
         }
 
         item { Spacer(modifier = Modifier.height(80.dp)) }
+    }
+
+    if (showTaxSetup) {
+        TaxSetupDialog(
+            config = state.config,
+            onDismiss = { showTaxSetup = false },
+            onFilingStatus = viewModel::updateFilingStatus,
+            onState = viewModel::updateState,
+            onCounty = viewModel::updateCounty
+        )
     }
 
     if (state.showLogDialog) {
@@ -116,12 +163,22 @@ fun SalaryScreen(
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-private fun androidx.compose.foundation.lazy.LazyListScope.paycheckContent(
+private fun androidx.compose.foundation.lazy.LazyListScope.whatIfContent(
     state: com.fiatlife.app.ui.viewmodel.SalaryState,
     calc: PaycheckCalculation,
     viewModel: SalaryViewModel
 ) {
-    // Pay summary card
+    item {
+        SectionCard(title = "Hypothetical modeling", icon = Icons.Filled.Info) {
+            Text(
+                text = "Changes here are hypothetical — they do not affect your Summary " +
+                        "projections until you log real paychecks or save updated settings.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+
     item {
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -137,7 +194,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.paycheckContent(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "Net Take Home",
+                    text = "Modeled Net (This Period)",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
@@ -153,7 +210,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.paycheckContent(
                 ) {
                     StatItem("Gross", calc.grossPay.formatCurrency())
                     StatItem("Taxes", calc.totalTaxes.formatCurrency())
-                    StatItem("Annual Net", calc.annualizedNet.formatCurrency())
+                    StatItem("Modeled Annual", state.annualProjection.annualNetPay.formatCurrency())
                 }
             }
         }
@@ -251,76 +308,18 @@ private fun androidx.compose.foundation.lazy.LazyListScope.paycheckContent(
             }
             Spacer(modifier = Modifier.height(8.dp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = overtimeMultiplier,
-                    onValueChange = {
-                        overtimeMultiplier = it
-                        it.toDoubleOrNull()?.let { v -> viewModel.updateOvertimeMultiplier(v) }
-                    },
-                    label = { Text("OT Multiplier") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    shape = MaterialTheme.shapes.medium,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-                )
-
-                var expanded by remember { mutableStateOf(false) }
-                ExposedDropdownMenuBox(
-                    expanded = expanded,
-                    onExpandedChange = { expanded = it },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    OutlinedTextField(
-                        value = state.config.payFrequency.name.lowercase()
-                            .replaceFirstChar { it.uppercase() },
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Frequency") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                        modifier = Modifier.menuAnchor(),
-                        singleLine = true,
-                        shape = MaterialTheme.shapes.medium
-                    )
-                    ExposedDropdownMenu(
-                        expanded = expanded,
-                        onDismissRequest = { expanded = false }
-                    ) {
-                        PayFrequency.entries.forEach { freq ->
-                            DropdownMenuItem(
-                                text = { Text(freq.name.lowercase().replaceFirstChar { it.uppercase() }) },
-                                onClick = {
-                                    viewModel.updatePayFrequency(freq)
-                                    expanded = false
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            var firstPaydayOfYear by remember(state.config.firstPaydayOfYearMillis) {
-                mutableStateOf(state.config.firstPaydayOfYearMillis?.let { formatIsoDate(it) } ?: "")
-            }
             OutlinedTextField(
-                value = firstPaydayOfYear,
+                value = overtimeMultiplier,
                 onValueChange = {
-                    firstPaydayOfYear = it.take(10)
-                    viewModel.updateFirstPaydayOfYear(parseIsoDate(it))
+                    overtimeMultiplier = it
+                    it.toDoubleOrNull()?.let { v -> viewModel.updateOvertimeMultiplier(v) }
                 },
-                label = { Text("First payday of year (YYYY-MM-DD)") },
-                placeholder = { Text("2026-01-09") },
+                label = { Text("OT Multiplier") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = MaterialTheme.shapes.medium,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
             )
-            Text(
-                text = "Used by Dashboard to count actual paychecks per month (e.g., 3-paycheck months).",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
             if (calc.overtimePay > 0) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
@@ -338,73 +337,14 @@ private fun androidx.compose.foundation.lazy.LazyListScope.paycheckContent(
         }
     }
 
-    // Tax Configuration
+    // Withholding overrides
     item {
-        SectionCard(title = "Tax Configuration", icon = Icons.Filled.AccountBalance) {
-            var expanded by remember { mutableStateOf(false) }
-            ExposedDropdownMenuBox(
-                expanded = expanded,
-                onExpandedChange = { expanded = it }
-            ) {
-                OutlinedTextField(
-                    value = state.config.filingStatus.displayName,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Filing Status") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .menuAnchor(),
-                    singleLine = true,
-                    shape = MaterialTheme.shapes.medium
-                )
-                ExposedDropdownMenu(
-                    expanded = expanded,
-                    onDismissRequest = { expanded = false }
-                ) {
-                    FilingStatus.entries.forEach { status ->
-                        DropdownMenuItem(
-                            text = { Text(status.displayName) },
-                            onClick = {
-                                viewModel.updateFilingStatus(status)
-                                expanded = false
-                            }
-                        )
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-
-            var stateCode by remember(state.config.state) {
-                mutableStateOf(state.config.state)
-            }
-            var countyName by remember(state.config.county) {
-                mutableStateOf(state.config.county)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = stateCode,
-                    onValueChange = {
-                        stateCode = it.uppercase().take(2)
-                        viewModel.updateState(stateCode)
-                    },
-                    label = { Text("State") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    shape = MaterialTheme.shapes.medium
-                )
-                OutlinedTextField(
-                    value = countyName,
-                    onValueChange = {
-                        countyName = it
-                        viewModel.updateCounty(it)
-                    },
-                    label = { Text("County") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    shape = MaterialTheme.shapes.medium
-                )
-            }
+        SectionCard(title = "Withholding overrides", icon = Icons.Filled.AccountBalance) {
+            Text(
+                text = "Filing status and state are set from the tax button above. Tap any rate below to match your actual stub.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = "Tax Breakdown (per paycheck)",
@@ -524,195 +464,29 @@ private fun androidx.compose.foundation.lazy.LazyListScope.paycheckContent(
         }
     }
 
-    // Direct Deposits
-    item {
-        SectionCard(
-            title = "Direct Deposits",
-            icon = Icons.Filled.AccountBalanceWallet,
-            action = {
-                IconButton(onClick = { viewModel.showAddDeposit() }) {
-                    Icon(Icons.Filled.Add, "Add deposit")
-                }
-            }
-        ) {
-            if (calc.depositAllocations.isEmpty()) {
-                Text(
-                    text = "Set up how your take home pay is split across accounts",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else {
-                calc.depositAllocations.forEach { alloc ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = alloc.deposit.accountName,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Text(
-                                text = "${alloc.deposit.bankName} - ${alloc.deposit.accountType.displayName}" +
-                                        if (alloc.deposit.isRemainder) " (Remainder)" else "",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        MoneyText(
-                            amount = alloc.calculatedAmount,
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                        IconButton(
-                            onClick = { viewModel.removeDeposit(alloc.deposit.id) },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(Icons.Outlined.Delete, "Remove", modifier = Modifier.size(18.dp))
-                        }
-                    }
-                }
-                if (calc.unallocatedAmount > 0.01) {
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = "Unallocated",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = WarningAmber,
-                            fontWeight = FontWeight.Medium
-                        )
-                        MoneyText(
-                            amount = calc.unallocatedAmount,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = WarningAmber
-                        )
-                    }
-                }
-            }
-        }
-    }
+    directDepositsContent(state, viewModel, DepositEditTarget.WHATIF)
 
-    // Pay Rate History (raises)
-    item {
-        SectionCard(
-            title = "Pay Rate History (Raises)",
-            icon = Icons.Filled.TrendingUp,
-            action = {
-                IconButton(onClick = { viewModel.addRaise() }) {
-                    Icon(Icons.Filled.Add, "Add raise")
-                }
-            }
-        ) {
-            Text(
-                text = "Record raises with their effective date. Projections and estimated " +
-                        "YTD use the rate in effect on each payday.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            val sorted = state.config.payRateHistory.sortedByDescending { it.effectiveDate }
-            sorted.forEach { change ->
-                RaiseRow(
-                    change = change,
-                    onChange = { viewModel.updateRaise(it) },
-                    onDelete = { viewModel.removeRaise(change.id) }
-                )
-            }
-        }
-    }
-
-    // Save button
-    item {
-        Button(
-            onClick = { viewModel.save() },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp),
-            shape = MaterialTheme.shapes.large,
-            enabled = !state.isSaving
-        ) {
-            if (state.isSaving) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(24.dp),
-                    color = MaterialTheme.colorScheme.onPrimary
-                )
-            } else {
-                Icon(Icons.Filled.Save, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Save Configuration", style = MaterialTheme.typography.titleMedium)
-            }
-        }
-    }
-}
-
-@Composable
-private fun AnnualSummaryCard(proj: AnnualProjection) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.extraLarge,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer
-        )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = "Annual Net Take Home",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
-            )
-            MoneyText(
-                amount = proj.annualNetPay,
-                style = MaterialTheme.typography.displaySmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                StatItem("Gross", proj.annualGrossPay.formatCurrency())
-                StatItem("Total Tax", proj.annualTotalTaxes.formatCurrency())
-                StatItem("Per Check", proj.perPaycheckNet.formatCurrency())
-            }
-        }
-    }
+    whatIfAnnualSections(state, viewModel)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-private fun androidx.compose.foundation.lazy.LazyListScope.annualContent(
+private fun androidx.compose.foundation.lazy.LazyListScope.whatIfAnnualSections(
     state: com.fiatlife.app.ui.viewmodel.SalaryState,
     viewModel: SalaryViewModel
 ) {
     val proj = state.annualProjection
     val base = state.annualBaseProjection
 
-    if (state.config.hourlyRate <= 0) {
-        item {
-            SectionCard(title = "Setup Required", icon = Icons.Filled.Info) {
-                Text(
-                    text = "Switch to the Per Paycheck tab first to enter your hourly rate, " +
-                            "deductions, and tax configuration. Annual projections are calculated " +
-                            "from that data.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+    item {
+        SectionCard(title = "Annual Model", icon = Icons.Filled.CalendarMonth) {
+            Text(
+                text = "See how changes above would play out over a full year — useful for " +
+                        "modeling raises, bonus pay, or annual overtime.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
-        return
     }
-
-    // Annual summary hero card
-    item { AnnualSummaryCard(proj) }
 
     // Overtime estimator
     item {
@@ -763,9 +537,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.annualContent(
         }
     }
 
-    // Income breakdown
     item {
-        SectionCard(title = "Annual Income", icon = Icons.Filled.Payments) {
+        SectionCard(title = "Modeled Annual Income", icon = Icons.Filled.Payments) {
             AnnualLine("Regular Pay", proj.annualRegularPay)
             if (proj.annualOvertimePay > 0) {
                 AnnualLine("Overtime Pay", proj.annualOvertimePay, color = ProfitGreen)
@@ -775,9 +548,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.annualContent(
         }
     }
 
-    // Tax breakdown
     item {
-        SectionCard(title = "Annual Taxes", icon = Icons.Filled.AccountBalance) {
+        SectionCard(title = "Modeled Annual Taxes", icon = Icons.Filled.AccountBalance) {
             AnnualLine("Federal Income Tax", proj.annualFederalTax, color = LossRed)
             AnnualLine("State Income Tax", proj.annualStateTax, color = LossRed)
             if (proj.annualCountyTax > 0) {
@@ -805,10 +577,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.annualContent(
         }
     }
 
-    // Deductions
     if (proj.preTaxDeductionBreakdown.isNotEmpty() || proj.postTaxDeductionBreakdown.isNotEmpty()) {
         item {
-            SectionCard(title = "Annual Deductions", icon = Icons.Filled.RemoveCircleOutline) {
+            SectionCard(title = "Modeled Annual Deductions", icon = Icons.Filled.RemoveCircleOutline) {
                 if (proj.preTaxDeductionBreakdown.isNotEmpty()) {
                     Text(
                         text = "Pre-Tax",
@@ -893,9 +664,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.annualContent(
         }
     }
 
-    // Net summary
     item {
-        SectionCard(title = "Annual Summary", icon = Icons.Filled.Summarize) {
+        SectionCard(title = "Modeled Annual Summary", icon = Icons.Filled.Summarize) {
             AnnualLine("Gross Pay", proj.annualGrossPay)
             AnnualLine("Pre-Tax Deductions", -proj.annualPreTaxDeductions, color = LossRed)
             AnnualLine("Total Taxes", -proj.annualTotalTaxes, color = LossRed)
@@ -908,9 +678,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.annualContent(
 
 private fun androidx.compose.foundation.lazy.LazyListScope.summaryContent(
     state: com.fiatlife.app.ui.viewmodel.SalaryState,
-    viewModel: SalaryViewModel
+    viewModel: SalaryViewModel,
+    statsViewAnnual: Boolean,
+    onSummaryStatsAnnualChange: (Boolean) -> Unit,
 ) {
     val ytd = state.ytdSummary
+    val annual = ytd?.annualExtrapolation
     val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
 
     // Year selector + Log button
@@ -948,135 +721,364 @@ private fun androidx.compose.foundation.lazy.LazyListScope.summaryContent(
         item {
             SectionCard(title = "No data yet", icon = Icons.Filled.Info) {
                 Text(
-                    text = "Set up your pay in the Calculator tab, then log paychecks to track " +
+                    text = "Set up your pay in the Model tab, then log paychecks to track " +
                             "year-to-date earnings, taxes, and deductions here.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
+        payRateHistoryContent(state, viewModel)
+        directDepositsContent(state, viewModel, DepositEditTarget.SUMMARY)
         return
     }
 
-    // Hero net card
+    // Hero + toggleable YTD / projected annual stats
     item {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = MaterialTheme.shapes.extraLarge,
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer
-            )
-        ) {
-            Column(modifier = Modifier.fillMaxWidth().padding(24.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Year-To-Date Net",
-                        style = MaterialTheme.typography.titleMedium,
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.extraLarge,
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                )
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(24.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Year-To-Date Net",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Text(
+                            text = if (ytd.source == YtdSummary.Source.LOGGED) "Logged" else "Estimated",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                        )
+                    }
+                    MoneyText(
+                        amount = ytd.netPay,
+                        style = MaterialTheme.typography.displaySmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
+                    Spacer(Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        progress = { (ytd.progressPercent / 100.0).toFloat().coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Text(
-                        text = if (ytd.source == YtdSummary.Source.LOGGED) "Logged" else "Estimated",
+                        text = "${ytd.progressPercent.toInt()}% of projected annual net " +
+                                "(${ytd.annualNetTarget.formatCurrency()})",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        SegmentedButton(
+                            selected = !statsViewAnnual,
+                            onClick = { onSummaryStatsAnnualChange(false) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+                        ) { Text("Year To Date") }
+                        SegmentedButton(
+                            selected = statsViewAnnual,
+                            onClick = { onSummaryStatsAnnualChange(true) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+                        ) { Text("Projected Annual") }
+                    }
+                }
+            }
+
+            if (!statsViewAnnual) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    StatTile("Gross YTD", ytd.grossPay.formatCurrency())
+                    StatTile("Taxes YTD", ytd.totalTaxes.formatCurrency())
+                    StatTile(
+                        "Deductions",
+                        (ytd.totalPreTaxDeductions + ytd.totalPostTaxDeductions).formatCurrency()
+                    )
+                    StatTile("OT hours", "%.1f".format(ytd.overtimeHours))
+                }
+
+                BreakdownCardCompose("Earnings", ytd.earnings, ytd.grossPay, negative = false)
+                BreakdownCardCompose(
+                    title = "Taxes",
+                    lines = ytd.taxes,
+                    total = ytd.totalTaxes,
+                    negative = true,
+                    footer = "Effective rate ${
+                        if (ytd.grossPay > 0) "%.1f%%".format(ytd.totalTaxes / ytd.grossPay * 100) else "0.0%"
+                    }"
+                )
+                if (ytd.preTaxDeductions.isNotEmpty()) {
+                    BreakdownCardCompose(
+                        "Pre-Tax Deductions",
+                        ytd.preTaxDeductions,
+                        ytd.totalPreTaxDeductions,
+                        negative = true
                     )
                 }
-                MoneyText(
-                    amount = ytd.netPay,
-                    style = MaterialTheme.typography.displaySmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-                Spacer(Modifier.height(8.dp))
-                LinearProgressIndicator(
-                    progress = { (ytd.progressPercent / 100.0).toFloat().coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth()
+                if (ytd.postTaxDeductions.isNotEmpty()) {
+                    BreakdownCardCompose(
+                        "Post-Tax Deductions",
+                        ytd.postTaxDeductions,
+                        ytd.totalPostTaxDeductions,
+                        negative = true
+                    )
+                }
+                if (ytd.employerContributions.isNotEmpty()) {
+                    BreakdownCardCompose(
+                        "Employer Contributions",
+                        ytd.employerContributions,
+                        ytd.employerContributions.sumOf { it.amount },
+                        negative = false
+                    )
+                }
+            } else if (annual != null) {
+                Text(
+                    text = if (annual.source == AnnualExtrapolation.Source.LOGGED) {
+                        "From your paychecks"
+                    } else {
+                        "Estimated"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (annual.source == AnnualExtrapolation.Source.LOGGED) {
+                        ProfitGreen
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.align(Alignment.End)
                 )
                 Text(
-                    text = "${ytd.progressPercent.toInt()}% of projected annual net " +
-                            "(${ytd.annualNetTarget.formatCurrency()})",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
-                    modifier = Modifier.padding(top = 4.dp)
+                    text = if (annual.source == AnnualExtrapolation.Source.LOGGED) {
+                        "YTD actuals from ${annual.basedOnPaychecks} logged paycheck" +
+                                if (annual.basedOnPaychecks == 1) "" else "s" +
+                                ", plus latest pay rate × ${annual.remainingPaychecksProjected} " +
+                                "remaining pay period" +
+                                if (annual.remainingPaychecksProjected == 1) "" else "s" + "."
+                    } else {
+                        "Log paychecks to project from actual stubs, or use Model settings until then."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (ytd.source == YtdSummary.Source.LOGGED && kotlin.math.abs(ytd.netVariance) >= 1.0) {
+
+                if (annual.source == AnnualExtrapolation.Source.LOGGED) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = buildString {
+                                append("Project average OT forward")
+                                if (annual.averageOvertimeHoursPerPaycheck > 0.0) {
+                                    append(" (")
+                                    append("%.1f".format(annual.averageOvertimeHoursPerPaycheck))
+                                    append(" hrs/paycheck so far)")
+                                }
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = state.projectOvertimeForward,
+                            onCheckedChange = { viewModel.setProjectOvertimeForward(it) }
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    StatTile("Projected net", annual.annualNetPay.formatCurrency())
+                    StatTile("Projected gross", annual.annualGrossPay.formatCurrency())
+                    StatTile("Projected taxes", annual.annualTotalTaxes.formatCurrency())
+                    StatTile("Per paycheck", annual.perPaycheckNet.formatCurrency())
+                }
+
+                SectionCard(title = "Annual pace", icon = Icons.Filled.TrendingUp) {
                     Text(
-                        text = (if (ytd.netVariance >= 0) "+" else "−") +
-                                kotlin.math.abs(ytd.netVariance).formatCurrency() +
-                                " vs projected for ${ytd.paycheckCount} paycheck" +
-                                if (ytd.paycheckCount == 1) "" else "s",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (ytd.netVariance >= 0) ProfitGreen else LossRed,
-                        modifier = Modifier.padding(top = 4.dp)
+                        text = buildString {
+                            append("${annual.scheduledPaychecksInYear} pay periods this year · ")
+                            append("%.1f".format(annual.overtimeHours))
+                            append(" projected OT hours")
+                            if (annual.source == AnnualExtrapolation.Source.LOGGED &&
+                                !annual.projectOvertimeForward
+                            ) {
+                                append(" (logged only)")
+                            }
+                            append(" · ")
+                            append(annual.annualTotalDeductions.formatCurrency())
+                            append(" projected deductions")
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                FederalTaxReturnSection(config = state.config, annual = annual)
+
+                if (annual.earnings.isNotEmpty()) {
+                    BreakdownCardCompose("Earnings", annual.earnings, annual.annualGrossPay, negative = false)
+                }
+                if (annual.taxes.isNotEmpty()) {
+                    BreakdownCardCompose(
+                        title = "Taxes",
+                        lines = annual.taxes,
+                        total = annual.annualTotalTaxes,
+                        negative = true,
+                        footer = "Effective rate ${annual.effectiveTaxRate.formatPercentage()}"
+                    )
+                }
+                if (annual.preTaxDeductions.isNotEmpty()) {
+                    BreakdownCardCompose(
+                        "Pre-Tax Deductions",
+                        annual.preTaxDeductions,
+                        annual.annualPreTaxDeductions,
+                        negative = true
+                    )
+                }
+                if (annual.postTaxDeductions.isNotEmpty()) {
+                    BreakdownCardCompose(
+                        "Post-Tax Deductions",
+                        annual.postTaxDeductions,
+                        annual.annualPostTaxDeductions,
+                        negative = true
+                    )
+                }
+                if (annual.employerContributions.isNotEmpty()) {
+                    BreakdownCardCompose(
+                        "Employer Contributions",
+                        annual.employerContributions,
+                        annual.employerContributions.sumOf { it.amount },
+                        negative = false
                     )
                 }
             }
         }
     }
 
-    // Stat row
+    if (!statsViewAnnual) {
     item {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly
-        ) {
-            StatTile("Gross YTD", ytd.grossPay.formatCurrency())
-            StatTile("Taxes YTD", ytd.totalTaxes.formatCurrency())
-            StatTile("Deductions", (ytd.totalPreTaxDeductions + ytd.totalPostTaxDeductions).formatCurrency())
-            StatTile("OT hours", "%.1f".format(ytd.overtimeHours))
-        }
-    }
-
-    item {
-        SectionCard(title = "Pace", icon = Icons.Filled.CalendarMonth) {
+        SectionCard(title = "Paycheck Schedule", icon = Icons.Filled.CalendarMonth) {
+            var firstPaydayOfYear by remember(state.config.firstPaydayOfYearMillis) {
+                mutableStateOf(state.config.firstPaydayOfYearMillis?.let { formatIsoDate(it) } ?: "")
+            }
+            var payFreqExpanded by remember { mutableStateOf(false) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ExposedDropdownMenuBox(
+                    expanded = payFreqExpanded,
+                    onExpandedChange = { payFreqExpanded = it },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    OutlinedTextField(
+                        value = state.config.payFrequency.name.lowercase()
+                            .replaceFirstChar { it.uppercase() },
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Pay frequency") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(payFreqExpanded) },
+                        modifier = Modifier.menuAnchor(),
+                        singleLine = true,
+                        shape = MaterialTheme.shapes.medium
+                    )
+                    ExposedDropdownMenu(
+                        expanded = payFreqExpanded,
+                        onDismissRequest = { payFreqExpanded = false }
+                    ) {
+                        PayFrequency.entries.forEach { freq ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(freq.name.lowercase().replaceFirstChar { it.uppercase() })
+                                },
+                                onClick = {
+                                    viewModel.updatePayFrequency(freq)
+                                    payFreqExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = firstPaydayOfYear,
+                    onValueChange = {
+                        firstPaydayOfYear = it.take(10)
+                        viewModel.updateFirstPaydayOfYear(parseIsoDate(it))
+                    },
+                    label = { Text("First payday") },
+                    placeholder = { Text("2026-01-09") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+            }
             Text(
-                text = "${ytd.scheduledPaychecksYtd} paychecks received so far · " +
-                        "${ytd.remainingPaychecks} remaining (${ytd.scheduledPaychecksInYear} total)",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-
-    item {
-        BreakdownCardCompose("Earnings", ytd.earnings, ytd.grossPay, negative = false)
-    }
-    item {
-        BreakdownCardCompose(
-            title = "Taxes",
-            lines = ytd.taxes,
-            total = ytd.totalTaxes,
-            negative = true,
-            footer = "Effective rate ${
-                if (ytd.grossPay > 0) "%.1f%%".format(ytd.totalTaxes / ytd.grossPay * 100) else "0.0%"
-            } · projected ${ytd.projectedAnnualTaxes.formatCurrency()} for the year"
-        )
-    }
-    if (ytd.preTaxDeductions.isNotEmpty()) {
-        item { BreakdownCardCompose("Pre-Tax Deductions", ytd.preTaxDeductions, ytd.totalPreTaxDeductions, negative = true) }
-    }
-    if (ytd.postTaxDeductions.isNotEmpty()) {
-        item { BreakdownCardCompose("Post-Tax Deductions", ytd.postTaxDeductions, ytd.totalPostTaxDeductions, negative = true) }
-    }
-    if (ytd.employerContributions.isNotEmpty()) {
-        item {
-            BreakdownCardCompose(
-                "Employer Contributions",
-                ytd.employerContributions,
-                ytd.employerContributions.sumOf { it.amount },
-                negative = false
+                text = when (state.config.payFrequency) {
+                    PayFrequency.WEEKLY, PayFrequency.BIWEEKLY ->
+                        "Pay frequency and first payday are required for weekly and biweekly schedules. " +
+                                "Logged paychecks on matching dates are recognized automatically."
+                    else ->
+                        "Pay frequency drives YTD counting and Model calculations. First payday improves monthly estimates."
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp)
             )
         }
     }
 
     // Paycheck log
     item {
-        SectionCard(title = "Paycheck Log", icon = Icons.Filled.ReceiptLong) {
+        SectionCard(
+            title = "Paycheck Log",
+            icon = Icons.Filled.ReceiptLong,
+            action = {
+                val missing = SalarySummary.missingPaydaysForYear(state.config, state.summaryYear)
+                val canDetectMissing =
+                    SalarySummary.canDetectMissingPaychecks(state.config, state.summaryYear)
+                TextButton(
+                    onClick = { viewModel.generateMissingPaycheckLogs(state.summaryYear) },
+                    enabled = missing.isNotEmpty() &&
+                        canDetectMissing &&
+                        state.calculation.grossPay > 0.0
+                ) {
+                    Text(
+                        if (missing.isEmpty()) "Generate missing"
+                        else "Generate missing (${missing.size})"
+                    )
+                }
+            }
+        ) {
             val logs = SalarySummary.logsForYear(state.config, state.summaryYear)
             val missing = SalarySummary.missingPaydaysForYear(state.config, state.summaryYear)
-            val canDetectMissing = SalarySummary.canDetectMissingPaychecks(state.config)
+            val canDetectMissing = SalarySummary.canDetectMissingPaychecks(state.config, state.summaryYear)
+
+            Text(
+                text = buildString {
+                    append("${ytd.scheduledPaychecksYtd} paycheck")
+                    if (ytd.scheduledPaychecksYtd != 1) append("s")
+                    append(" received · ${ytd.scheduledPaychecksInYear} expected this year")
+                    if (ytd.remainingPaychecks > 0) {
+                        append(" · ${ytd.remainingPaychecks} remaining")
+                    }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
 
             if (logs.isEmpty() && missing.isEmpty()) {
                 Text(
@@ -1084,7 +1086,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.summaryContent(
                         "No paychecks logged for ${state.summaryYear} yet."
                     } else {
                         "No paychecks logged for ${state.summaryYear} yet. Set your first payday of the year " +
-                                "in the Calculator tab to track missing checks."
+                                "above to track missing checks."
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1143,6 +1145,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.summaryContent(
                             Text(
                                 "Gross ${entry.grossPay.formatCurrency()}" +
                                         (entry.overtimeHours?.let { if (it > 0) " · ${it} OT hrs" else "" } ?: "") +
+                                        (if (entry.autoGenerated == true) " · Estimated" else "") +
                                         (entry.notes?.let { if (it.isNotBlank()) " · $it" else "" } ?: ""),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1155,6 +1158,203 @@ private fun androidx.compose.foundation.lazy.LazyListScope.summaryContent(
                         IconButton(onClick = { viewModel.removeLogPaycheck(entry.id) }, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Outlined.Delete, "Delete", modifier = Modifier.size(18.dp))
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    payRateHistoryContent(state, viewModel)
+
+    directDepositsContent(state, viewModel, DepositEditTarget.SUMMARY)
+    }
+}
+
+private fun androidx.compose.foundation.lazy.LazyListScope.payRateHistoryContent(
+    state: com.fiatlife.app.ui.viewmodel.SalaryState,
+    viewModel: SalaryViewModel
+) {
+    val inferred = SalarySummary.inferPayRatesFromLogs(state.config, state.summaryYear)
+    val inferredById = inferred.raises.associateBy { it.change.id }
+    val sorted = state.config.payRateHistory
+        .filter { change ->
+            SalarySummary.yearOf(change.effectiveDate) == state.summaryYear ||
+                !change.id.startsWith(SalarySummary.INFERRED_RAISE_ID_PREFIX)
+        }
+        .sortedByDescending { it.effectiveDate }
+
+    item {
+        SectionCard(
+            title = "Pay Rate History (Raises)",
+            icon = Icons.Filled.TrendingUp,
+            action = {
+                IconButton(onClick = { viewModel.addRaise() }) {
+                    Icon(Icons.Filled.Add, "Add raise")
+                }
+            }
+        ) {
+            Text(
+                text = "Auto-filled from logged paychecks when regular pay increases. Starting " +
+                        "pay comes from your first paycheck of the year.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            inferred.startingRate?.let { start ->
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Starting pay (${state.summaryYear})",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "From first paycheck on ${formatIsoDate(start.effectiveDate)}: " +
+                            "${start.regularGrossPerPaycheck.formatCurrency()} per paycheck" +
+                            if (start.payType == PayType.SALARY) {
+                                " · ${start.annualSalary.formatCurrency()} annual"
+                            } else {
+                                " · ${start.hourlyRate.formatCurrency()}/hr"
+                            },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+            if (sorted.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+            }
+            sorted.forEach { change ->
+                inferredById[change.id]?.let { inferredRaise ->
+                    Text(
+                        text = "+${"%.1f".format(inferredRaise.percentIncrease)}% raise · +" +
+                                inferredRaise.perPaycheckIncrease.formatCurrency() + " per paycheck",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = ProfitGreen,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+                RaiseRow(
+                    change = change,
+                    onChange = { viewModel.updateRaise(it) },
+                    onDelete = { viewModel.removeRaise(change.id) }
+                )
+            }
+        }
+    }
+}
+
+private fun androidx.compose.foundation.lazy.LazyListScope.directDepositsContent(
+    state: com.fiatlife.app.ui.viewmodel.SalaryState,
+    viewModel: SalaryViewModel,
+    target: DepositEditTarget
+) {
+    val calc = state.calculation
+    val allocations = when (target) {
+        DepositEditTarget.SUMMARY -> calc.depositAllocations
+        DepositEditTarget.WHATIF -> {
+            val deposits = state.whatIfDirectDeposits ?: state.config.directDeposits
+            PaycheckCalculator.calculateDepositAllocations(deposits, calc.netPay)
+        }
+    }
+    val unallocated = calc.netPay - allocations.sumOf { it.calculatedAmount }
+    val customized = target == DepositEditTarget.WHATIF && state.whatIfDirectDeposits != null
+    val hint = when (target) {
+        DepositEditTarget.SUMMARY -> null
+        DepositEditTarget.WHATIF ->
+            if (customized) {
+                "Custom projection splits — reset to match Summary anytime."
+            } else {
+                "Mirrors your Summary splits until you change amounts or percentages here."
+            }
+    }
+
+    item {
+        SectionCard(
+            title = "Direct Deposits",
+            icon = Icons.Filled.AccountBalanceWallet,
+            action = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (customized) {
+                        TextButton(onClick = { viewModel.resetWhatIfDirectDeposits() }) {
+                            Text("Reset")
+                        }
+                    }
+                    IconButton(onClick = { viewModel.showAddDeposit(target) }) {
+                        Icon(Icons.Filled.Add, "Add deposit")
+                    }
+                }
+            }
+        ) {
+            if (hint != null) {
+                Text(
+                    text = hint,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+            if (allocations.isEmpty()) {
+                Text(
+                    text = "Set up how your take home pay is split across accounts",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                allocations.forEach { alloc ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = alloc.deposit.accountName,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "${alloc.deposit.bankName} - ${alloc.deposit.accountType.displayName}" +
+                                        if (alloc.deposit.isRemainder) " (Remainder)" else "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        MoneyText(
+                            amount = alloc.calculatedAmount,
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        IconButton(
+                            onClick = { viewModel.showEditDeposit(alloc.deposit, target) },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Filled.Edit, "Edit", modifier = Modifier.size(18.dp))
+                        }
+                        IconButton(
+                            onClick = { viewModel.removeDeposit(alloc.deposit.id, target) },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Outlined.Delete, "Remove", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+                if (unallocated > 0.01) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Unallocated",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = WarningAmber,
+                            fontWeight = FontWeight.Medium
+                        )
+                        MoneyText(
+                            amount = unallocated,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = WarningAmber
+                        )
                     }
                 }
             }
@@ -1383,7 +1583,12 @@ private fun LogPaycheckDialog(
                         }
                     }
                 }
-                LogLineSection("Earnings", earnings, showHours = true) { earnings = it }
+                LogLineSection(
+                    title = "Earnings",
+                    lines = earnings,
+                    showHours = true,
+                    useEarningsPresets = true
+                ) { earnings = it }
                 LogLineSection("Taxes", taxes, showHours = false) { taxes = it }
                 LogLineSection("Pre-Tax Deductions", preTax, showHours = false) { preTax = it }
                 LogLineSection("Post-Tax Deductions", postTax, showHours = false) { postTax = it }
@@ -1449,6 +1654,7 @@ private fun LogLineSection(
     title: String,
     lines: List<PaycheckLineItem>,
     showHours: Boolean,
+    useEarningsPresets: Boolean = false,
     onLinesChange: (List<PaycheckLineItem>) -> Unit
 ) {
     Column {
@@ -1473,6 +1679,7 @@ private fun LogLineSection(
             LineEditorRow(
                 line = line,
                 showHours = showHours,
+                useEarningsPresets = useEarningsPresets,
                 onChange = { updated -> onLinesChange(lines.map { if (it.id == line.id) updated else it }) },
                 onRemove = { onLinesChange(lines.filter { it.id != line.id }) }
             )
@@ -1480,11 +1687,112 @@ private fun LogLineSection(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EarningsLabelField(
+    label: String,
+    onChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val presets = SalarySummary.earningsCategories
+    val isPreset = label in presets
+    var pickExpanded by remember { mutableStateOf(false) }
+
+    if (!isPreset) {
+        Row(
+            modifier = modifier,
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            OutlinedTextField(
+                value = label,
+                onValueChange = onChange,
+                label = { Text("Label") },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall,
+                shape = MaterialTheme.shapes.small
+            )
+            ExposedDropdownMenuBox(
+                expanded = pickExpanded,
+                onExpandedChange = { pickExpanded = it }
+            ) {
+                OutlinedTextField(
+                    value = "Category",
+                    onValueChange = {},
+                    readOnly = true,
+                    modifier = Modifier
+                        .width(104.dp)
+                        .menuAnchor(),
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(pickExpanded) },
+                    shape = MaterialTheme.shapes.small
+                )
+                ExposedDropdownMenu(
+                    expanded = pickExpanded,
+                    onDismissRequest = { pickExpanded = false }
+                ) {
+                    presets.forEach { preset ->
+                        DropdownMenuItem(
+                            text = { Text(preset) },
+                            onClick = {
+                                onChange(preset)
+                                pickExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    } else {
+        var presetExpanded by remember { mutableStateOf(false) }
+        ExposedDropdownMenuBox(
+            expanded = presetExpanded,
+            onExpandedChange = { presetExpanded = it },
+            modifier = modifier
+        ) {
+            OutlinedTextField(
+                value = label,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Label") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(presetExpanded) },
+                modifier = Modifier
+                    .menuAnchor()
+                    .fillMaxWidth(),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall,
+                shape = MaterialTheme.shapes.small
+            )
+            ExposedDropdownMenu(
+                expanded = presetExpanded,
+                onDismissRequest = { presetExpanded = false }
+            ) {
+                presets.forEach { preset ->
+                    DropdownMenuItem(
+                        text = { Text(preset) },
+                        onClick = {
+                            onChange(preset)
+                            presetExpanded = false
+                        }
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text("Custom…") },
+                    onClick = {
+                        onChange("")
+                        presetExpanded = false
+                    }
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun LineEditorRow(
     line: PaycheckLineItem,
     showHours: Boolean,
+    useEarningsPresets: Boolean = false,
     onChange: (PaycheckLineItem) -> Unit,
     onRemove: () -> Unit
 ) {
@@ -1493,15 +1801,23 @@ private fun LineEditorRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        OutlinedTextField(
-            value = line.label,
-            onValueChange = { onChange(line.copy(label = it)) },
-            label = { Text("Label") },
-            modifier = Modifier.weight(1f),
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodySmall,
-            shape = MaterialTheme.shapes.small
-        )
+        if (useEarningsPresets) {
+            EarningsLabelField(
+                label = line.label,
+                onChange = { onChange(line.copy(label = it)) },
+                modifier = Modifier.weight(1f)
+            )
+        } else {
+            OutlinedTextField(
+                value = line.label,
+                onValueChange = { onChange(line.copy(label = it)) },
+                label = { Text("Label") },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall,
+                shape = MaterialTheme.shapes.small
+            )
+        }
         if (showHours) {
             var hoursText by remember(line.id) {
                 mutableStateOf(line.hours?.let { if (it > 0) it.toString() else "" } ?: "")
@@ -1756,6 +2072,113 @@ private fun DeductionRow(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+private fun TaxSetupDialog(
+    config: SalaryConfig,
+    onDismiss: () -> Unit,
+    onFilingStatus: (FilingStatus) -> Unit,
+    onState: (String) -> Unit,
+    onCounty: (String) -> Unit
+) {
+    var filingExpanded by remember { mutableStateOf(false) }
+    var stateCode by remember(config.state) { mutableStateOf(config.state) }
+    var countyName by remember(config.county) { mutableStateOf(config.county) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.extraLarge
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Tax setup",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Filing status and state drive federal and state withholding estimates. " +
+                            "Override individual rates on the Model tab if your stub differs.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                ExposedDropdownMenuBox(
+                    expanded = filingExpanded,
+                    onExpandedChange = { filingExpanded = it }
+                ) {
+                    OutlinedTextField(
+                        value = config.filingStatus.displayName,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Filing status") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(filingExpanded) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(),
+                        singleLine = true,
+                        shape = MaterialTheme.shapes.medium
+                    )
+                    ExposedDropdownMenu(
+                        expanded = filingExpanded,
+                        onDismissRequest = { filingExpanded = false }
+                    ) {
+                        FilingStatus.entries.forEach { status ->
+                            DropdownMenuItem(
+                                text = { Text(status.displayName) },
+                                onClick = {
+                                    onFilingStatus(status)
+                                    filingExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = stateCode,
+                    onValueChange = {
+                        stateCode = it.uppercase().take(2)
+                        onState(stateCode)
+                    },
+                    label = { Text("State") },
+                    placeholder = { Text("CA") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    supportingText = {
+                        Text("Required for state income tax estimates.")
+                    }
+                )
+
+                OutlinedTextField(
+                    value = countyName,
+                    onValueChange = {
+                        countyName = it
+                        onCounty(it)
+                    },
+                    label = { Text("County") },
+                    placeholder = { Text("Optional — for local tax label") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium
+                )
+
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Done")
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun DeductionDialog(
     deduction: Deduction?,
     isPreTax: Boolean,
@@ -2002,6 +2425,126 @@ private fun DepositDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+}
+
+@Composable
+private fun FederalTaxReturnSection(
+    config: SalaryConfig,
+    annual: AnnualExtrapolation
+) {
+    val projection = remember(config, annual) {
+        SalarySummary.projectFederalTaxReturn(config, annual)
+    }
+    val filingLabel = when (config.filingStatus) {
+        FilingStatus.SINGLE -> "Single"
+        FilingStatus.MARRIED_FILING_JOINTLY -> "Married filing jointly"
+        FilingStatus.MARRIED_FILING_SEPARATELY -> "Married filing separately"
+        FilingStatus.HEAD_OF_HOUSEHOLD -> "Head of household"
+    }
+
+    SectionCard(title = "Projected Federal Return", icon = Icons.Filled.Description) {
+        if (projection.annualGross <= 0.0) {
+            Text(
+                text = "Set your pay rate and tax info to estimate federal withholding vs tax owed.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            return@SectionCard
+        }
+
+        Text(
+            text = "W-2 estimate for $filingLabel using the standard deduction. " +
+                    "Excludes credits, other income, and itemized deductions.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        val refund = projection.refundOrBalance
+        val (outcomeLabel, outcomeAmount, outcomePositive) = when {
+            refund > 1.0 -> Triple("Estimated refund", refund, true)
+            refund < -1.0 -> Triple("Estimated balance due", kotlin.math.abs(refund), false)
+            else -> Triple("On track", 0.0, true)
+        }
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = outcomeLabel.uppercase(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (outcomeAmount > 0.0) {
+                    MoneyText(
+                        amount = outcomeAmount,
+                        style = MaterialTheme.typography.displaySmall,
+                        color = if (outcomePositive) ProfitGreen else LossRed
+                    )
+                } else {
+                    Text(
+                        text = "—",
+                        style = MaterialTheme.typography.displaySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        ReturnLine("Projected wages", projection.annualGross)
+        if (projection.annualPreTaxDeductions > 0.0) {
+            ReturnLine("Pre-tax deductions", projection.annualPreTaxDeductions, negative = true)
+        }
+        ReturnLine("Adjusted gross income", projection.adjustedGrossIncome, bold = true)
+        ReturnLine(
+            "Standard deduction ($filingLabel)",
+            projection.standardDeduction,
+            negative = true
+        )
+        ReturnLine("Federal taxable income", projection.federalTaxableIncome, bold = true)
+        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+        ReturnLine("Estimated federal tax owed", projection.estimatedFederalTaxOwed)
+        ReturnLine("Federal tax withheld", projection.federalWithheld)
+    }
+}
+
+@Composable
+private fun ReturnLine(
+    label: String,
+    amount: Double,
+    negative: Boolean = false,
+    bold: Boolean = false
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = (if (negative && amount > 0.0) "−" else "") + amount.formatCurrency(),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (negative && amount > 0.0) LossRed else MaterialTheme.colorScheme.onSurface
+        )
+    }
 }
 
 @Composable

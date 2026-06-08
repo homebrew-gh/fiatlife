@@ -63,8 +63,8 @@ data class AnnualProjection(
 
 object PaycheckCalculator {
 
-    fun calculate(config: SalaryConfig): PaycheckCalculation {
-        val rate = SalarySummary.effectiveRateAt(config, System.currentTimeMillis())
+    fun calculate(config: SalaryConfig, asOf: Long = System.currentTimeMillis()): PaycheckCalculation {
+        val rate = SalarySummary.effectiveRateAt(config, asOf)
         val regularPay = SalarySummary.periodRegularGross(rate, config.payFrequency)
         val overtimePay = rate.hourlyRate * config.overtimeMultiplier * config.overtimeHours
         val grossPay = regularPay + overtimePay
@@ -146,7 +146,7 @@ object PaycheckCalculator {
 
         val netPay = grossPay - totalPreTax - totalTaxes - totalPostTax
 
-        val depositAllocations = calculateDeposits(config.directDeposits, netPay)
+        val depositAllocations = calculateDepositAllocations(config.directDeposits, netPay)
         val allocatedTotal = depositAllocations.sumOf { it.calculatedAmount }
 
         return PaycheckCalculation(
@@ -215,7 +215,7 @@ object PaycheckCalculator {
         return (baseMedicare + additionalMedicare) / periodsPerYear
     }
 
-    private fun calculateDeposits(
+    fun calculateDepositAllocations(
         deposits: List<DirectDeposit>,
         netPay: Double
     ): List<DepositAllocation> {

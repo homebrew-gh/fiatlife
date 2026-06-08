@@ -34,11 +34,23 @@ data class DashboardState(
     val totalSaved: Double = 0.0,
     val totalGoalTarget: Double = 0.0,
     val monthlyDisposable: Double = 0.0,
+    val monthlyTakeHomeSource: MonthlyTakeHomeSource = MonthlyTakeHomeSource.ESTIMATED,
+    val monthlyLoggedTakeHome: Double = 0.0,
+    val monthlyProjectedRemainder: Double = 0.0,
+    val monthlyLoggedPaycheckCount: Int = 0,
+    val monthlyRemainingPaycheckCount: Int = 0,
+    val monthlyLoggedOvertimeHours: Double = 0.0,
+    val monthlyLoggedBonus: Double = 0.0,
+    val monthlyPerPaycheckEstimate: Double = 0.0,
+    val ytdNetPay: Double = 0.0,
+    val ytdSource: DashboardYtdSource = DashboardYtdSource.NONE,
     val isConnected: Boolean = false,
     val hasData: Boolean = false,
     val topGoals: List<FinancialGoal> = emptyList(),
     val upcomingBills: List<UpcomingBillRow> = emptyList()
 )
+
+enum class DashboardYtdSource { NONE, LOGGED, ESTIMATED }
 
 data class UpcomingBillRow(
     val id: String,
@@ -151,24 +163,51 @@ private fun buildDashboardState(
     val totalSaved = goals.sumOf { it.currentAmount }
     val totalTarget = goals.sumOf { it.targetAmount }
     val goalsProgress = if (totalTarget > 0) totalSaved / totalTarget * 100 else 0.0
-    val monthlyMultiplier = calculateMonthlyPaycheckMultiplier(salary, currentMonthAnchor)
-    val monthlyTakeHome = (calculation?.netPay ?: 0.0) * monthlyMultiplier
-    val monthlyGross = (calculation?.grossPay ?: 0.0) * monthlyMultiplier
-    val monthlyTaxes = (calculation?.totalTaxes ?: 0.0) * monthlyMultiplier
-    val monthlyDeductions = (
-        (calculation?.totalPreTaxDeductions ?: 0.0) +
-            (calculation?.totalPostTaxDeductions ?: 0.0)
-        ) * monthlyMultiplier
+    val monthlyProjection = salary?.let {
+        SalarySummary.computeMonthlyTakeHome(it, currentMonthAnchor)
+    }
+    val monthlyTakeHome = monthlyProjection?.totalTakeHome ?: 0.0
+    val monthlyGross = monthlyProjection?.totalGross ?: 0.0
+    val monthlyTaxes = monthlyProjection?.totalTaxes ?: 0.0
+    val monthlyDeductions = monthlyProjection?.totalDeductions ?: 0.0
     val monthlyDisposable = monthlyTakeHome - monthlyBills
+    val effectiveTaxRate = if (monthlyGross > 0.0) {
+        monthlyTaxes / monthlyGross
+    } else {
+        calculation?.effectiveTaxRate ?: 0.0
+    }
+
+    var ytdNetPay = 0.0
+    var ytdSource = DashboardYtdSource.NONE
+    if (salary != null && calculation != null) {
+        val year = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        val annual = PaycheckCalculator.calculateAnnual(salary, 0.0, year)
+        val ytd = SalarySummary.summarize(salary, calculation, annual, year)
+        ytdNetPay = ytd.netPay
+        ytdSource = when (ytd.source) {
+            YtdSummary.Source.LOGGED -> DashboardYtdSource.LOGGED
+            YtdSummary.Source.ESTIMATED -> DashboardYtdSource.ESTIMATED
+        }
+    }
 
     return DashboardState(
         takeHomePay = monthlyTakeHome,
         grossPay = monthlyGross,
         totalTaxes = monthlyTaxes,
         totalDeductions = monthlyDeductions,
-        effectiveTaxRate = calculation?.effectiveTaxRate ?: 0.0,
+        effectiveTaxRate = effectiveTaxRate,
         monthlyBills = monthlyBills,
         monthlyTakeHome = monthlyTakeHome,
+        monthlyTakeHomeSource = monthlyProjection?.source ?: MonthlyTakeHomeSource.ESTIMATED,
+        monthlyLoggedTakeHome = monthlyProjection?.loggedTakeHome ?: 0.0,
+        monthlyProjectedRemainder = monthlyProjection?.projectedRemainder ?: 0.0,
+        monthlyLoggedPaycheckCount = monthlyProjection?.loggedPaycheckCount ?: 0,
+        monthlyRemainingPaycheckCount = monthlyProjection?.remainingPaycheckCount ?: 0,
+        monthlyLoggedOvertimeHours = monthlyProjection?.loggedOvertimeHours ?: 0.0,
+        monthlyLoggedBonus = monthlyProjection?.loggedBonusTotal ?: 0.0,
+        monthlyPerPaycheckEstimate = monthlyProjection?.perPaycheckNet ?: 0.0,
+        ytdNetPay = ytdNetPay,
+        ytdSource = ytdSource,
         billCount = visibleBills.size,
         billsComingDueCount = comingDueCount,
         overdueBillCount = overdueCount,
@@ -238,67 +277,3 @@ private fun buildUpcomingBillRows(
         }
 }
 
-private fun calculateMonthlyPaycheckMultiplier(
-    salary: SalaryConfig?,
-    monthAnchorMillis: Long
-): Double {
-    if (salary == null) return 0.0
-    val anchor = salary.firstPaydayOfYearMillis
-    if (anchor == null) {
-        return salary.payFrequency.periodsPerYear / 12.0
-    }
-    return paycheckCountInMonth(
-        firstPaydayOfYearMillis = anchor,
-        frequency = salary.payFrequency,
-        monthAnchorMillis = monthAnchorMillis
-    ).toDouble()
-}
-
-private fun paycheckCountInMonth(
-    firstPaydayOfYearMillis: Long,
-    frequency: PayFrequency,
-    monthAnchorMillis: Long
-): Int {
-    if (frequency == PayFrequency.SEMIMONTHLY) return 2
-    if (frequency == PayFrequency.MONTHLY) return 1
-
-    val monthStart = java.util.Calendar.getInstance().apply {
-        timeInMillis = monthAnchorMillis
-        set(java.util.Calendar.DAY_OF_MONTH, 1)
-        set(java.util.Calendar.HOUR_OF_DAY, 0)
-        set(java.util.Calendar.MINUTE, 0)
-        set(java.util.Calendar.SECOND, 0)
-        set(java.util.Calendar.MILLISECOND, 0)
-    }.timeInMillis
-    val monthEnd = java.util.Calendar.getInstance().apply {
-        timeInMillis = monthStart
-        add(java.util.Calendar.MONTH, 1)
-    }.timeInMillis - 1
-
-    val stepMillis = when (frequency) {
-        PayFrequency.WEEKLY -> 7L * 24L * 60L * 60L * 1000L
-        PayFrequency.BIWEEKLY -> 14L * 24L * 60L * 60L * 1000L
-        else -> return frequency.periodsPerYear / 12
-    }
-
-    var count = 0
-    var payday = dashboardStartOfDay(firstPaydayOfYearMillis)
-    val maxIterations = 500
-    var i = 0
-    while (payday <= monthEnd && i < maxIterations) {
-        if (payday in monthStart..monthEnd) count++
-        payday += stepMillis
-        i++
-    }
-    return count.coerceAtLeast(1)
-}
-
-private fun dashboardStartOfDay(millis: Long): Long {
-    val cal = java.util.Calendar.getInstance()
-    cal.timeInMillis = millis
-    cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
-    cal.set(java.util.Calendar.MINUTE, 0)
-    cal.set(java.util.Calendar.SECOND, 0)
-    cal.set(java.util.Calendar.MILLISECOND, 0)
-    return cal.timeInMillis
-}
