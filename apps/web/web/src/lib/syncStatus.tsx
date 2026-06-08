@@ -18,6 +18,11 @@ export type Toast = {
   kind: ToastKind;
 };
 
+export type RefreshOptions = {
+  /** Set when a Nostr publish was just queued — toast when relay delivery completes. */
+  afterPublish?: boolean;
+};
+
 type SyncStatusValue = {
   /** Show a transient toast. */
   notify: (message: string, kind?: ToastKind) => void;
@@ -31,7 +36,7 @@ type SyncStatusValue = {
   /** Re-attempt all failed background sends. */
   retry: () => Promise<void>;
   /** Poll the outbox now (call right after a mutation). */
-  refresh: () => void;
+  refresh: (opts?: RefreshOptions) => void;
 };
 
 const SyncStatusContext = createContext<SyncStatusValue | null>(null);
@@ -45,6 +50,7 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
   const [failedItems, setFailedItems] = useState<OutboxFailedItem[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastSeq = useRef(0);
+  const awaitingDeliveryRef = useRef(false);
 
   const dismissToast = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -65,26 +71,46 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       setPending(status.pending);
       setFailed(status.failed);
       setFailedItems(status.failed_items ?? []);
+
+      if (awaitingDeliveryRef.current && status.pending === 0) {
+        awaitingDeliveryRef.current = false;
+        if (status.failed === 0) {
+          notify("Saved to relay", "success");
+        } else {
+          notify("Could not sync to relay — tap Retry below", "error");
+        }
+      }
     } catch {
       /* outbox status is best-effort; ignore transient errors */
     }
-  }, []);
+  }, [notify]);
 
-  const refresh = useCallback(() => {
-    void poll();
-  }, [poll]);
+  const refresh = useCallback(
+    (opts?: RefreshOptions) => {
+      if (opts?.afterPublish) {
+        awaitingDeliveryRef.current = true;
+      }
+      void poll();
+    },
+    [poll],
+  );
 
   const retry = useCallback(async () => {
     try {
+      const hadFailed = failed > 0;
       const status = await api.outboxRetry();
       setPending(status.pending);
       setFailed(status.failed);
       setFailedItems(status.failed_items ?? []);
+      if (hadFailed) {
+        awaitingDeliveryRef.current = true;
+      }
       notify("Retrying sync…", "info");
+      void poll();
     } catch {
       notify("Could not retry sync.", "error");
     }
-  }, [notify]);
+  }, [failed, notify, poll]);
 
   useEffect(() => {
     void poll();
@@ -130,7 +156,7 @@ export function useOptionalSyncStatus(): Pick<
   return useMemo(
     () => ({
       notify: ctx?.notify ?? (() => {}),
-      refresh: ctx?.refresh ?? (() => {}),
+      refresh: ctx?.refresh ?? ((_opts?: RefreshOptions) => {}),
     }),
     [ctx],
   );

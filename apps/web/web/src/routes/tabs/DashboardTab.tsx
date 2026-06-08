@@ -118,10 +118,61 @@ export function DashboardTab() {
               {formatUsd(dash.takeHomePay)}
             </p>
             <p className="text-xs text-muted mt-1">
-              {dash.hasSalary
-                ? "Based on paycheck schedule this month"
-                : "Add paycheck info for take-home estimate"}
+              {!dash.hasSalary
+                ? "Add paycheck info for take-home estimate"
+                : dash.monthlyTakeHomeSource === "logged"
+                  ? `From ${dash.monthlyLoggedPaycheckCount} logged paycheck${
+                      dash.monthlyLoggedPaycheckCount === 1 ? "" : "s"
+                    } this month`
+                  : dash.monthlyTakeHomeSource === "mixed"
+                    ? "Logged paychecks + projected remainder at base pay (no OT)"
+                    : "Estimated from current pay rate (no OT)"}
             </p>
+            {dash.hasSalary &&
+            (dash.monthlyLoggedTakeHome > 0 ||
+              dash.monthlyProjectedRemainder > 0) ? (
+              <div className="mt-3 space-y-1 text-sm text-left max-w-xs mx-auto w-full">
+                {dash.monthlyLoggedTakeHome > 0 ? (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted">Paid so far</span>
+                    <span className="money">
+                      {formatUsd(dash.monthlyLoggedTakeHome)}
+                    </span>
+                  </div>
+                ) : null}
+                {dash.monthlyProjectedRemainder > 0 ? (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted">
+                      Projected remainder
+                      {dash.monthlyRemainingPaycheckCount > 0
+                        ? ` (${dash.monthlyRemainingPaycheckCount} × ${formatUsd(dash.monthlyPerPaycheckEstimate)})`
+                        : ""}
+                    </span>
+                    <span className="money">
+                      {formatUsd(dash.monthlyProjectedRemainder)}
+                    </span>
+                  </div>
+                ) : null}
+                {dash.monthlyLoggedOvertimeHours > 0 ? (
+                  <p className="text-xs text-muted pt-1">
+                    Includes{" "}
+                    <span className="text-body font-medium">
+                      {dash.monthlyLoggedOvertimeHours.toFixed(1)}
+                    </span>{" "}
+                    OT hrs from logged paychecks
+                  </p>
+                ) : null}
+                {dash.monthlyLoggedBonus > 0 ? (
+                  <p className="text-xs text-muted">
+                    Includes{" "}
+                    <span className="text-body font-medium">
+                      {formatUsd(dash.monthlyLoggedBonus)}
+                    </span>{" "}
+                    in logged bonuses
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             <div className="mt-4 flex justify-center gap-6 text-sm">
               <div>
                 <p className="text-muted text-xs">Monthly gross</p>

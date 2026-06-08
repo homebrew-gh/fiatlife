@@ -76,7 +76,7 @@ export function AppSettingsDataProvider({ children }: { children: ReactNode }) {
           d_tag: APP_SETTINGS_D_TAG,
           plaintext: serializeAppSettings(next),
         });
-        refresh();
+        refresh({ afterPublish: true });
         return next;
       } catch (e) {
         setSettings(prev);

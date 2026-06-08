@@ -133,7 +133,7 @@ function DebtDataProviderInner({ children }: { children: ReactNode }) {
           d_tag: creditAccountDTag(account.id),
           plaintext: serializeCreditAccount(account),
         });
-        refresh();
+        refresh({ afterPublish: true });
       } catch (e) {
         setAccounts((list) => {
           const without = list.filter((a) => a.id !== account.id);
@@ -264,7 +264,7 @@ function DebtDataProviderInner({ children }: { children: ReactNode }) {
           d_tag: creditAccountDTag(account.id),
           plaintext: JSON.stringify({ deleted: true }),
         });
-        refresh();
+        refresh({ afterPublish: true });
       } catch (e) {
         setAccounts((list) => {
           const without = list.filter((a) => a.id !== account.id);

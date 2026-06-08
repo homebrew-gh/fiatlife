@@ -108,7 +108,7 @@ export function BillersDataProvider({ children }: { children: ReactNode }) {
           d_tag: billerDTag(biller.id),
           plaintext: serializeBiller(biller),
         });
-        refresh();
+        refresh({ afterPublish: true });
       } catch (e) {
         setBillers((list) => {
           const without = list.filter((b) => b.id !== biller.id);
@@ -213,7 +213,7 @@ export function BillersDataProvider({ children }: { children: ReactNode }) {
           d_tag: billerDTag(biller.id),
           plaintext: JSON.stringify({ deleted: true }),
         });
-        refresh();
+        refresh({ afterPublish: true });
       } catch (e) {
         setBillers((list) => {
           const without = list.filter((b) => b.id !== biller.id);

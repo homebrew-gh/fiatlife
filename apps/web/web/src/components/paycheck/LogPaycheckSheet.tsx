@@ -406,6 +406,67 @@ export function LogPaycheckSheet({
   );
 }
 
+const EARNINGS_CUSTOM = "__custom__";
+
+function EarningsLabelField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (label: string) => void;
+}) {
+  const isPreset = (EARNINGS_CATEGORIES as readonly string[]).includes(value);
+
+  if (!isPreset) {
+    return (
+      <div className="flex flex-1 min-w-0 items-center gap-1">
+        <input
+          className="input flex-1 text-sm py-1.5 min-w-0"
+          value={value}
+          placeholder="Custom label"
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <select
+          className="input text-sm py-1.5 shrink-0 max-w-[7.5rem]"
+          aria-label="Choose earnings category"
+          value=""
+          onChange={(e) => {
+            if (e.target.value) onChange(e.target.value);
+          }}
+        >
+          <option value="" disabled>
+            Category
+          </option>
+          {EARNINGS_CATEGORIES.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+
+  return (
+    <select
+      className="input flex-1 text-sm py-1.5 min-w-0"
+      value={value}
+      aria-label="Earnings category"
+      onChange={(e) => {
+        if (e.target.value === EARNINGS_CUSTOM) onChange("");
+        else onChange(e.target.value);
+      }}
+    >
+      {EARNINGS_CATEGORIES.map((c) => (
+        <option key={c} value={c}>
+          {c}
+        </option>
+      ))}
+      <option value={EARNINGS_CUSTOM}>Custom…</option>
+    </select>
+  );
+}
+
 function LineSection({
   title,
   lines,
@@ -444,13 +505,19 @@ function LineSection({
         <ul className="space-y-2">
           {lines.map((l) => (
             <li key={l.id} className="flex items-center gap-2">
-              <input
-                className="input flex-1 text-sm py-1.5"
-                value={l.label}
-                list={kind === "earning" ? "earnings-categories" : undefined}
-                placeholder="Label"
-                onChange={(e) => update(l.id, { label: e.target.value })}
-              />
+              {kind === "earning" ? (
+                <EarningsLabelField
+                  value={l.label}
+                  onChange={(label) => update(l.id, { label })}
+                />
+              ) : (
+                <input
+                  className="input flex-1 text-sm py-1.5"
+                  value={l.label}
+                  placeholder="Label"
+                  onChange={(e) => update(l.id, { label: e.target.value })}
+                />
+              )}
               {kind === "earning" ? (
                 <DecimalField
                   className="input w-16 text-sm py-1.5 text-right"
@@ -477,13 +544,6 @@ function LineSection({
           ))}
         </ul>
       )}
-      {kind === "earning" ? (
-        <datalist id="earnings-categories">
-          {EARNINGS_CATEGORIES.map((c) => (
-            <option key={c} value={c} />
-          ))}
-        </datalist>
-      ) : null}
     </section>
   );
 }

@@ -103,7 +103,7 @@ export function BankAccountsDataProvider({ children }: { children: ReactNode }) 
           d_tag: bankAccountDTag(normalized.id),
           plaintext: serializeBankAccount(normalized),
         });
-        refresh();
+        refresh({ afterPublish: true });
         return normalized;
       } catch (e) {
         setAccounts((list) => {
@@ -132,7 +132,7 @@ export function BankAccountsDataProvider({ children }: { children: ReactNode }) 
           d_tag: bankAccountDTag(account.id),
           plaintext: JSON.stringify({ deleted: true }),
         });
-        refresh();
+        refresh({ afterPublish: true });
       } catch (e) {
         setAccounts((list) => {
           const without = list.filter((a) => a.id !== account.id);

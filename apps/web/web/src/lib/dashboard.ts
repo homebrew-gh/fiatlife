@@ -10,11 +10,11 @@ import {
 } from "./bill";
 import type { FinancialGoal } from "./goal";
 import {
-  PERIODS_PER_YEAR,
   calculateAnnual,
   calculatePaycheck,
-  countPaychecksInRange,
+  computeMonthlyTakeHome,
   summarizeYtd,
+  type MonthlyTakeHomeSource,
   type PaycheckCalculation,
   type SalaryConfig,
 } from "./salary";
@@ -39,6 +39,14 @@ export type DashboardState = {
   upcomingBills: Bill[];
   ytdNetPay: number;
   ytdSource: "logged" | "estimated" | "none";
+  monthlyTakeHomeSource: MonthlyTakeHomeSource;
+  monthlyLoggedTakeHome: number;
+  monthlyProjectedRemainder: number;
+  monthlyLoggedPaycheckCount: number;
+  monthlyRemainingPaycheckCount: number;
+  monthlyLoggedOvertimeHours: number;
+  monthlyLoggedBonus: number;
+  monthlyPerPaycheckEstimate: number;
   hasSalary: boolean;
   hasBills: boolean;
   hasData: boolean;
@@ -48,36 +56,6 @@ function startOfDay(ms: number): number {
   const d = new Date(ms);
   d.setHours(0, 0, 0, 0);
   return d.getTime();
-}
-
-function monthBounds(monthAnchorMillis: number): { start: number; end: number } {
-  const start = new Date(monthAnchorMillis);
-  start.setDate(1);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(start);
-  end.setMonth(end.getMonth() + 1);
-  end.setMilliseconds(-1);
-  return { start: start.getTime(), end: end.getTime() };
-}
-
-export function paycheckCountInMonth(
-  salary: SalaryConfig | null,
-  monthAnchorMillis = Date.now(),
-): number {
-  if (!salary) return 0;
-  if (salary.payFrequency === "SEMIMONTHLY") return 2;
-  if (salary.payFrequency === "MONTHLY") return 1;
-
-  const anchor = salary.firstPaydayOfYearMillis;
-  if (!anchor) {
-    return PERIODS_PER_YEAR[salary.payFrequency] / 12;
-  }
-
-  const { start, end } = monthBounds(monthAnchorMillis);
-  return Math.max(
-    1,
-    countPaychecksInRange(anchor, salary.payFrequency, start, end),
-  );
 }
 
 function isCreditOrLoan(bill: Bill): boolean {
@@ -154,14 +132,13 @@ export function computeDashboardState(input: {
     return true;
   }).length;
 
-  const multiplier = paycheckCountInMonth(input.salary, monthAnchor);
-  const monthlyTakeHome = (calc?.netPay ?? 0) * multiplier;
-  const monthlyGross = (calc?.grossPay ?? 0) * multiplier;
-  const monthlyTaxes = (calc?.totalTaxes ?? 0) * multiplier;
-  const monthlyDeductions =
-    ((calc?.totalPreTaxDeductions ?? 0) +
-      (calc?.totalPostTaxDeductions ?? 0)) *
-    multiplier;
+  const monthlyProjection = input.salary
+    ? computeMonthlyTakeHome(input.salary, monthAnchor, now)
+    : null;
+  const monthlyTakeHome = monthlyProjection?.totalTakeHome ?? 0;
+  const monthlyGross = monthlyProjection?.totalGross ?? 0;
+  const monthlyTaxes = monthlyProjection?.totalTaxes ?? 0;
+  const monthlyDeductions = monthlyProjection?.totalDeductions ?? 0;
   const monthlyDisposable = monthlyTakeHome - monthlyBills;
 
   const totalSaved = input.goals.reduce((s, g) => s + g.currentAmount, 0);
@@ -222,7 +199,10 @@ export function computeDashboardState(input: {
     grossPay: monthlyGross,
     totalTaxes: monthlyTaxes,
     totalDeductions: monthlyDeductions,
-    effectiveTaxRate: calc?.effectiveTaxRate ?? 0,
+    effectiveTaxRate:
+      monthlyGross > 0
+        ? monthlyTaxes / monthlyGross
+        : (calc?.effectiveTaxRate ?? 0),
     monthlyBills,
     monthlyDisposable,
     billCount: visibleBills.length,
@@ -237,6 +217,15 @@ export function computeDashboardState(input: {
     upcomingBills,
     ytdNetPay,
     ytdSource,
+    monthlyTakeHomeSource: monthlyProjection?.source ?? "estimated",
+    monthlyLoggedTakeHome: monthlyProjection?.loggedTakeHome ?? 0,
+    monthlyProjectedRemainder: monthlyProjection?.projectedRemainder ?? 0,
+    monthlyLoggedPaycheckCount: monthlyProjection?.loggedPaycheckCount ?? 0,
+    monthlyRemainingPaycheckCount:
+      monthlyProjection?.remainingPaycheckCount ?? 0,
+    monthlyLoggedOvertimeHours: monthlyProjection?.loggedOvertimeHours ?? 0,
+    monthlyLoggedBonus: monthlyProjection?.loggedBonusTotal ?? 0,
+    monthlyPerPaycheckEstimate: monthlyProjection?.perPaycheckNet ?? 0,
     hasSalary,
     hasBills,
     hasData: hasSalary || hasBills || input.goals.length > 0,

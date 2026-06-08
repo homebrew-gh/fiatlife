@@ -234,7 +234,7 @@ export function BillsDataProvider({ children }: { children: ReactNode }) {
             plaintext: serializeBill(bill),
           });
         }
-        refresh();
+        refresh({ afterPublish: true });
       } catch (e) {
         // Roll back just this record and surface the failure.
         setAllBills((list) => restoreBillById(list, bill.id, prevItem));
@@ -312,7 +312,7 @@ export function BillsDataProvider({ children }: { children: ReactNode }) {
             plaintext: JSON.stringify({ deleted: true }),
           });
         }
-        refresh();
+        refresh({ afterPublish: true });
       } catch (e) {
         setAllBills((list) => restoreBillById(list, item.bill.id, prevItem));
         const msg = e instanceof ApiError ? e.message : "Delete failed.";

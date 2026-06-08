@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -12,12 +13,17 @@ import { useOptionalSyncStatus } from "./syncStatus";
 import {
   SALARY_D_TAG,
   calculateAnnual,
+  calculateDepositAllocations,
   calculatePaycheck,
   defaultSalaryConfig,
+  applyInferredPayRatesForAllLogYears,
+  generatePaycheckLogsForMissingDates,
   normalizeSalaryConfig,
   parseSalaryRecord,
-  serializeSalary,
+  salaryFingerprint,
   type AnnualProjection,
+  type DirectDeposit,
+  type DepositAllocation,
   type PaycheckCalculation,
   type PaycheckLogEntry,
   type SalaryConfig,
@@ -32,17 +38,23 @@ type SalaryDataContextValue = {
   loading: boolean;
   error: string | null;
   saving: boolean;
-  dirty: boolean;
   reload: () => Promise<void>;
   setConfig: (updater: (c: SalaryConfig) => SalaryConfig) => void;
   setAnnualOvertimeHours: (hours: number) => void;
-  save: () => Promise<void>;
-  addPaycheckLog: (entry: PaycheckLogEntry) => void;
-  updatePaycheckLog: (entry: PaycheckLogEntry) => void;
-  removePaycheckLog: (id: string) => void;
+  whatIfDirectDeposits: DirectDeposit[] | null;
+  whatIfDepositsCustomized: boolean;
+  whatIfDepositAllocations: DepositAllocation[];
+  setWhatIfDirectDeposits: (deposits: DirectDeposit[]) => void;
+  resetWhatIfDirectDeposits: () => void;
+  addPaycheckLog: (entry: PaycheckLogEntry) => Promise<void>;
+  updatePaycheckLog: (entry: PaycheckLogEntry) => Promise<void>;
+  removePaycheckLog: (id: string) => Promise<void>;
+  generateMissingPaycheckLogs: (year: number) => Promise<number>;
 };
 
 const SalaryDataContext = createContext<SalaryDataContextValue | null>(null);
+
+const AUTO_SAVE_MS = 600;
 
 function recalc(
   config: SalaryConfig,
@@ -62,12 +74,27 @@ function recalc(
 export function SalaryDataProvider({ children }: { children: ReactNode }) {
   const [config, setConfigState] = useState<SalaryConfig>(defaultSalaryConfig());
   const [annualOvertimeHours, setAnnualOvertimeHoursState] = useState(0);
+  const [whatIfDirectDeposits, setWhatIfDirectDepositsState] = useState<
+    DirectDeposit[] | null
+  >(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [dirty, setDirty] = useState(false);
-  const [savedSnapshot, setSavedSnapshot] = useState("");
+  const [savedFingerprint, setSavedFingerprint] = useState("");
+  const configRef = useRef(config);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { notify, refresh } = useOptionalSyncStatus();
+
+  const cancelPendingPersist = useCallback(() => {
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
 
   const reload = useCallback(async () => {
     setError(null);
@@ -78,15 +105,14 @@ export function SalaryDataProvider({ children }: { children: ReactNode }) {
       if (record?.plaintext) {
         const parsed = parseSalaryRecord(record.plaintext);
         if (parsed) {
-          setConfigState(parsed);
-          setSavedSnapshot(serializeSalary(parsed));
-          setDirty(false);
+          const withInferred = applyInferredPayRatesForAllLogYears(parsed);
+          setConfigState(withInferred);
+          setSavedFingerprint(salaryFingerprint(withInferred));
         }
       } else {
         const fresh = defaultSalaryConfig();
         setConfigState(fresh);
-        setSavedSnapshot(serializeSalary(fresh));
-        setDirty(false);
+        setSavedFingerprint(salaryFingerprint(fresh));
       }
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not load paycheck data.");
@@ -100,33 +126,42 @@ export function SalaryDataProvider({ children }: { children: ReactNode }) {
   }, [reload]);
 
   const setConfig = useCallback((updater: (c: SalaryConfig) => SalaryConfig) => {
-    setConfigState((prev) => {
-      const next = normalizeSalaryConfig(updater(prev));
-      setDirty(serializeSalary(next) !== savedSnapshot);
-      return next;
-    });
-  }, [savedSnapshot]);
+    setConfigState((prev) => normalizeSalaryConfig(updater(prev)));
+  }, []);
 
   const setAnnualOvertimeHours = useCallback((hours: number) => {
     setAnnualOvertimeHoursState(Math.max(0, hours));
   }, []);
 
+  const setWhatIfDirectDeposits = useCallback((deposits: DirectDeposit[]) => {
+    setWhatIfDirectDepositsState(deposits);
+  }, []);
+
+  const resetWhatIfDirectDeposits = useCallback(() => {
+    setWhatIfDirectDepositsState(null);
+  }, []);
+
   const persist = useCallback(async (next: SalaryConfig) => {
+    cancelPendingPersist();
+    const fingerprint = salaryFingerprint(next);
+    if (fingerprint === savedFingerprint) return;
+
     setSaving(true);
     setError(null);
     try {
       const withId = next.id
         ? next
         : { ...next, id: crypto.randomUUID() };
-      const payload = serializeSalary(withId);
-      setConfigState(withId);
-      setSavedSnapshot(payload);
-      setDirty(false);
+      const updatedAt = Date.now();
+      const saved = { ...withId, updatedAt };
+      const published = JSON.stringify(saved);
+      setConfigState(saved);
+      setSavedFingerprint(salaryFingerprint(saved));
       await api.publishAppData({
         d_tag: SALARY_D_TAG,
-        plaintext: payload,
+        plaintext: published,
       });
-      refresh();
+      refresh({ afterPublish: true });
     } catch (e) {
       const msg =
         e instanceof ApiError ? e.message : "Could not save paycheck data.";
@@ -136,71 +171,124 @@ export function SalaryDataProvider({ children }: { children: ReactNode }) {
     } finally {
       setSaving(false);
     }
-  }, [notify, refresh]);
+  }, [cancelPendingPersist, notify, refresh, savedFingerprint]);
 
-  const save = useCallback(async () => {
-    await persist(config);
-  }, [config, persist]);
+  useEffect(() => {
+    if (loading) return;
+    if (salaryFingerprint(config) === savedFingerprint) return;
 
-  const addPaycheckLog = useCallback((entry: PaycheckLogEntry) => {
-    setConfig((c) => ({
-      ...c,
-      paycheckLog: [...(c.paycheckLog ?? []), entry],
-    }));
-  }, [setConfig]);
+    cancelPendingPersist();
+    persistTimerRef.current = setTimeout(() => {
+      persistTimerRef.current = null;
+      void persist(config);
+    }, AUTO_SAVE_MS);
 
-  const updatePaycheckLog = useCallback((entry: PaycheckLogEntry) => {
-    setConfig((c) => ({
-      ...c,
-      paycheckLog: (c.paycheckLog ?? []).map((e) =>
-        e.id === entry.id ? entry : e,
-      ),
-    }));
-  }, [setConfig]);
+    return cancelPendingPersist;
+  }, [config, savedFingerprint, loading, persist, cancelPendingPersist]);
 
-  const removePaycheckLog = useCallback((id: string) => {
-    setConfig((c) => ({
-      ...c,
-      paycheckLog: (c.paycheckLog ?? []).filter((e) => e.id !== id),
-    }));
-  }, [setConfig]);
+  const mutatePaycheckLog = useCallback(
+    async (updater: (log: PaycheckLogEntry[]) => PaycheckLogEntry[]) => {
+      const withLog = normalizeSalaryConfig({
+        ...configRef.current,
+        paycheckLog: updater(configRef.current.paycheckLog ?? []),
+      });
+      const next = applyInferredPayRatesForAllLogYears(withLog);
+      await persist(next);
+    },
+    [persist],
+  );
+
+  const addPaycheckLog = useCallback(
+    async (entry: PaycheckLogEntry) => {
+      await mutatePaycheckLog((log) => [...log, entry]);
+    },
+    [mutatePaycheckLog],
+  );
+
+  const updatePaycheckLog = useCallback(
+    async (entry: PaycheckLogEntry) => {
+      await mutatePaycheckLog((log) =>
+        log.map((e) => (e.id === entry.id ? entry : e)),
+      );
+    },
+    [mutatePaycheckLog],
+  );
+
+  const removePaycheckLog = useCallback(
+    async (id: string) => {
+      await mutatePaycheckLog((log) => log.filter((e) => e.id !== id));
+    },
+    [mutatePaycheckLog],
+  );
+
+  const generateMissingPaycheckLogs = useCallback(
+    async (year: number) => {
+      let added = 0;
+      await mutatePaycheckLog((log) => {
+        const config = { ...configRef.current, paycheckLog: log };
+        const entries = generatePaycheckLogsForMissingDates(config, year);
+        added = entries.length;
+        return entries.length > 0 ? [...log, ...entries] : log;
+      });
+      return added;
+    },
+    [mutatePaycheckLog],
+  );
 
   const derived = useMemo(
     () => recalc(config, annualOvertimeHours),
     [config, annualOvertimeHours],
   );
 
+  const effectiveWhatIfDeposits =
+    whatIfDirectDeposits ?? config.directDeposits;
+  const whatIfDepositAllocations = useMemo(
+    () =>
+      calculateDepositAllocations(
+        effectiveWhatIfDeposits,
+        derived.calculation.netPay,
+      ),
+    [effectiveWhatIfDeposits, derived.calculation.netPay],
+  );
+
   const value = useMemo(
     () => ({
       config,
       annualOvertimeHours,
+      whatIfDirectDeposits,
+      whatIfDepositsCustomized: whatIfDirectDeposits !== null,
+      whatIfDepositAllocations,
       loading,
       error,
       saving,
-      dirty,
       reload,
       setConfig,
       setAnnualOvertimeHours,
-      save,
+      setWhatIfDirectDeposits,
+      resetWhatIfDirectDeposits,
       addPaycheckLog,
       updatePaycheckLog,
       removePaycheckLog,
+      generateMissingPaycheckLogs,
       ...derived,
     }),
     [
       config,
       annualOvertimeHours,
+      whatIfDirectDeposits,
+      whatIfDepositAllocations,
       loading,
       error,
       saving,
-      dirty,
       reload,
       setConfig,
       setAnnualOvertimeHours,
-      save,
+      setWhatIfDirectDeposits,
+      resetWhatIfDirectDeposits,
       addPaycheckLog,
       updatePaycheckLog,
       removePaycheckLog,
+      generateMissingPaycheckLogs,
       derived,
     ],
   );

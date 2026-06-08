@@ -101,7 +101,7 @@ export function GoalsDataProvider({ children }: { children: ReactNode }) {
           d_tag: goalDTag(goal.id),
           plaintext: serializeGoal(goal),
         });
-        refresh();
+        refresh({ afterPublish: true });
       } catch (e) {
         setGoals((list) => {
           const without = list.filter((g) => g.id !== goal.id);
@@ -167,7 +167,7 @@ export function GoalsDataProvider({ children }: { children: ReactNode }) {
           d_tag: goalDTag(goal.id),
           plaintext: JSON.stringify({ deleted: true }),
         });
-        refresh();
+        refresh({ afterPublish: true });
       } catch (e) {
         setGoals((list) => {
           const without = list.filter((g) => g.id !== goal.id);
