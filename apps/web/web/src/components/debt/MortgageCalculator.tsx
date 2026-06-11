@@ -22,31 +22,52 @@ const AFFORDABILITY_STYLES: Record<
   risky: { label: "Risky", cls: "text-error" },
 };
 
-type ScenarioDraft = MortgageScenarioInput & {
+/**
+ * Numeric inputs are stored as raw strings so the user can type intermediate
+ * values like "6." while entering a decimal (a number-backed controlled input
+ * would strip the trailing dot). They are parsed only when computing.
+ */
+type ScenarioDraft = {
   label: string;
+  homePrice: string;
   downPaymentMode: "amount" | "percent";
   downPaymentPercent: string;
+  downPaymentAmount: string;
+  annualRate: string;
+  termYears: number;
+  extraMonthlyPayment: string;
+  propertyTaxRate: string;
+  annualHomeInsurance: string;
+  monthlyHoa: string;
+  pmiRate: string;
+  closingCostPercent: string;
+  monthlyIncome: string;
   /** Extra monthly debt the user adds on top of debts tracked in their accounts. */
-  additionalDebts: number;
+  additionalDebts: string;
 };
+
+function num(value: string): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
 function defaultDraft(label: string): ScenarioDraft {
   return {
     label,
-    homePrice: 400_000,
-    downPayment: 80_000,
+    homePrice: "400000",
     downPaymentMode: "percent",
     downPaymentPercent: "20",
-    annualRate: 6.5,
+    downPaymentAmount: "80000",
+    annualRate: "6.5",
     termYears: 30,
-    extraMonthlyPayment: 0,
-    propertyTaxRate: 1.1,
-    annualHomeInsurance: 1_800,
-    monthlyHoa: 0,
-    pmiRate: 0.6,
-    closingCostPercent: 3,
-    monthlyIncome: 0,
-    additionalDebts: 0,
+    extraMonthlyPayment: "",
+    propertyTaxRate: "1.1",
+    annualHomeInsurance: "1800",
+    monthlyHoa: "",
+    pmiRate: "0.6",
+    closingCostPercent: "3",
+    monthlyIncome: "",
+    additionalDebts: "",
   };
 }
 
@@ -54,24 +75,24 @@ function draftToInput(
   draft: ScenarioDraft,
   trackedMonthlyDebts = 0,
 ): MortgageScenarioInput {
-  let downPayment = draft.downPayment;
+  const homePrice = num(draft.homePrice);
+  let downPayment = num(draft.downPaymentAmount);
   if (draft.downPaymentMode === "percent") {
-    const pct = Number.parseFloat(draft.downPaymentPercent) || 0;
-    downPayment = draft.homePrice * (pct / 100);
+    downPayment = homePrice * (num(draft.downPaymentPercent) / 100);
   }
   return {
-    homePrice: draft.homePrice,
+    homePrice,
     downPayment,
-    annualRate: draft.annualRate,
+    annualRate: num(draft.annualRate),
     termYears: draft.termYears,
-    extraMonthlyPayment: draft.extraMonthlyPayment,
-    propertyTaxRate: draft.propertyTaxRate,
-    annualHomeInsurance: draft.annualHomeInsurance,
-    monthlyHoa: draft.monthlyHoa,
-    pmiRate: draft.pmiRate,
-    closingCostPercent: draft.closingCostPercent,
-    monthlyIncome: draft.monthlyIncome,
-    monthlyDebts: Math.max(0, trackedMonthlyDebts) + (draft.additionalDebts ?? 0),
+    extraMonthlyPayment: num(draft.extraMonthlyPayment),
+    propertyTaxRate: num(draft.propertyTaxRate),
+    annualHomeInsurance: num(draft.annualHomeInsurance),
+    monthlyHoa: num(draft.monthlyHoa),
+    pmiRate: num(draft.pmiRate),
+    closingCostPercent: num(draft.closingCostPercent),
+    monthlyIncome: num(draft.monthlyIncome),
+    monthlyDebts: Math.max(0, trackedMonthlyDebts) + num(draft.additionalDebts),
   };
 }
 
@@ -92,13 +113,14 @@ function ScenarioForm({
   const loanAmount = loanAmountFromScenario(input);
   const breakdown = computeMortgageCostBreakdown(input);
   const downPercent =
-    draft.homePrice > 0 ? (input.downPayment / draft.homePrice) * 100 : 0;
+    input.homePrice > 0 ? (input.downPayment / input.homePrice) * 100 : 0;
   const pmiApplies = downPercent < 20;
   const closingCosts = Math.max(
     0,
-    draft.homePrice * ((draft.closingCostPercent ?? 0) / 100),
+    input.homePrice * (num(draft.closingCostPercent) / 100),
   );
   const cashToClose = input.downPayment + closingCosts;
+  const additionalDebtsValue = num(draft.additionalDebts);
 
   return (
     <div className="space-y-4">
@@ -121,12 +143,9 @@ function ScenarioForm({
           id="mc-home"
           className="input money"
           inputMode="decimal"
-          value={draft.homePrice > 0 ? String(draft.homePrice) : ""}
+          value={draft.homePrice}
           onChange={(e) =>
-            onChange({
-              ...draft,
-              homePrice: Number.parseFloat(e.target.value) || 0,
-            })
+            onChange({ ...draft, homePrice: e.target.value })
           }
         />
       </div>
@@ -168,12 +187,9 @@ function ScenarioForm({
           <input
             className="input money"
             inputMode="decimal"
-            value={draft.downPayment > 0 ? String(draft.downPayment) : ""}
+            value={draft.downPaymentAmount}
             onChange={(e) =>
-              onChange({
-                ...draft,
-                downPayment: Number.parseFloat(e.target.value) || 0,
-              })
+              onChange({ ...draft, downPaymentAmount: e.target.value })
             }
           />
         )}
@@ -190,12 +206,9 @@ function ScenarioForm({
             id="mc-rate"
             className="input"
             inputMode="decimal"
-            value={String(draft.annualRate)}
+            value={draft.annualRate}
             onChange={(e) =>
-              onChange({
-                ...draft,
-                annualRate: Number.parseFloat(e.target.value) || 0,
-              })
+              onChange({ ...draft, annualRate: e.target.value })
             }
           />
         </div>
@@ -231,16 +244,9 @@ function ScenarioForm({
             id="mc-extra"
             className="input money"
             inputMode="decimal"
-            value={
-              (draft.extraMonthlyPayment ?? 0) > 0
-                ? String(draft.extraMonthlyPayment)
-                : ""
-            }
+            value={draft.extraMonthlyPayment}
             onChange={(e) =>
-              onChange({
-                ...draft,
-                extraMonthlyPayment: Number.parseFloat(e.target.value) || 0,
-              })
+              onChange({ ...draft, extraMonthlyPayment: e.target.value })
             }
             placeholder="0"
           />
@@ -253,16 +259,9 @@ function ScenarioForm({
             id="mc-tax-rate"
             className="input"
             inputMode="decimal"
-            value={
-              (draft.propertyTaxRate ?? 0) > 0
-                ? String(draft.propertyTaxRate)
-                : ""
-            }
+            value={draft.propertyTaxRate}
             onChange={(e) =>
-              onChange({
-                ...draft,
-                propertyTaxRate: Number.parseFloat(e.target.value) || 0,
-              })
+              onChange({ ...draft, propertyTaxRate: e.target.value })
             }
             placeholder="1.1"
           />
@@ -277,16 +276,9 @@ function ScenarioForm({
             id="mc-insurance"
             className="input money"
             inputMode="decimal"
-            value={
-              (draft.annualHomeInsurance ?? 0) > 0
-                ? String(draft.annualHomeInsurance)
-                : ""
-            }
+            value={draft.annualHomeInsurance}
             onChange={(e) =>
-              onChange({
-                ...draft,
-                annualHomeInsurance: Number.parseFloat(e.target.value) || 0,
-              })
+              onChange({ ...draft, annualHomeInsurance: e.target.value })
             }
             placeholder="1800"
           />
@@ -299,12 +291,9 @@ function ScenarioForm({
             id="mc-hoa"
             className="input money"
             inputMode="decimal"
-            value={(draft.monthlyHoa ?? 0) > 0 ? String(draft.monthlyHoa) : ""}
+            value={draft.monthlyHoa}
             onChange={(e) =>
-              onChange({
-                ...draft,
-                monthlyHoa: Number.parseFloat(e.target.value) || 0,
-              })
+              onChange({ ...draft, monthlyHoa: e.target.value })
             }
             placeholder="0"
           />
@@ -318,13 +307,8 @@ function ScenarioForm({
           id="mc-pmi"
           className="input"
           inputMode="decimal"
-          value={(draft.pmiRate ?? 0) > 0 ? String(draft.pmiRate) : ""}
-          onChange={(e) =>
-            onChange({
-              ...draft,
-              pmiRate: Number.parseFloat(e.target.value) || 0,
-            })
-          }
+          value={draft.pmiRate}
+          onChange={(e) => onChange({ ...draft, pmiRate: e.target.value })}
           placeholder="0.6"
         />
         <p className="text-xs text-muted mt-1">
@@ -375,16 +359,9 @@ function ScenarioForm({
             id="mc-closing"
             className="input"
             inputMode="decimal"
-            value={
-              (draft.closingCostPercent ?? 0) > 0
-                ? String(draft.closingCostPercent)
-                : ""
-            }
+            value={draft.closingCostPercent}
             onChange={(e) =>
-              onChange({
-                ...draft,
-                closingCostPercent: Number.parseFloat(e.target.value) || 0,
-              })
+              onChange({ ...draft, closingCostPercent: e.target.value })
             }
             placeholder="3"
           />
@@ -415,14 +392,9 @@ function ScenarioForm({
               id="mc-income"
               className="input money"
               inputMode="decimal"
-              value={
-                (draft.monthlyIncome ?? 0) > 0 ? String(draft.monthlyIncome) : ""
-              }
+              value={draft.monthlyIncome}
               onChange={(e) =>
-                onChange({
-                  ...draft,
-                  monthlyIncome: Number.parseFloat(e.target.value) || 0,
-                })
+                onChange({ ...draft, monthlyIncome: e.target.value })
               }
               placeholder="0"
             />
@@ -435,16 +407,9 @@ function ScenarioForm({
               id="mc-debts"
               className="input money"
               inputMode="decimal"
-              value={
-                (draft.additionalDebts ?? 0) > 0
-                  ? String(draft.additionalDebts)
-                  : ""
-              }
+              value={draft.additionalDebts}
               onChange={(e) =>
-                onChange({
-                  ...draft,
-                  additionalDebts: Number.parseFloat(e.target.value) || 0,
-                })
+                onChange({ ...draft, additionalDebts: e.target.value })
               }
               placeholder="0"
             />
@@ -454,11 +419,11 @@ function ScenarioForm({
           <div className="rounded-lg bg-surface-variant p-3 text-xs grid grid-cols-2 gap-x-4 gap-y-1 font-mono">
             <span className="text-muted">Tracked debts (your accounts)</span>
             <span className="text-right">{formatUsd(trackedMonthlyDebts)}</span>
-            {(draft.additionalDebts ?? 0) > 0 ? (
+            {additionalDebtsValue > 0 ? (
               <>
                 <span className="text-muted">Additional</span>
                 <span className="text-right">
-                  {formatUsd(draft.additionalDebts ?? 0)}
+                  {formatUsd(additionalDebtsValue)}
                 </span>
               </>
             ) : null}
@@ -475,7 +440,7 @@ function ScenarioForm({
             onClick={() =>
               onChange({
                 ...draft,
-                monthlyIncome: Math.round(suggestedMonthlyIncome ?? 0),
+                monthlyIncome: String(Math.round(suggestedMonthlyIncome ?? 0)),
               })
             }
           >
@@ -787,9 +752,9 @@ export function MortgageCalculator({
     if (!suggestedMonthlyIncome || suggestedMonthlyIncome <= 0) return;
     incomePrefilled.current = true;
     setDraft((prev) =>
-      (prev.monthlyIncome ?? 0) > 0
+      num(prev.monthlyIncome) > 0
         ? prev
-        : { ...prev, monthlyIncome: Math.round(suggestedMonthlyIncome) },
+        : { ...prev, monthlyIncome: String(Math.round(suggestedMonthlyIncome)) },
     );
   }, [suggestedMonthlyIncome]);
 
