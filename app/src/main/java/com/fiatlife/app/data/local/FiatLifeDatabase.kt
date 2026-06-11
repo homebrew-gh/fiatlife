@@ -5,6 +5,7 @@ import androidx.room.RoomDatabase
 import com.fiatlife.app.data.local.dao.BankAccountDao
 import com.fiatlife.app.data.local.dao.BillDao
 import com.fiatlife.app.data.local.dao.BillerDao
+import com.fiatlife.app.data.local.dao.BudgetDao
 import com.fiatlife.app.data.local.dao.CreditAccountDao
 import com.fiatlife.app.data.local.dao.CypherLogSubscriptionDao
 import com.fiatlife.app.data.local.dao.GoalDao
@@ -12,6 +13,7 @@ import com.fiatlife.app.data.local.dao.SalaryDao
 import com.fiatlife.app.data.local.entity.BankAccountEntity
 import com.fiatlife.app.data.local.entity.BillEntity
 import com.fiatlife.app.data.local.entity.BillerEntity
+import com.fiatlife.app.data.local.entity.BudgetEntity
 import com.fiatlife.app.data.local.entity.CreditAccountEntity
 import com.fiatlife.app.data.local.entity.CypherLogSubscriptionEntity
 import com.fiatlife.app.data.local.entity.GoalEntity
@@ -25,9 +27,10 @@ import com.fiatlife.app.data.local.entity.SalaryEntity
         CypherLogSubscriptionEntity::class,
         CreditAccountEntity::class,
         BankAccountEntity::class,
-        BillerEntity::class
+        BillerEntity::class,
+        BudgetEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class FiatLifeDatabase : RoomDatabase() {
@@ -38,6 +41,7 @@ abstract class FiatLifeDatabase : RoomDatabase() {
     abstract fun creditAccountDao(): CreditAccountDao
     abstract fun bankAccountDao(): BankAccountDao
     abstract fun billerDao(): BillerDao
+    abstract fun budgetDao(): BudgetDao
 
     companion object {
         const val DATABASE_NAME = "fiatlife_db"

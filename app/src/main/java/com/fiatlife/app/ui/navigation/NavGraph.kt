@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -37,6 +38,7 @@ import com.fiatlife.app.ui.screens.bills.BillDetailScreen
 import com.fiatlife.app.ui.screens.bills.BillsScreen
 import com.fiatlife.app.ui.screens.bills.CompanyHistoryDetailScreen
 import com.fiatlife.app.ui.screens.bills.CompanyHistoryScreen
+import com.fiatlife.app.ui.screens.budget.BudgetScreen
 import com.fiatlife.app.ui.screens.dashboard.DashboardScreen
 import com.fiatlife.app.ui.screens.debt.DebtDetailScreen
 import com.fiatlife.app.ui.screens.debt.DebtPlannerScreen
@@ -68,6 +70,7 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
                 MainAppTopBar(
                     title = currentScreen?.title ?: "FiatLife",
                     subtitle = currentScreen?.subtitle?.takeIf { it.isNotBlank() } ?: "Your financial dashboard",
+                    onGoalsClick = { navController.navigate(Screen.Goals.route) },
                     onSettingsClick = { navController.navigate(Screen.Settings.route) }
                 )
             }
@@ -143,6 +146,9 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
                 composable(Screen.Goals.route) {
                     GoalsScreen()
                 }
+                composable(Screen.Budget.route) {
+                    BudgetScreen()
+                }
                 composable(Screen.Settings.route) {
                     SettingsScreen(onLogout = onLogout)
                 }
@@ -186,6 +192,7 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
 private fun MainAppTopBar(
     title: String,
     subtitle: String,
+    onGoalsClick: () -> Unit,
     onSettingsClick: () -> Unit
 ) {
     val mainViewModel: MainAppViewModel = hiltViewModel()
@@ -204,6 +211,9 @@ private fun MainAppTopBar(
             isSyncing = mainState.isManualSyncing,
             onSyncClick = { mainViewModel.manualSyncFromRelay() },
             actions = {
+                IconButton(onClick = onGoalsClick) {
+                    Icon(Icons.Filled.EmojiEvents, contentDescription = "Goals")
+                }
                 IconButton(onClick = onSettingsClick) {
                     Icon(Icons.Filled.Settings, contentDescription = "Settings")
                 }

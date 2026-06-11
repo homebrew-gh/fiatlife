@@ -8,6 +8,7 @@ import com.fiatlife.app.data.local.FiatLifeDatabase
 import com.fiatlife.app.data.local.dao.BankAccountDao
 import com.fiatlife.app.data.local.dao.BillDao
 import com.fiatlife.app.data.local.dao.BillerDao
+import com.fiatlife.app.data.local.dao.BudgetDao
 import com.fiatlife.app.data.local.dao.CreditAccountDao
 import com.fiatlife.app.data.local.dao.CypherLogSubscriptionDao
 import com.fiatlife.app.data.local.dao.GoalDao
@@ -83,6 +84,18 @@ private val MIGRATION_6_7 = object : Migration(6, 7) {
     }
 }
 
+private val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS budget_configs (
+                id TEXT NOT NULL PRIMARY KEY,
+                jsonData TEXT NOT NULL,
+                updatedAt INTEGER NOT NULL DEFAULT 0
+            )
+        """.trimIndent())
+    }
+}
+
 @Module
 @InstallIn(SingletonComponent::class)
 object DatabaseModule {
@@ -100,7 +113,8 @@ object DatabaseModule {
             MIGRATION_3_4,
             MIGRATION_4_5,
             MIGRATION_5_6,
-            MIGRATION_6_7
+            MIGRATION_6_7,
+            MIGRATION_7_8
         ).build()
     }
 
@@ -128,4 +142,8 @@ object DatabaseModule {
     @Provides
     fun provideBillerDao(database: FiatLifeDatabase): BillerDao =
         database.billerDao()
+
+    @Provides
+    fun provideBudgetDao(database: FiatLifeDatabase): BudgetDao =
+        database.budgetDao()
 }

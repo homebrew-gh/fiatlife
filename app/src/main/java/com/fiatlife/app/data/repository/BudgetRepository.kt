@@ -1,11 +1,12 @@
 package com.fiatlife.app.data.repository
 
 import android.util.Log
-import com.fiatlife.app.data.local.dao.SalaryDao
-import com.fiatlife.app.data.local.entity.SalaryEntity
+import com.fiatlife.app.data.local.dao.BudgetDao
+import com.fiatlife.app.data.local.entity.BudgetEntity
 import com.fiatlife.app.data.nostr.NostrClient
-import com.fiatlife.app.domain.model.SalaryConfig
-import com.fiatlife.app.domain.model.mergeSalaryConfigPreserveLogs
+import com.fiatlife.app.domain.model.BudgetConfig
+import com.fiatlife.app.domain.model.mergeBudgetConfigPreserveId
+import com.fiatlife.app.domain.model.rollBudgetPeriod
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,42 +18,42 @@ import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
-private const val TAG = "SalaryRepo"
+private const val TAG = "BudgetRepo"
 
 @Singleton
-class SalaryRepository @Inject constructor(
-    private val salaryDao: SalaryDao,
+class BudgetRepository @Inject constructor(
+    private val budgetDao: BudgetDao,
     private val nostrClient: NostrClient,
     private val json: Json
 ) {
     companion object {
-        private const val NOSTR_D_TAG = "fiatlife/salary"
+        private const val NOSTR_D_TAG = "fiatlife/budget"
     }
 
-    /** False until the first salary pull from the relay finishes this app session. */
+    /** False until the first budget pull from the relay finishes this app session. */
     private val _relayPublishReady = MutableStateFlow(false)
     val relayPublishReady: StateFlow<Boolean> = _relayPublishReady.asStateFlow()
 
-    private var initialSalarySyncCompleted = false
+    private var initialBudgetSyncCompleted = false
     private var relayPublishPending = false
 
-    /** Call before the first salary sync when a signer is available. */
+    /** Call before the first budget sync when a signer is available. */
     fun prepareForInitialRelaySync() {
-        if (nostrClient.hasSigner && !initialSalarySyncCompleted) {
+        if (nostrClient.hasSigner && !initialBudgetSyncCompleted) {
             _relayPublishReady.value = false
         }
     }
 
     fun observeHasData(): Flow<Boolean> =
-        salaryDao.observeCount().map { it > 0 }
+        budgetDao.observeCount().map { it > 0 }
 
-    fun getSalaryConfig(): Flow<SalaryConfig?> {
-        return salaryDao.getLatestConfig().map { entity ->
-            entity?.let { json.decodeFromString<SalaryConfig>(it.jsonData) }
+    fun getBudgetConfig(): Flow<BudgetConfig?> {
+        return budgetDao.getLatestConfig().map { entity ->
+            entity?.let { rollBudgetPeriod(json.decodeFromString<BudgetConfig>(it.jsonData)) }
         }.decodeOnBackground()
     }
 
-    suspend fun saveSalaryConfig(config: SalaryConfig) {
+    suspend fun saveBudgetConfig(config: BudgetConfig) {
         val merged = mergeBeforeSave(config)
         val configWithId = if (merged.id.isEmpty()) {
             merged.copy(id = UUID.randomUUID().toString(), updatedAt = System.currentTimeMillis())
@@ -60,10 +61,10 @@ class SalaryRepository @Inject constructor(
             merged.copy(updatedAt = System.currentTimeMillis())
         }
 
-        val jsonStr = json.encodeToString(SalaryConfig.serializer(), configWithId)
+        val jsonStr = json.encodeToString(BudgetConfig.serializer(), configWithId)
 
-        salaryDao.upsert(
-            SalaryEntity(
+        budgetDao.upsert(
+            BudgetEntity(
                 id = configWithId.id,
                 jsonData = jsonStr,
                 updatedAt = configWithId.updatedAt
@@ -71,12 +72,12 @@ class SalaryRepository @Inject constructor(
         )
 
         if (!nostrClient.hasSigner) {
-            Log.d(TAG, "No signer, salary saved locally only")
+            Log.d(TAG, "No signer, budget saved locally only")
             return
         }
         if (!_relayPublishReady.value) {
             relayPublishPending = true
-            Log.d(TAG, "Relay publish deferred until initial salary sync completes")
+            Log.d(TAG, "Relay publish deferred until initial budget sync completes")
             return
         }
         publishToRelay(jsonStr)
@@ -84,16 +85,16 @@ class SalaryRepository @Inject constructor(
 
     suspend fun syncFromNostr() {
         if (!nostrClient.hasSigner) return
-        val isInitial = !initialSalarySyncCompleted
+        val isInitial = !initialBudgetSyncCompleted
         if (isInitial) _relayPublishReady.value = false
         try {
             withTimeout(30_000) {
-                var latest: SalaryConfig? = null
+                var latest: BudgetConfig? = null
                 var latestJson: String? = null
                 var count = 0
                 nostrClient.subscribeToAppData(dTag = NOSTR_D_TAG).collect { (_, decrypted) ->
                     val config = runCatching {
-                        json.decodeFromString<SalaryConfig>(decrypted)
+                        json.decodeFromString<BudgetConfig>(decrypted)
                     }.getOrNull() ?: return@collect
                     count++
                     if (latest == null || config.updatedAt >= latest!!.updatedAt) {
@@ -104,76 +105,73 @@ class SalaryRepository @Inject constructor(
                 val resolved = latest
                 val resolvedJson = latestJson
                 if (resolved != null && resolvedJson != null) {
-                    val localStored = decodeConfig(salaryDao.getLatestConfigOnce())
+                    val localStored = decodeConfig(budgetDao.getLatestConfigOnce())
                     // Only let the relay copy overwrite local when it is at least as
                     // recent; otherwise newer unpublished local edits would be reverted.
                     if (localStored == null || resolved.updatedAt >= localStored.updatedAt) {
-                        // Preserve logs/history if a stale-but-newer relay copy is missing them.
-                        val mergedRemote = mergeSalaryConfigPreserveLogs(resolved, localStored)
+                        val mergedRemote = mergeBudgetConfigPreserveId(resolved, localStored)
                         val jsonToStore = if (mergedRemote == resolved) {
                             resolvedJson
                         } else {
-                            json.encodeToString(SalaryConfig.serializer(), mergedRemote)
+                            json.encodeToString(BudgetConfig.serializer(), mergedRemote)
                         }
-                        salaryDao.deleteExcept(mergedRemote.id)
-                        salaryDao.upsert(
-                            SalaryEntity(
+                        budgetDao.deleteExcept(mergedRemote.id)
+                        budgetDao.upsert(
+                            BudgetEntity(
                                 id = mergedRemote.id,
                                 jsonData = jsonToStore,
                                 updatedAt = mergedRemote.updatedAt
                             )
                         )
-                        Log.d(TAG, "Synced $count salary event(s); applied relay copy ${mergedRemote.id.take(8)}")
+                        Log.d(TAG, "Synced $count budget event(s); applied relay copy ${mergedRemote.id.take(8)}")
                     } else {
                         Log.d(
                             TAG,
-                            "Synced $count salary event(s); kept newer local copy " +
+                            "Synced $count budget event(s); kept newer local copy " +
                                 "(local=${localStored.updatedAt} > relay=${resolved.updatedAt})"
                         )
                     }
                 } else {
-                    Log.d(TAG, "Synced $count salary event(s); no usable relay copy")
+                    Log.d(TAG, "Synced $count budget event(s); no usable relay copy")
                 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Sync failed: ${e.message}")
         } finally {
             if (isInitial) {
-                initialSalarySyncCompleted = true
+                initialBudgetSyncCompleted = true
                 _relayPublishReady.value = true
                 flushPendingRelayPublish()
             }
         }
     }
 
-    private suspend fun mergeBeforeSave(incoming: SalaryConfig): SalaryConfig {
-        val stored = decodeConfig(salaryDao.getLatestConfigOnce())
-        return mergeSalaryConfigPreserveLogs(incoming, stored)
+    private suspend fun mergeBeforeSave(incoming: BudgetConfig): BudgetConfig {
+        val stored = decodeConfig(budgetDao.getLatestConfigOnce())
+        return mergeBudgetConfigPreserveId(incoming, stored)
     }
 
     private suspend fun flushPendingRelayPublish() {
         if (!relayPublishPending) return
         relayPublishPending = false
         if (!nostrClient.hasSigner) return
-        // Publish the reconciled local state (post-sync winner), not a stale snapshot,
-        // so a deferred edit can't clobber a newer relay copy that just arrived.
-        val current = salaryDao.getLatestConfigOnce() ?: return
+        val current = budgetDao.getLatestConfigOnce() ?: return
         publishToRelay(current.jsonData)
     }
 
     private suspend fun publishToRelay(jsonStr: String) {
         try {
             val published = nostrClient.publishEncryptedAppData(NOSTR_D_TAG, jsonStr)
-            Log.d(TAG, "Published salary to relay: $published")
+            Log.d(TAG, "Published budget to relay: $published")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to publish salary: ${e.message}")
+            Log.e(TAG, "Failed to publish budget: ${e.message}")
         }
     }
 
-    private fun decodeConfig(entity: SalaryEntity?): SalaryConfig? {
+    private fun decodeConfig(entity: BudgetEntity?): BudgetConfig? {
         if (entity == null) return null
         return runCatching {
-            json.decodeFromString<SalaryConfig>(entity.jsonData)
+            json.decodeFromString<BudgetConfig>(entity.jsonData)
         }.getOrNull()
     }
 }

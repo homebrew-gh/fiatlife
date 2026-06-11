@@ -9,6 +9,12 @@ interface SalaryDao {
     @Query("SELECT * FROM salary_configs ORDER BY updatedAt DESC LIMIT 1")
     fun getLatestConfig(): Flow<SalaryEntity?>
 
+    @Query("SELECT * FROM salary_configs ORDER BY updatedAt DESC LIMIT 1")
+    suspend fun getLatestConfigOnce(): SalaryEntity?
+
+    @Query("DELETE FROM salary_configs WHERE id != :keepId")
+    suspend fun deleteExcept(keepId: String)
+
     @Query("SELECT COUNT(*) FROM salary_configs")
     fun observeCount(): Flow<Int>
 

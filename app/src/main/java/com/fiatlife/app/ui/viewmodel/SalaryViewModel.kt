@@ -58,6 +58,34 @@ class SalaryViewModel @Inject constructor(
         private const val AUTO_SAVE_MS = 500L
     }
 
+    init {
+        // Seed the working copy from stored/relay data so edits start from the
+        // loaded config rather than an empty default (which would wipe fields on save).
+        viewModelScope.launch {
+            repository.getSalaryConfig()
+                .filterNotNull()
+                .collect { repoConfig ->
+                    val local = localState.value.config
+                    val repoIsNewer = repoConfig.updatedAt > local.updatedAt
+                    if (!hasLocalEdits.value || repoIsNewer) {
+                        if (hasLocalEdits.value && repoIsNewer) {
+                            // Newer data arrived from the relay; supersede the stale pending edit.
+                            hasLocalEdits.value = false
+                            persistJob?.cancel()
+                        }
+                        localState.update { state ->
+                            recalcAll(
+                                state.copy(
+                                    config = repoConfig,
+                                    calculation = PaycheckCalculator.calculate(repoConfig)
+                                )
+                            )
+                        }
+                    }
+                }
+        }
+    }
+
     val state: StateFlow<SalaryState> = combine(
         repository.getSalaryConfig()
             .map { config ->
@@ -68,9 +96,14 @@ class SalaryViewModel @Inject constructor(
         localState,
         hasLocalEdits
     ) { repoPair, local, edits ->
-        if (repoPair != null && !edits) {
+        if (repoPair != null) {
             val (config, calculation) = repoPair
-            recalcAll(local.copy(config = config, calculation = calculation))
+            val useRepo = !edits || config.updatedAt > local.config.updatedAt
+            if (useRepo) {
+                recalcAll(local.copy(config = config, calculation = calculation))
+            } else {
+                local
+            }
         } else {
             local
         }
@@ -100,7 +133,6 @@ class SalaryViewModel @Inject constructor(
     }
 
     fun setSummaryYear(year: Int) {
-        hasLocalEdits.value = true
         localState.update { state ->
             val config = SalarySummary.applyInferredPayRatesToConfig(state.config, year)
             recalcSummary(
@@ -111,7 +143,6 @@ class SalaryViewModel @Inject constructor(
                 )
             )
         }
-        schedulePersist()
     }
 
     fun updatePayType(type: PayType) {
@@ -434,6 +465,8 @@ class SalaryViewModel @Inject constructor(
     }
 
     private suspend fun persistConfig() {
+        // Always write to the local DB. The repository defers only the relay publish
+        // until the initial sync completes, so edits are never lost to the sync window.
         localState.update { it.copy(isSaving = true) }
         try {
             repository.saveSalaryConfig(localState.value.config)

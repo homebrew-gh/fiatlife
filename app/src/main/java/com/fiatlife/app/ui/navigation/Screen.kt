@@ -52,6 +52,14 @@ sealed class Screen(
         unselectedIcon = Icons.Outlined.Flag
     )
 
+    data object Budget : Screen(
+        route = "budget",
+        title = "Budget",
+        subtitle = "Monthly targets and spending",
+        selectedIcon = Icons.Filled.PieChart,
+        unselectedIcon = Icons.Outlined.PieChart
+    )
+
     data object Settings : Screen(
         route = "settings",
         title = "Settings",
@@ -111,8 +119,8 @@ sealed class Screen(
     )
 
     companion object {
-        /** Bottom tab items (Settings is in top bar) */
-        val bottomNavItems = listOf(Dashboard, Salary, Bills, Debt, Goals)
+        /** Bottom tab items (Settings and Goals are in the top bar). */
+        val bottomNavItems = listOf(Dashboard, Salary, Bills, Debt, Budget)
 
         fun fromRoute(route: String?): Screen? = when {
             route == Dashboard.route -> Dashboard
@@ -120,6 +128,7 @@ sealed class Screen(
             route == Bills.route -> Bills
             route == Debt.route -> Debt
             route == Goals.route -> Goals
+            route == Budget.route -> Budget
             route == Settings.route -> Settings
             route?.startsWith("bill_detail") == true -> BillDetail
             route?.startsWith("company_history/") == true -> CompanyHistoryDetail

@@ -30,6 +30,7 @@ import com.fiatlife.app.data.network.RelayUrlValidator
 import com.fiatlife.app.data.nostr.*
 import com.fiatlife.app.data.repository.BillRepository
 import com.fiatlife.app.data.repository.BillerRepository
+import com.fiatlife.app.data.repository.BudgetRepository
 import com.fiatlife.app.data.repository.BankAccountRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
@@ -66,6 +67,7 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var creditAccountRepository: CreditAccountRepository
     @Inject lateinit var bankAccountRepository: BankAccountRepository
     @Inject lateinit var cypherLogSubscriptionRepository: CypherLogSubscriptionRepository
+    @Inject lateinit var budgetRepository: BudgetRepository
     @Inject lateinit var appSettingsRepository: AppSettingsRepository
     @Inject lateinit var relayTlsSettings: RelayTlsSettings
 
@@ -431,8 +433,11 @@ class MainActivity : ComponentActivity() {
             try {
                 Log.d(TAG, "Starting one-shot sync from relay (sequential)")
                 runCatching { syncSettingsFromRelay() }.onFailure { Log.w(TAG, "Settings sync: ${it.message}") }
+                salaryRepository.prepareForInitialRelaySync()
+                budgetRepository.prepareForInitialRelaySync()
                 try { salaryRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Salary sync: ${e.message}") }
                 try { billRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bill sync: ${e.message}") }
+                try { budgetRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Budget sync: ${e.message}") }
                 try { goalRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Goal sync: ${e.message}") }
                 try { creditAccountRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Credit account sync: ${e.message}") }
                 try { bankAccountRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bank account sync: ${e.message}") }
@@ -449,8 +454,11 @@ class MainActivity : ComponentActivity() {
         if (!nostrClient.hasSigner) return
         Log.d(TAG, "Starting blocking one-shot sync from relay (sequential)")
         runCatching { syncSettingsFromRelay() }.onFailure { Log.w(TAG, "Settings sync: ${it.message}") }
+        salaryRepository.prepareForInitialRelaySync()
+        budgetRepository.prepareForInitialRelaySync()
         runCatching { salaryRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Salary sync: ${it.message}") }
         runCatching { billRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bill sync: ${it.message}") }
+        runCatching { budgetRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Budget sync: ${it.message}") }
         runCatching { goalRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Goal sync: ${it.message}") }
         runCatching { creditAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Credit account sync: ${it.message}") }
         runCatching { bankAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bank account sync: ${it.message}") }

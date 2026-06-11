@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.repository.BillRepository
 import com.fiatlife.app.data.repository.BillerRepository
+import com.fiatlife.app.data.repository.BudgetRepository
 import com.fiatlife.app.data.repository.BankAccountRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
@@ -40,7 +41,8 @@ class MainAppViewModel @Inject constructor(
     private val goalRepository: GoalRepository,
     private val creditAccountRepository: CreditAccountRepository,
     private val bankAccountRepository: BankAccountRepository,
-    private val billerRepository: BillerRepository
+    private val billerRepository: BillerRepository,
+    private val budgetRepository: BudgetRepository
 ) : ViewModel() {
 
     private val _isManualSyncing = MutableStateFlow(false)
@@ -90,9 +92,11 @@ class MainAppViewModel @Inject constructor(
                 if (!relayReady) {
                     Log.w(TAG, "Manual sync: relay not ready after timeout")
                 }
+                budgetRepository.prepareForInitialRelaySync()
                 val jobs = listOf(
                     launch { runCatching { salaryRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Salary sync failed: ${it.message}") } },
                     launch { runCatching { billRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bill sync failed: ${it.message}") } },
+                    launch { runCatching { budgetRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Budget sync failed: ${it.message}") } },
                     launch { runCatching { cypherLogSubscriptionRepository.syncFromRelay() }.onFailure { Log.w(TAG, "CypherLog 37004 sync failed: ${it.message}") } },
                     launch { runCatching { goalRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Goal sync failed: ${it.message}") } },
                     launch { runCatching { creditAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Credit account sync failed: ${it.message}") } },
