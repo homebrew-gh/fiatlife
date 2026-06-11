@@ -2,6 +2,7 @@ import type { AppDataRecord } from "./api";
 
 export type SyncCategory =
   | "salary"
+  | "budget"
   | "bills"
   | "goals"
   | "debt"
@@ -13,6 +14,7 @@ export type SyncCategory =
 
 const CATEGORY_LABELS: Record<SyncCategory, string> = {
   salary: "Paycheck",
+  budget: "Budget",
   bills: "Bills",
   goals: "Goals",
   debt: "Debt",
@@ -25,6 +27,7 @@ const CATEGORY_LABELS: Record<SyncCategory, string> = {
 
 export function categoryForDTag(dTag: string): SyncCategory | "other" {
   if (dTag === "fiatlife/salary") return "salary";
+  if (dTag === "fiatlife/budget") return "budget";
   if (dTag.startsWith("fiatlife/bill/")) return "bills";
   if (dTag.startsWith("fiatlife/goal/")) return "goals";
   if (dTag.startsWith("fiatlife/credit/")) return "debt";

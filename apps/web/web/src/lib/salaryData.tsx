@@ -18,6 +18,7 @@ import {
   defaultSalaryConfig,
   applyInferredPayRatesForAllLogYears,
   generatePaycheckLogsForMissingDates,
+  mergeSalaryConfigPreserveLogs,
   normalizeSalaryConfig,
   parseSalaryRecord,
   salaryFingerprint,
@@ -152,8 +153,14 @@ export function SalaryDataProvider({ children }: { children: ReactNode }) {
       const withId = next.id
         ? next
         : { ...next, id: crypto.randomUUID() };
+      const records = await api.listAppData();
+      const remoteRecord = records.find((r) => r.d_tag === SALARY_D_TAG);
+      const remote = remoteRecord?.plaintext
+        ? parseSalaryRecord(remoteRecord.plaintext)
+        : null;
+      const merged = mergeSalaryConfigPreserveLogs(withId, remote);
       const updatedAt = Date.now();
-      const saved = { ...withId, updatedAt };
+      const saved = { ...merged, updatedAt };
       const published = JSON.stringify(saved);
       setConfigState(saved);
       setSavedFingerprint(salaryFingerprint(saved));
@@ -173,6 +180,7 @@ export function SalaryDataProvider({ children }: { children: ReactNode }) {
     }
   }, [cancelPendingPersist, notify, refresh, savedFingerprint]);
 
+  // Do not publish to the relay until the first fetch from relay/server completes.
   useEffect(() => {
     if (loading) return;
     if (salaryFingerprint(config) === savedFingerprint) return;

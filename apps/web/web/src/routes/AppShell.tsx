@@ -7,6 +7,7 @@ import { AppSettingsDataProvider } from "../lib/appSettingsData";
 import { BankAccountsDataProvider } from "../lib/bankAccountsData";
 import { BillersDataProvider } from "../lib/billersData";
 import { BillsDataProvider } from "../lib/billsData";
+import { BudgetDataProvider } from "../lib/budgetData";
 import { DebtDataProvider } from "../lib/debtData";
 import { GoalsDataProvider } from "../lib/goalsData";
 import { SalaryDataProvider } from "../lib/salaryData";
@@ -21,7 +22,7 @@ const TABS: { to: string; label: string; end?: boolean }[] = [
   { to: "/app/paycheck", label: "Paycheck" },
   { to: "/app/debt", label: "Debt" },
   { to: "/app/goals", label: "Goals" },
-  { to: "/app/settings", label: "Settings" },
+  { to: "/app/budget", label: "Budget" },
 ];
 
 export function AppShell() {
@@ -54,12 +55,27 @@ export function AppShell() {
     <SalaryDataProvider>
     <GoalsDataProvider>
     <DebtDataProvider>
+    <BudgetDataProvider>
     <div className="h-full flex flex-col">
       <header className="app-chrome border-b sticky top-0 z-10">
         <div className="mx-auto max-w-5xl px-4 h-14 flex items-center justify-between gap-3">
           <Logo className="text-base" />
           <div className="flex items-center gap-2">
             <ThemeToggle />
+            <NavLink
+              to="/app/settings"
+              className={({ isActive }) =>
+                clsx(
+                  "btn-ghost text-sm py-1.5",
+                  isActive && "text-accent",
+                )
+              }
+              aria-label="Settings"
+            >
+              Settings
+            </NavLink>
+            {/* Spacer + divider keeps Lock away from Settings to avoid mis-taps. */}
+            <span className="h-5 w-px bg-outline/60 mx-1" aria-hidden="true" />
             <button
               type="button"
               className="btn-ghost text-sm py-1.5"
@@ -96,6 +112,7 @@ export function AppShell() {
       </nav>
       <SyncStatusOverlay />
     </div>
+    </BudgetDataProvider>
     </DebtDataProvider>
     </GoalsDataProvider>
     </SalaryDataProvider>

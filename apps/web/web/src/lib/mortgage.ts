@@ -23,6 +23,11 @@ export type MortgageSummary = {
   paymentsElapsed: number;
   principalPaid: number;
   interestPaid: number;
+  /** Total PMI paid over the life of the loan until it auto-drops. */
+  totalPmiPaid: number;
+  /** Payment number at which PMI is removed (80% LTV), or null if never charged / never drops. */
+  pmiDropMonth: number | null;
+  pmiDropDateMs: number | null;
 };
 
 export type MortgageScheduleResult = {
@@ -36,7 +41,51 @@ export type MortgageScenarioInput = {
   annualRate: number;
   termYears: number;
   extraMonthlyPayment?: number;
-  monthlyTaxInsurance?: number;
+  /** Annual property tax as a percentage of the home price. */
+  propertyTaxRate?: number;
+  /** Annual homeowner's insurance premium in dollars. */
+  annualHomeInsurance?: number;
+  /** Monthly HOA / condo dues in dollars. */
+  monthlyHoa?: number;
+  /**
+   * Annual PMI rate as a percentage of the loan amount. Applied while the
+   * down payment is below 20% of the home price.
+   */
+  pmiRate?: number;
+  /** Estimated closing costs as a percentage of the home price. */
+  closingCostPercent?: number;
+  /** Gross monthly household income, used for affordability ratios. */
+  monthlyIncome?: number;
+  /** Other recurring monthly debt payments (cars, student loans, cards). */
+  monthlyDebts?: number;
+};
+
+/** Monthly breakdown of the non-principal-and-interest housing costs. */
+export type MortgageCostBreakdown = {
+  monthlyPropertyTax: number;
+  monthlyHomeInsurance: number;
+  monthlyHoa: number;
+  monthlyPmi: number;
+  /** Sum of the escrow / carrying costs above (excludes P&I). */
+  monthlyExtraTotal: number;
+};
+
+export type AffordabilityRating = "comfortable" | "stretched" | "risky";
+
+/** Upfront cash and debt-to-income assessment for a scenario. */
+export type MortgageAffordability = {
+  closingCosts: number;
+  /** Down payment + closing costs = total cash needed at signing. */
+  cashToClose: number;
+  monthlyIncome: number;
+  monthlyDebts: number;
+  /** Front-end ratio: housing payment (PITI) ÷ gross monthly income, as %. */
+  housingDti: number | null;
+  /** Back-end ratio: (PITI + other debts) ÷ gross monthly income, as %. */
+  totalDti: number | null;
+  /** Income left after the full housing payment. */
+  monthlyIncomeAfterHousing: number | null;
+  rating: AffordabilityRating | null;
 };
 
 export type MortgageScenarioResult = MortgageScheduleResult & {
@@ -46,6 +95,8 @@ export type MortgageScenarioResult = MortgageScheduleResult & {
   downPaymentPercent: number;
   annualRate: number;
   termYears: number;
+  breakdown: MortgageCostBreakdown;
+  affordability: MortgageAffordability;
 };
 
 export function loanAmountFromScenario(input: MortgageScenarioInput): number {
@@ -84,7 +135,12 @@ export function buildAmortizationSchedule(input: {
   startDateMs?: number | null;
   monthlyPayment?: number | null;
   extraMonthlyPayment?: number;
+  /** Constant monthly escrow (property tax + insurance + HOA), excludes PMI. */
   monthlyTaxInsurance?: number;
+  /** Monthly PMI premium, charged until the balance drops to pmiDropBalance. */
+  monthlyPmi?: number;
+  /** Balance at/below which PMI is removed (typically 80% of home value). */
+  pmiDropBalance?: number;
   nowMs?: number;
 }): MortgageScheduleResult {
   const principal = Math.max(0, input.principal);
@@ -92,6 +148,8 @@ export function buildAmortizationSchedule(input: {
   const annualRate = Math.max(0, input.annualRate);
   const extra = Math.max(0, input.extraMonthlyPayment ?? 0);
   const taxIns = Math.max(0, input.monthlyTaxInsurance ?? 0);
+  const monthlyPmi = Math.max(0, input.monthlyPmi ?? 0);
+  const pmiDropBalance = Math.max(0, input.pmiDropBalance ?? 0);
   const nowMs = input.nowMs ?? Date.now();
 
   const computedPayment = calculateMonthlyPayment(principal, annualRate, termMonths);
@@ -110,6 +168,15 @@ export function buildAmortizationSchedule(input: {
   let totalInterest = 0;
   let paymentsElapsed = 0;
 
+  // PMI applies while the loan balance is above the drop threshold (20% equity).
+  // When no threshold is supplied but a premium is, PMI runs the whole term.
+  const initialPmiActive =
+    monthlyPmi > 0 && (pmiDropBalance <= 0 || principal > pmiDropBalance);
+  let totalPmiPaid = 0;
+  let pmiMonthsCharged = 0;
+  let pmiDropMonth: number | null = null;
+  let pmiDropDateMs: number | null = null;
+
   if (input.startDateMs) {
     paymentsElapsed = Math.max(0, monthsBetween(startDate, new Date(nowMs)));
   }
@@ -120,6 +187,17 @@ export function buildAmortizationSchedule(input: {
     let principalPortion = monthlyPayment - interest;
     if (principalPortion < 0) principalPortion = 0;
     if (principalPortion > balance) principalPortion = balance;
+
+    // PMI for this month is based on the balance at the start of the month.
+    const pmiActiveThisMonth =
+      monthlyPmi > 0 && (pmiDropBalance <= 0 || balance > pmiDropBalance);
+    if (pmiActiveThisMonth) {
+      totalPmiPaid += monthlyPmi;
+      pmiMonthsCharged += 1;
+    } else if (pmiDropMonth == null && pmiMonthsCharged > 0) {
+      pmiDropMonth = n;
+      pmiDropDateMs = addMonths(startDate, n - 1).getTime();
+    }
 
     const extraPrincipal = Math.min(extra, Math.max(0, balance - principalPortion));
     const totalPrincipal = principalPortion + extraPrincipal;
@@ -155,7 +233,8 @@ export function buildAmortizationSchedule(input: {
       loanAmount: principal,
       monthlyPayment,
       monthlyTaxInsurance: taxIns,
-      estimatedMonthlyTotal: monthlyPayment + taxIns,
+      estimatedMonthlyTotal:
+        monthlyPayment + taxIns + (initialPmiActive ? monthlyPmi : 0),
       termMonths,
       totalInterest,
       totalPaid: principal + totalInterest,
@@ -164,6 +243,9 @@ export function buildAmortizationSchedule(input: {
       paymentsElapsed,
       principalPaid,
       interestPaid,
+      totalPmiPaid,
+      pmiDropMonth,
+      pmiDropDateMs,
     },
   };
 }
@@ -212,6 +294,85 @@ export function scheduleForMortgageAccount(
   });
 }
 
+export function computeMortgageCostBreakdown(
+  input: MortgageScenarioInput,
+): MortgageCostBreakdown {
+  const loanAmount = loanAmountFromScenario(input);
+  const downPaymentPercent =
+    input.homePrice > 0 ? (input.downPayment / input.homePrice) * 100 : 0;
+
+  const monthlyPropertyTax = Math.max(
+    0,
+    (input.homePrice * ((input.propertyTaxRate ?? 0) / 100)) / 12,
+  );
+  const monthlyHomeInsurance = Math.max(0, (input.annualHomeInsurance ?? 0) / 12);
+  const monthlyHoa = Math.max(0, input.monthlyHoa ?? 0);
+  // PMI is typically required until the borrower reaches 20% equity.
+  const monthlyPmi =
+    downPaymentPercent < 20
+      ? Math.max(0, (loanAmount * ((input.pmiRate ?? 0) / 100)) / 12)
+      : 0;
+
+  return {
+    monthlyPropertyTax,
+    monthlyHomeInsurance,
+    monthlyHoa,
+    monthlyPmi,
+    monthlyExtraTotal:
+      monthlyPropertyTax + monthlyHomeInsurance + monthlyHoa + monthlyPmi,
+  };
+}
+
+/**
+ * Rate affordability from the standard mortgage qualification ratios. The
+ * front-end ratio (housing only) targets 28% and the back-end ratio (housing
+ * plus other debts) targets 36%, with 43% as the conventional upper limit.
+ */
+export function rateAffordability(
+  housingDti: number | null,
+  totalDti: number | null,
+): AffordabilityRating | null {
+  if (housingDti == null || totalDti == null) return null;
+  if (totalDti > 43 || housingDti > 31) return "risky";
+  if (totalDti <= 36 && housingDti <= 28) return "comfortable";
+  return "stretched";
+}
+
+export function computeAffordability(
+  input: MortgageScenarioInput,
+  monthlyHousingPayment: number,
+): MortgageAffordability {
+  const closingCosts = Math.max(
+    0,
+    input.homePrice * ((input.closingCostPercent ?? 0) / 100),
+  );
+  const cashToClose = Math.max(0, input.downPayment) + closingCosts;
+  const monthlyIncome = Math.max(0, input.monthlyIncome ?? 0);
+  const monthlyDebts = Math.max(0, input.monthlyDebts ?? 0);
+
+  const hasIncome = monthlyIncome > 0;
+  const housingDti = hasIncome
+    ? (monthlyHousingPayment / monthlyIncome) * 100
+    : null;
+  const totalDti = hasIncome
+    ? ((monthlyHousingPayment + monthlyDebts) / monthlyIncome) * 100
+    : null;
+  const monthlyIncomeAfterHousing = hasIncome
+    ? monthlyIncome - monthlyHousingPayment
+    : null;
+
+  return {
+    closingCosts,
+    cashToClose,
+    monthlyIncome,
+    monthlyDebts,
+    housingDti,
+    totalDti,
+    monthlyIncomeAfterHousing,
+    rating: rateAffordability(housingDti, totalDti),
+  };
+}
+
 export function evaluateMortgageScenario(
   label: string,
   input: MortgageScenarioInput,
@@ -220,13 +381,27 @@ export function evaluateMortgageScenario(
   const termMonths = Math.round(input.termYears * 12);
   if (loanAmount <= 0 || termMonths <= 0 || input.homePrice <= 0) return null;
 
+  const breakdown = computeMortgageCostBreakdown(input);
+  // Constant escrow excludes PMI so the schedule can drop PMI at 80% LTV.
+  const constantEscrow =
+    breakdown.monthlyPropertyTax +
+    breakdown.monthlyHomeInsurance +
+    breakdown.monthlyHoa;
+
   const schedule = buildAmortizationSchedule({
     principal: loanAmount,
     annualRate: input.annualRate / 100,
     termMonths,
     extraMonthlyPayment: input.extraMonthlyPayment,
-    monthlyTaxInsurance: input.monthlyTaxInsurance,
+    monthlyTaxInsurance: constantEscrow,
+    monthlyPmi: breakdown.monthlyPmi,
+    pmiDropBalance: breakdown.monthlyPmi > 0 ? input.homePrice * 0.8 : 0,
   });
+
+  const affordability = computeAffordability(
+    input,
+    schedule.summary.estimatedMonthlyTotal,
+  );
 
   return {
     ...schedule,
@@ -237,6 +412,8 @@ export function evaluateMortgageScenario(
       input.homePrice > 0 ? (input.downPayment / input.homePrice) * 100 : 0,
     annualRate: input.annualRate,
     termYears: input.termYears,
+    breakdown,
+    affordability,
   };
 }
 

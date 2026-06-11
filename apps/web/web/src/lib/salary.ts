@@ -1924,6 +1924,30 @@ export function parseSalaryRecord(plaintext: string): SalaryConfig | null {
   }
 }
 
+/** Prevent a stale empty local copy from wiping paycheck logs on the relay. */
+export function mergeSalaryConfigPreserveLogs(
+  incoming: SalaryConfig,
+  existing: Partial<SalaryConfig> | null | undefined,
+): SalaryConfig {
+  if (!existing) return normalizeSalaryConfig(incoming);
+
+  let merged: SalaryConfig = incoming;
+  const incomingLogs = incoming.paycheckLog ?? [];
+  const existingLogs = existing.paycheckLog ?? [];
+  if (incomingLogs.length === 0 && existingLogs.length > 0) {
+    merged = { ...merged, paycheckLog: existingLogs };
+  }
+  if (!incoming.id && existing.id) {
+    merged = { ...merged, id: existing.id };
+  }
+  const incomingHistory = incoming.payRateHistory ?? [];
+  const existingHistory = existing.payRateHistory ?? [];
+  if (incomingHistory.length === 0 && existingHistory.length > 0) {
+    merged = { ...merged, payRateHistory: existingHistory };
+  }
+  return normalizeSalaryConfig(merged);
+}
+
 export function normalizeSalaryConfig(
   raw: Partial<SalaryConfig>,
 ): SalaryConfig {

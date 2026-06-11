@@ -4,6 +4,7 @@
 pub fn is_fiatlife_d_tag(d_tag: &str) -> bool {
     let d_tag = d_tag.trim();
     d_tag == "fiatlife/salary"
+        || d_tag == "fiatlife/budget"
         || d_tag.starts_with("fiatlife/bill/")
         || d_tag.starts_with("fiatlife/goal/")
         || d_tag.starts_with("fiatlife/credit/")
@@ -18,6 +19,9 @@ pub fn is_fiatlife_d_tag(d_tag: &str) -> bool {
 pub fn category_for_d_tag(d_tag: &str) -> &'static str {
     if d_tag == "fiatlife/salary" {
         return "salary";
+    }
+    if d_tag == "fiatlife/budget" {
+        return "budget";
     }
     if d_tag.starts_with("fiatlife/bill/") {
         return "bills";
@@ -53,6 +57,7 @@ mod tests {
     #[test]
     fn recognizes_fiatlife_tags() {
         assert!(is_fiatlife_d_tag("fiatlife/salary"));
+        assert!(is_fiatlife_d_tag("fiatlife/budget"));
         assert!(is_fiatlife_d_tag("fiatlife/bill/abc"));
         assert!(is_fiatlife_d_tag("subscription:xyz"));
         assert!(!is_fiatlife_d_tag("io.nomoxcel.utxo.wallets"));

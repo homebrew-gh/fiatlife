@@ -16,6 +16,7 @@ import { DebtPlannerRoute } from "./routes/DebtPlannerRoute";
 import { MortgageCalculatorRoute } from "./routes/MortgageCalculatorRoute";
 import { DebtTab } from "./routes/tabs/DebtTab";
 import { GoalsTab } from "./routes/tabs/GoalsTab";
+import { BudgetTab } from "./routes/tabs/BudgetTab";
 import { SettingsTab } from "./routes/tabs/SettingsTab";
 
 export function App() {
@@ -58,6 +59,7 @@ function Gate() {
         <Route path="debt/mortgage-calculator" element={<MortgageCalculatorRoute />} />
         <Route path="debt/:accountId" element={<DebtDetailRoute />} />
         <Route path="goals" element={<GoalsTab />} />
+        <Route path="budget" element={<BudgetTab />} />
         <Route path="settings" element={<SettingsTab />} />
       </Route>
       <Route path="*" element={<RootRedirect status={status} />} />

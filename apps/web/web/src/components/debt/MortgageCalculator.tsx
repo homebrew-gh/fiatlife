@@ -1,20 +1,33 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { formatUsd } from "../../lib/format";
 import {
+  computeMortgageCostBreakdown,
   evaluateMortgageScenario,
   formatMortgageDate,
   loanAmountFromScenario,
+  type AffordabilityRating,
   type MortgageScenarioInput,
   type MortgageScenarioResult,
 } from "../../lib/mortgage";
 
 const TERM_OPTIONS = [10, 15, 20, 25, 30];
 
+const AFFORDABILITY_STYLES: Record<
+  AffordabilityRating,
+  { label: string; cls: string }
+> = {
+  comfortable: { label: "Comfortable", cls: "text-success" },
+  stretched: { label: "Stretched", cls: "text-warn" },
+  risky: { label: "Risky", cls: "text-error" },
+};
+
 type ScenarioDraft = MortgageScenarioInput & {
   label: string;
   downPaymentMode: "amount" | "percent";
   downPaymentPercent: string;
+  /** Extra monthly debt the user adds on top of debts tracked in their accounts. */
+  additionalDebts: number;
 };
 
 function defaultDraft(label: string): ScenarioDraft {
@@ -27,11 +40,20 @@ function defaultDraft(label: string): ScenarioDraft {
     annualRate: 6.5,
     termYears: 30,
     extraMonthlyPayment: 0,
-    monthlyTaxInsurance: 0,
+    propertyTaxRate: 1.1,
+    annualHomeInsurance: 1_800,
+    monthlyHoa: 0,
+    pmiRate: 0.6,
+    closingCostPercent: 3,
+    monthlyIncome: 0,
+    additionalDebts: 0,
   };
 }
 
-function draftToInput(draft: ScenarioDraft): MortgageScenarioInput {
+function draftToInput(
+  draft: ScenarioDraft,
+  trackedMonthlyDebts = 0,
+): MortgageScenarioInput {
   let downPayment = draft.downPayment;
   if (draft.downPaymentMode === "percent") {
     const pct = Number.parseFloat(draft.downPaymentPercent) || 0;
@@ -43,7 +65,13 @@ function draftToInput(draft: ScenarioDraft): MortgageScenarioInput {
     annualRate: draft.annualRate,
     termYears: draft.termYears,
     extraMonthlyPayment: draft.extraMonthlyPayment,
-    monthlyTaxInsurance: draft.monthlyTaxInsurance,
+    propertyTaxRate: draft.propertyTaxRate,
+    annualHomeInsurance: draft.annualHomeInsurance,
+    monthlyHoa: draft.monthlyHoa,
+    pmiRate: draft.pmiRate,
+    closingCostPercent: draft.closingCostPercent,
+    monthlyIncome: draft.monthlyIncome,
+    monthlyDebts: Math.max(0, trackedMonthlyDebts) + (draft.additionalDebts ?? 0),
   };
 }
 
@@ -51,12 +79,26 @@ function ScenarioForm({
   draft,
   onChange,
   onEvaluate,
+  suggestedMonthlyIncome,
+  trackedMonthlyDebts = 0,
 }: {
   draft: ScenarioDraft;
   onChange: (next: ScenarioDraft) => void;
   onEvaluate: () => void;
+  suggestedMonthlyIncome?: number;
+  trackedMonthlyDebts?: number;
 }) {
-  const loanAmount = loanAmountFromScenario(draftToInput(draft));
+  const input = draftToInput(draft, trackedMonthlyDebts);
+  const loanAmount = loanAmountFromScenario(input);
+  const breakdown = computeMortgageCostBreakdown(input);
+  const downPercent =
+    draft.homePrice > 0 ? (input.downPayment / draft.homePrice) * 100 : 0;
+  const pmiApplies = downPercent < 20;
+  const closingCosts = Math.max(
+    0,
+    draft.homePrice * ((draft.closingCostPercent ?? 0) / 100),
+  );
+  const cashToClose = input.downPayment + closingCosts;
 
   return (
     <div className="space-y-4">
@@ -204,28 +246,253 @@ function ScenarioForm({
           />
         </div>
         <div>
-          <label className="label" htmlFor="mc-tax">
-            Tax + insurance / mo
+          <label className="label" htmlFor="mc-tax-rate">
+            Property tax rate %/yr
           </label>
           <input
-            id="mc-tax"
-            className="input money"
+            id="mc-tax-rate"
+            className="input"
             inputMode="decimal"
             value={
-              (draft.monthlyTaxInsurance ?? 0) > 0
-                ? String(draft.monthlyTaxInsurance)
+              (draft.propertyTaxRate ?? 0) > 0
+                ? String(draft.propertyTaxRate)
                 : ""
             }
             onChange={(e) =>
               onChange({
                 ...draft,
-                monthlyTaxInsurance: Number.parseFloat(e.target.value) || 0,
+                propertyTaxRate: Number.parseFloat(e.target.value) || 0,
+              })
+            }
+            placeholder="1.1"
+          />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="label" htmlFor="mc-insurance">
+            Home insurance $/yr
+          </label>
+          <input
+            id="mc-insurance"
+            className="input money"
+            inputMode="decimal"
+            value={
+              (draft.annualHomeInsurance ?? 0) > 0
+                ? String(draft.annualHomeInsurance)
+                : ""
+            }
+            onChange={(e) =>
+              onChange({
+                ...draft,
+                annualHomeInsurance: Number.parseFloat(e.target.value) || 0,
+              })
+            }
+            placeholder="1800"
+          />
+        </div>
+        <div>
+          <label className="label" htmlFor="mc-hoa">
+            HOA dues $/mo
+          </label>
+          <input
+            id="mc-hoa"
+            className="input money"
+            inputMode="decimal"
+            value={(draft.monthlyHoa ?? 0) > 0 ? String(draft.monthlyHoa) : ""}
+            onChange={(e) =>
+              onChange({
+                ...draft,
+                monthlyHoa: Number.parseFloat(e.target.value) || 0,
               })
             }
             placeholder="0"
           />
         </div>
       </div>
+      <div>
+        <label className="label" htmlFor="mc-pmi">
+          PMI rate %/yr
+        </label>
+        <input
+          id="mc-pmi"
+          className="input"
+          inputMode="decimal"
+          value={(draft.pmiRate ?? 0) > 0 ? String(draft.pmiRate) : ""}
+          onChange={(e) =>
+            onChange({
+              ...draft,
+              pmiRate: Number.parseFloat(e.target.value) || 0,
+            })
+          }
+          placeholder="0.6"
+        />
+        <p className="text-xs text-muted mt-1">
+          {pmiApplies
+            ? `Applied while equity is under 20% (down payment is ${downPercent.toFixed(
+                1,
+              )}%).`
+            : "Not applied — down payment is 20% or more."}
+        </p>
+      </div>
+      <div className="rounded-lg bg-surface-variant p-3 text-sm space-y-1">
+        <p className="text-muted font-medium">Estimated escrow / month</p>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-xs">
+          <span className="text-muted">Property tax</span>
+          <span className="text-right">
+            {formatUsd(breakdown.monthlyPropertyTax)}
+          </span>
+          <span className="text-muted">Home insurance</span>
+          <span className="text-right">
+            {formatUsd(breakdown.monthlyHomeInsurance)}
+          </span>
+          {breakdown.monthlyHoa > 0 ? (
+            <>
+              <span className="text-muted">HOA</span>
+              <span className="text-right">
+                {formatUsd(breakdown.monthlyHoa)}
+              </span>
+            </>
+          ) : null}
+          {breakdown.monthlyPmi > 0 ? (
+            <>
+              <span className="text-muted">PMI</span>
+              <span className="text-right">
+                {formatUsd(breakdown.monthlyPmi)}
+              </span>
+            </>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="border-t border-outline/60 pt-4 space-y-4">
+        <p className="text-sm font-medium text-body">Cash to close</p>
+        <div>
+          <label className="label" htmlFor="mc-closing">
+            Closing costs %
+          </label>
+          <input
+            id="mc-closing"
+            className="input"
+            inputMode="decimal"
+            value={
+              (draft.closingCostPercent ?? 0) > 0
+                ? String(draft.closingCostPercent)
+                : ""
+            }
+            onChange={(e) =>
+              onChange({
+                ...draft,
+                closingCostPercent: Number.parseFloat(e.target.value) || 0,
+              })
+            }
+            placeholder="3"
+          />
+          <p className="text-xs text-muted mt-1">
+            Typically 2–5% of the home price (lender fees, title, escrow).
+          </p>
+        </div>
+        <div className="rounded-lg bg-surface-variant p-3 text-sm grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-xs">
+          <span className="text-muted">Down payment</span>
+          <span className="text-right">{formatUsd(input.downPayment)}</span>
+          <span className="text-muted">Closing costs</span>
+          <span className="text-right">{formatUsd(closingCosts)}</span>
+          <span className="text-body font-semibold">Total cash needed</span>
+          <span className="text-right text-body font-semibold">
+            {formatUsd(cashToClose)}
+          </span>
+        </div>
+      </div>
+
+      <div className="border-t border-outline/60 pt-4 space-y-4">
+        <p className="text-sm font-medium text-body">Affordability check</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="label" htmlFor="mc-income">
+              Gross income $/mo
+            </label>
+            <input
+              id="mc-income"
+              className="input money"
+              inputMode="decimal"
+              value={
+                (draft.monthlyIncome ?? 0) > 0 ? String(draft.monthlyIncome) : ""
+              }
+              onChange={(e) =>
+                onChange({
+                  ...draft,
+                  monthlyIncome: Number.parseFloat(e.target.value) || 0,
+                })
+              }
+              placeholder="0"
+            />
+          </div>
+          <div>
+            <label className="label" htmlFor="mc-debts">
+              Add'l debts $/mo
+            </label>
+            <input
+              id="mc-debts"
+              className="input money"
+              inputMode="decimal"
+              value={
+                (draft.additionalDebts ?? 0) > 0
+                  ? String(draft.additionalDebts)
+                  : ""
+              }
+              onChange={(e) =>
+                onChange({
+                  ...draft,
+                  additionalDebts: Number.parseFloat(e.target.value) || 0,
+                })
+              }
+              placeholder="0"
+            />
+          </div>
+        </div>
+        {trackedMonthlyDebts > 0 ? (
+          <div className="rounded-lg bg-surface-variant p-3 text-xs grid grid-cols-2 gap-x-4 gap-y-1 font-mono">
+            <span className="text-muted">Tracked debts (your accounts)</span>
+            <span className="text-right">{formatUsd(trackedMonthlyDebts)}</span>
+            {(draft.additionalDebts ?? 0) > 0 ? (
+              <>
+                <span className="text-muted">Additional</span>
+                <span className="text-right">
+                  {formatUsd(draft.additionalDebts ?? 0)}
+                </span>
+              </>
+            ) : null}
+            <span className="text-body font-semibold">Total monthly debts</span>
+            <span className="text-right text-body font-semibold">
+              {formatUsd(input.monthlyDebts ?? 0)}
+            </span>
+          </div>
+        ) : null}
+        {(suggestedMonthlyIncome ?? 0) > 0 ? (
+          <button
+            type="button"
+            className="btn-ghost text-sm w-full"
+            onClick={() =>
+              onChange({
+                ...draft,
+                monthlyIncome: Math.round(suggestedMonthlyIncome ?? 0),
+              })
+            }
+          >
+            Use my paycheck income ({formatUsd(suggestedMonthlyIncome ?? 0)}/mo)
+          </button>
+        ) : null}
+        <p className="text-xs text-muted">
+          Use <span className="font-medium">gross (pre-tax)</span> monthly income
+          — that's what lenders qualify you on.{" "}
+          {trackedMonthlyDebts > 0
+            ? "Your tracked debt payments are included automatically; add more above if you think that undershoots."
+            : "Add any car, student, or card payments above."}{" "}
+          Lenders generally want housing under 28% and total debts under 36% of
+          gross income.
+        </p>
+      </div>
+
       <button type="button" className="btn-primary w-full" onClick={onEvaluate}>
         Calculate
       </button>
@@ -238,6 +505,11 @@ function ScenarioResultCard({ result }: { result: MortgageScenarioResult }) {
   const payoff = result.summary.payoffDateMs
     ? formatMortgageDate(result.summary.payoffDateMs)
     : "—";
+  const aff = result.affordability;
+  const pmiDrop = result.summary.pmiDropDateMs
+    ? formatMortgageDate(result.summary.pmiDropDateMs)
+    : null;
+  const ratingStyle = aff.rating ? AFFORDABILITY_STYLES[aff.rating] : null;
 
   return (
     <article className="card p-4 space-y-3">
@@ -277,6 +549,86 @@ function ScenarioResultCard({ result }: { result: MortgageScenarioResult }) {
           <p>{payoff}</p>
         </div>
       </div>
+      <div className="border-t border-outline/50 pt-2 text-xs space-y-1">
+        <p className="text-muted">Monthly breakdown</p>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono">
+          <span className="text-muted">Principal &amp; interest</span>
+          <span className="text-right">
+            {formatUsd(result.summary.monthlyPayment)}
+          </span>
+          <span className="text-muted">Property tax</span>
+          <span className="text-right">
+            {formatUsd(result.breakdown.monthlyPropertyTax)}
+          </span>
+          <span className="text-muted">Home insurance</span>
+          <span className="text-right">
+            {formatUsd(result.breakdown.monthlyHomeInsurance)}
+          </span>
+          {result.breakdown.monthlyHoa > 0 ? (
+            <>
+              <span className="text-muted">HOA</span>
+              <span className="text-right">
+                {formatUsd(result.breakdown.monthlyHoa)}
+              </span>
+            </>
+          ) : null}
+          {result.breakdown.monthlyPmi > 0 ? (
+            <>
+              <span className="text-muted">PMI</span>
+              <span className="text-right">
+                {formatUsd(result.breakdown.monthlyPmi)}
+              </span>
+            </>
+          ) : null}
+        </div>
+        {result.breakdown.monthlyPmi > 0 ? (
+          <p className="text-muted pt-1">
+            {pmiDrop
+              ? `PMI drops off ~${pmiDrop} (≈${formatUsd(
+                  result.summary.totalPmiPaid,
+                )} total). After that, your payment falls by ${formatUsd(
+                  result.breakdown.monthlyPmi,
+                )}/mo.`
+              : `PMI continues for the full term (≈${formatUsd(
+                  result.summary.totalPmiPaid,
+                )} total).`}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="border-t border-outline/50 pt-2 text-xs">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono">
+          <span className="text-muted">Cash to close</span>
+          <span className="text-right">{formatUsd(aff.cashToClose)}</span>
+          <span className="text-muted">(incl. closing costs)</span>
+          <span className="text-right text-muted">
+            {formatUsd(aff.closingCosts)}
+          </span>
+        </div>
+      </div>
+
+      {aff.housingDti != null ? (
+        <div className="border-t border-outline/50 pt-2 text-xs space-y-1">
+          <div className="flex items-center justify-between">
+            <p className="text-muted">Affordability</p>
+            {ratingStyle ? (
+              <span className={clsx("font-semibold", ratingStyle.cls)}>
+                {ratingStyle.label}
+              </span>
+            ) : null}
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono">
+            <span className="text-muted">Housing ratio (front-end)</span>
+            <span className="text-right">{aff.housingDti.toFixed(0)}%</span>
+            <span className="text-muted">Total debt (back-end)</span>
+            <span className="text-right">{aff.totalDti?.toFixed(0)}%</span>
+            <span className="text-muted">Left after housing</span>
+            <span className="text-right">
+              {formatUsd(aff.monthlyIncomeAfterHousing ?? 0)}/mo
+            </span>
+          </div>
+        </div>
+      ) : null}
       <button
         type="button"
         className="btn-ghost text-sm w-full"
@@ -347,12 +699,40 @@ function CompareTable({ results }: { results: MortgageScenarioResult[] }) {
       values: results.map((r) => formatUsd(r.summary.monthlyPayment)),
     },
     {
-      label: "Total / mo (w/ tax & ins.)",
+      label: "Escrow / mo (tax, ins., HOA, PMI)",
+      values: results.map((r) => formatUsd(r.breakdown.monthlyExtraTotal)),
+    },
+    {
+      label: "Total / mo (PITI)",
       values: results.map((r) => formatUsd(r.summary.estimatedMonthlyTotal)),
+    },
+    {
+      label: "Cash to close",
+      values: results.map((r) => formatUsd(r.affordability.cashToClose)),
+    },
+    {
+      label: "Housing ratio (front-end)",
+      values: results.map((r) =>
+        r.affordability.housingDti != null
+          ? `${r.affordability.housingDti.toFixed(0)}%`
+          : "—",
+      ),
+    },
+    {
+      label: "Total debt ratio (back-end)",
+      values: results.map((r) =>
+        r.affordability.totalDti != null
+          ? `${r.affordability.totalDti.toFixed(0)}%`
+          : "—",
+      ),
     },
     {
       label: "Total interest",
       values: results.map((r) => formatUsd(r.summary.totalInterest)),
+    },
+    {
+      label: "Total PMI",
+      values: results.map((r) => formatUsd(r.summary.totalPmiPaid)),
     },
     {
       label: "Total cost",
@@ -391,17 +771,42 @@ function CompareTable({ results }: { results: MortgageScenarioResult[] }) {
   );
 }
 
-export function MortgageCalculator() {
+export function MortgageCalculator({
+  suggestedMonthlyIncome,
+  trackedMonthlyDebts = 0,
+}: {
+  suggestedMonthlyIncome?: number;
+  trackedMonthlyDebts?: number;
+} = {}) {
   const [draft, setDraft] = useState(() => defaultDraft("Scenario A"));
   const [saved, setSaved] = useState<MortgageScenarioResult[]>([]);
+  const incomePrefilled = useRef(false);
+
+  useEffect(() => {
+    if (incomePrefilled.current) return;
+    if (!suggestedMonthlyIncome || suggestedMonthlyIncome <= 0) return;
+    incomePrefilled.current = true;
+    setDraft((prev) =>
+      (prev.monthlyIncome ?? 0) > 0
+        ? prev
+        : { ...prev, monthlyIncome: Math.round(suggestedMonthlyIncome) },
+    );
+  }, [suggestedMonthlyIncome]);
 
   const preview = useMemo(
-    () => evaluateMortgageScenario("Preview", draftToInput(draft)),
-    [draft],
+    () =>
+      evaluateMortgageScenario(
+        "Preview",
+        draftToInput(draft, trackedMonthlyDebts),
+      ),
+    [draft, trackedMonthlyDebts],
   );
 
   const addScenario = () => {
-    const result = evaluateMortgageScenario(draft.label || "Scenario", draftToInput(draft));
+    const result = evaluateMortgageScenario(
+      draft.label || "Scenario",
+      draftToInput(draft, trackedMonthlyDebts),
+    );
     if (!result) return;
     setSaved((prev) => {
       const without = prev.filter((s) => s.label !== result.label);
@@ -424,6 +829,8 @@ export function MortgageCalculator() {
             draft={draft}
             onChange={setDraft}
             onEvaluate={addScenario}
+            suggestedMonthlyIncome={suggestedMonthlyIncome}
+            trackedMonthlyDebts={trackedMonthlyDebts}
           />
         </section>
 
