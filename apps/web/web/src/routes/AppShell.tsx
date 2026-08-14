@@ -17,7 +17,7 @@ import { useAuth } from "../lib/auth";
 import { hasRelayConfigured } from "../lib/relayUrl";
 
 const TABS: { to: string; label: string; end?: boolean }[] = [
-  { to: "/app", label: "Dashboard", end: true },
+  { to: "/app", label: "Home", end: true },
   { to: "/app/bills", label: "Bills" },
   { to: "/app/paycheck", label: "Paycheck" },
   { to: "/app/debt", label: "Debt" },

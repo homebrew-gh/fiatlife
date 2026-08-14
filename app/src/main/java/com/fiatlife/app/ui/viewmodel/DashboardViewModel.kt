@@ -18,23 +18,15 @@ import javax.inject.Inject
 
 data class DashboardState(
     val takeHomePay: Double = 0.0,
-    val grossPay: Double = 0.0,
-    val totalTaxes: Double = 0.0,
-    val totalDeductions: Double = 0.0,
-    val effectiveTaxRate: Double = 0.0,
     val monthlyBills: Double = 0.0,
-    val monthlyTakeHome: Double = 0.0,
-    val billCount: Int = 0,
     /** Unpaid bills with next due date in the next 7 days (not overdue). */
     val billsComingDueCount: Int = 0,
     /** Unpaid bills that are past due. */
     val overdueBillCount: Int = 0,
-    val billCategoryTotals: Map<BillGeneralCategory, Double> = emptyMap(),
     val housingMonthly: Double = 0.0,
+    val mortgageAccountId: String? = null,
+    val missingPaycheckCount: Int = 0,
     val goalCount: Int = 0,
-    val goalsProgress: Double = 0.0,
-    val totalSaved: Double = 0.0,
-    val totalGoalTarget: Double = 0.0,
     val monthlyDisposable: Double = 0.0,
     val monthlyTakeHomeSource: MonthlyTakeHomeSource = MonthlyTakeHomeSource.ESTIMATED,
     val monthlyLoggedTakeHome: Double = 0.0,
@@ -44,11 +36,10 @@ data class DashboardState(
     val monthlyLoggedOvertimeHours: Double = 0.0,
     val monthlyLoggedBonus: Double = 0.0,
     val monthlyPerPaycheckEstimate: Double = 0.0,
-    val ytdNetPay: Double = 0.0,
-    val ytdSource: DashboardYtdSource = DashboardYtdSource.NONE,
     val isConnected: Boolean = false,
+    val hasSalary: Boolean = false,
     val hasData: Boolean = false,
-    val topGoals: List<FinancialGoal> = emptyList(),
+    val primaryGoal: FinancialGoal? = null,
     val upcomingBills: List<UpcomingBillRow> = emptyList(),
     val budgetUnbudgeted: Double = 0.0,
     val hasBudgetTargets: Boolean = false,
@@ -57,8 +48,6 @@ data class DashboardState(
     val debtPayoffFeasible: Boolean = true,
     val debtAccountCount: Int = 0,
 )
-
-enum class DashboardYtdSource { NONE, LOGGED, ESTIMATED }
 
 data class UpcomingBillRow(
     val id: String,
@@ -131,7 +120,6 @@ private fun buildDashboardState(
         bill.effectiveGeneralCategory == BillGeneralCategory.UTILITIES &&
             bill.isPaidForCurrentCycle()
     }
-    val calculation = salary?.let { PaycheckCalculator.calculate(it) }
     val monthlyBills = allBills.sumOf { b -> b.dueAmountInMonth(currentMonthAnchor) }
     val billCategoryTotals = allBills.groupBy { it.effectiveGeneralCategory }
         .mapValues { (_, list) ->
@@ -139,10 +127,7 @@ private fun buildDashboardState(
         }
     val now = System.currentTimeMillis()
     val sevenDaysMs = 7L * 24 * 60 * 60 * 1000
-    val threeMonthsFromNow = java.util.Calendar.getInstance().apply {
-        timeInMillis = now
-        add(java.util.Calendar.MONTH, 3)
-    }.timeInMillis
+    val fourteenDaysFromNow = now + 14L * 24 * 60 * 60 * 1000
     val overdueCount = visibleBills.count {
         it.effectiveGeneralCategory != BillGeneralCategory.CREDIT_LOANS &&
             !it.isPaidForCurrentCycle() &&
@@ -180,35 +165,17 @@ private fun buildDashboardState(
                 nextDue <= now + sevenDaysMs
         }
     }
-    val totalSaved = goals.sumOf { it.currentAmount }
-    val totalTarget = goals.sumOf { it.targetAmount }
-    val goalsProgress = if (totalTarget > 0) totalSaved / totalTarget * 100 else 0.0
     val monthlyProjection = salary?.let {
         SalarySummary.computeMonthlyTakeHome(it, currentMonthAnchor)
     }
     val monthlyTakeHome = monthlyProjection?.totalTakeHome ?: 0.0
-    val monthlyGross = monthlyProjection?.totalGross ?: 0.0
-    val monthlyTaxes = monthlyProjection?.totalTaxes ?: 0.0
-    val monthlyDeductions = monthlyProjection?.totalDeductions ?: 0.0
     val monthlyDisposable = monthlyTakeHome - monthlyBills
-    val effectiveTaxRate = if (monthlyGross > 0.0) {
-        monthlyTaxes / monthlyGross
-    } else {
-        calculation?.effectiveTaxRate ?: 0.0
-    }
-
-    var ytdNetPay = 0.0
-    var ytdSource = DashboardYtdSource.NONE
-    if (salary != null && calculation != null) {
-        val year = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
-        val annual = PaycheckCalculator.calculateAnnual(salary, 0.0, year)
-        val ytd = SalarySummary.summarize(salary, calculation, annual, year)
-        ytdNetPay = ytd.netPay
-        ytdSource = when (ytd.source) {
-            YtdSummary.Source.LOGGED -> DashboardYtdSource.LOGGED
-            YtdSummary.Source.ESTIMATED -> DashboardYtdSource.ESTIMATED
-        }
-    }
+    val year = java.util.Calendar.getInstance().apply { timeInMillis = now }
+        .get(java.util.Calendar.YEAR)
+    val missingPaycheckCount = salary?.let {
+        SalarySummary.missingPaydaysForYear(it, year, now).size
+    } ?: 0
+    val mortgage = creditAccounts.firstOrNull { it.type == CreditAccountType.MORTGAGE }
 
     val budgetSummary = computeBudgetSummary(
         config = budgetConfig ?: defaultBudgetConfig(currentMonthAnchor),
@@ -220,12 +187,7 @@ private fun buildDashboardState(
 
     return DashboardState(
         takeHomePay = monthlyTakeHome,
-        grossPay = monthlyGross,
-        totalTaxes = monthlyTaxes,
-        totalDeductions = monthlyDeductions,
-        effectiveTaxRate = effectiveTaxRate,
         monthlyBills = monthlyBills,
-        monthlyTakeHome = monthlyTakeHome,
         monthlyTakeHomeSource = monthlyProjection?.source ?: MonthlyTakeHomeSource.ESTIMATED,
         monthlyLoggedTakeHome = monthlyProjection?.loggedTakeHome ?: 0.0,
         monthlyProjectedRemainder = monthlyProjection?.projectedRemainder ?: 0.0,
@@ -234,24 +196,20 @@ private fun buildDashboardState(
         monthlyLoggedOvertimeHours = monthlyProjection?.loggedOvertimeHours ?: 0.0,
         monthlyLoggedBonus = monthlyProjection?.loggedBonusTotal ?: 0.0,
         monthlyPerPaycheckEstimate = monthlyProjection?.perPaycheckNet ?: 0.0,
-        ytdNetPay = ytdNetPay,
-        ytdSource = ytdSource,
-        billCount = visibleBills.size,
         billsComingDueCount = comingDueCount,
         overdueBillCount = overdueCount,
-        billCategoryTotals = billCategoryTotals,
         housingMonthly = creditAccounts.sumOf { it.housingPitiMonthly() },
+        mortgageAccountId = mortgage?.id,
+        missingPaycheckCount = missingPaycheckCount,
         goalCount = goals.size,
-        goalsProgress = goalsProgress,
-        totalSaved = totalSaved,
-        totalGoalTarget = totalTarget,
         monthlyDisposable = monthlyDisposable,
         isConnected = connected,
+        hasSalary = salary != null,
         hasData = salary != null || nativeBills.isNotEmpty() || cypherLogBills.isNotEmpty() || goals.isNotEmpty(),
-        topGoals = goals.sortedByDescending { it.progressPercent }.take(3),
+        primaryGoal = pickPrimaryGoal(goals),
         upcomingBills = buildUpcomingBillRows(
             visibleBills = visibleBills,
-            threeMonthsFromNow = threeMonthsFromNow,
+            dueSoonUntil = fourteenDaysFromNow,
             linkedCreditBalance = ::linkedCreditBalance,
             linkedAmountDue = ::linkedAmountDue
         ),
@@ -264,13 +222,23 @@ private fun buildDashboardState(
     )
 }
 
+private fun pickPrimaryGoal(goals: List<FinancialGoal>): FinancialGoal? {
+    val incomplete = goals.filter { !it.isComplete }
+    if (incomplete.isEmpty()) return null
+    val withDates = incomplete.filter { goal -> (goal.targetDate ?: 0L) > 0L }
+    if (withDates.isNotEmpty()) {
+        return withDates.minBy { it.targetDate ?: Long.MAX_VALUE }
+    }
+    return incomplete.minBy { it.progressPercent }
+}
+
 private val upcomingBillDateFormat = ThreadLocal.withInitial {
     java.text.SimpleDateFormat("EEE, MMM d", java.util.Locale.getDefault())
 }
 
 private fun buildUpcomingBillRows(
     visibleBills: List<Bill>,
-    threeMonthsFromNow: Long,
+    dueSoonUntil: Long,
     linkedCreditBalance: (Bill) -> Double,
     linkedAmountDue: (Bill) -> Double
 ): List<UpcomingBillRow> {
@@ -278,7 +246,7 @@ private fun buildUpcomingBillRows(
         .filter { bill ->
             val nextDue = bill.nextDueDateMillis()
             val withinWindow = bill.isPastDue() ||
-                (nextDue != null && nextDue <= threeMonthsFromNow)
+                (nextDue != null && nextDue <= dueSoonUntil)
             if (!withinWindow) return@filter false
             if (bill.isCreditOrLoan()) {
                 linkedCreditBalance(bill) > 0.0 && !bill.isPaidForCurrentCycle()

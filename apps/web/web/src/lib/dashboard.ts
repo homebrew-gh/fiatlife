@@ -6,7 +6,6 @@ import {
   monthlyEquivalent,
   nextDueDateMillis,
   type Bill,
-  type BillGeneralCategory,
   type BillWithSource,
 } from "./bill";
 import {
@@ -15,38 +14,34 @@ import {
   housingMonthlyTotal,
   type CreditAccount,
 } from "./creditAccount";
-import type { FinancialGoal } from "./goal";
 import {
-  calculateAnnual,
-  calculatePaycheck,
+  goalIsComplete,
+  goalProgressPercent,
+  type FinancialGoal,
+} from "./goal";
+import {
   computeMonthlyTakeHome,
-  summarizeYtd,
+  missingPaydaysForYear,
   type MonthlyTakeHomeSource,
   type PaycheckCalculation,
   type SalaryConfig,
 } from "./salary";
 
+const ATTENTION_DUE_MS = 7 * 24 * 60 * 60 * 1000;
+const DUE_SOON_LIST_MS = 14 * 24 * 60 * 60 * 1000;
+
 export type DashboardState = {
   takeHomePay: number;
-  grossPay: number;
-  totalTaxes: number;
-  totalDeductions: number;
-  effectiveTaxRate: number;
   monthlyBills: number;
   monthlyDisposable: number;
-  billCount: number;
   billsComingDueCount: number;
   overdueBillCount: number;
-  billCategoryTotals: Partial<Record<BillGeneralCategory, number>>;
   housingMonthly: number;
+  mortgageAccountId: string | null;
+  missingPaycheckCount: number;
   goalCount: number;
-  goalsProgress: number;
-  totalSaved: number;
-  totalGoalTarget: number;
-  topGoals: FinancialGoal[];
+  primaryGoal: FinancialGoal | null;
   upcomingBills: Bill[];
-  ytdNetPay: number;
-  ytdSource: "logged" | "estimated" | "none";
   monthlyTakeHomeSource: MonthlyTakeHomeSource;
   monthlyLoggedTakeHome: number;
   monthlyProjectedRemainder: number;
@@ -114,6 +109,26 @@ function isVisibleOnDashboard(bill: Bill): boolean {
   return true;
 }
 
+/** Incomplete goal with the nearest deadline, else the least complete. */
+export function pickPrimaryGoal(
+  goals: FinancialGoal[],
+  now = Date.now(),
+): FinancialGoal | null {
+  const incomplete = goals.filter((g) => !goalIsComplete(g));
+  if (incomplete.length === 0) return null;
+  const withDates = incomplete.filter(
+    (g) => g.targetDate != null && g.targetDate > 0,
+  );
+  if (withDates.length > 0) {
+    return [...withDates].sort(
+      (a, b) => (a.targetDate ?? now) - (b.targetDate ?? now),
+    )[0];
+  }
+  return [...incomplete].sort(
+    (a, b) => goalProgressPercent(a) - goalProgressPercent(b),
+  )[0];
+}
+
 export function computeDashboardState(input: {
   salary: SalaryConfig | null;
   calculation: PaycheckCalculation | null;
@@ -126,9 +141,6 @@ export function computeDashboardState(input: {
   const now = input.now ?? Date.now();
   const monthAnchor = input.monthAnchorMillis ?? now;
   const creditAccounts = input.creditAccounts ?? [];
-  const calc =
-    input.calculation ??
-    (input.salary ? calculatePaycheck(input.salary) : null);
 
   const allBills = input.bills
     .map((b) => b.bill)
@@ -140,17 +152,6 @@ export function computeDashboardState(input: {
     (sum, b) => sum + billMonthlyAmount(b, creditAccounts),
     0,
   );
-
-  const billCategoryTotals: Partial<Record<BillGeneralCategory, number>> = {};
-  for (const bill of allBills) {
-    const cat = generalCategoryForBill(bill);
-    billCategoryTotals[cat] =
-      (billCategoryTotals[cat] ?? 0) + billMonthlyAmount(bill, creditAccounts);
-  }
-
-  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-  const threeMonthsFromNow = new Date(now);
-  threeMonthsFromNow.setMonth(threeMonthsFromNow.getMonth() + 3);
 
   const overdueBillCount = visibleBills.filter(
     (bill) =>
@@ -164,7 +165,7 @@ export function computeDashboardState(input: {
     if (nextDue == null) return false;
     if (isPastDue(bill, now)) return false;
     if (!billUnpaid(bill, now)) return false;
-    if (nextDue > now + sevenDaysMs) return false;
+    if (nextDue > now + ATTENTION_DUE_MS) return false;
     if (isCreditOrLoan(bill)) {
       return linkedCreditBalance(bill, creditAccounts) > 0;
     }
@@ -175,30 +176,14 @@ export function computeDashboardState(input: {
     ? computeMonthlyTakeHome(input.salary, monthAnchor, now)
     : null;
   const monthlyTakeHome = monthlyProjection?.totalTakeHome ?? 0;
-  const monthlyGross = monthlyProjection?.totalGross ?? 0;
-  const monthlyTaxes = monthlyProjection?.totalTaxes ?? 0;
-  const monthlyDeductions = monthlyProjection?.totalDeductions ?? 0;
   const monthlyDisposable = monthlyTakeHome - monthlyBills;
-
-  const totalSaved = input.goals.reduce((s, g) => s + g.currentAmount, 0);
-  const totalGoalTarget = input.goals.reduce((s, g) => s + g.targetAmount, 0);
-  const goalsProgress =
-    totalGoalTarget > 0 ? (totalSaved / totalGoalTarget) * 100 : 0;
-
-  const topGoals = [...input.goals]
-    .sort(
-      (a, b) =>
-        b.currentAmount / Math.max(b.targetAmount, 1) -
-        a.currentAmount / Math.max(a.targetAmount, 1),
-    )
-    .slice(0, 3);
 
   const upcomingBills = visibleBills
     .filter((bill) => {
       const nextDue = nextDueDateMillis(bill, now);
       const withinWindow =
         isPastDue(bill, now) ||
-        (nextDue != null && nextDue <= threeMonthsFromNow.getTime());
+        (nextDue != null && nextDue <= now + DUE_SOON_LIST_MS);
       if (!withinWindow) return false;
       if (!billUnpaid(bill, now)) return false;
       if (isCreditOrLoan(bill)) {
@@ -221,42 +206,29 @@ export function computeDashboardState(input: {
     .slice(0, 5);
 
   const year = new Date(now).getFullYear();
-  let ytdNetPay = 0;
-  let ytdSource: DashboardState["ytdSource"] = "none";
-  if (input.salary && calc) {
-    const annual = calculateAnnual(input.salary, 0);
-    const ytd = summarizeYtd(input.salary, calc, annual, year, now);
-    ytdNetPay = ytd.netPay;
-    ytdSource = ytd.source;
-  }
+  const missingPaycheckCount = input.salary
+    ? missingPaydaysForYear(input.salary, year, now).length
+    : 0;
 
-  const hasSalary = input.salary != null && (input.salary.hourlyRate > 0 || calc != null);
+  const mortgage = creditAccounts.find((a) => a.type === "MORTGAGE") ?? null;
+
+  const hasSalary =
+    input.salary != null &&
+    (input.salary.hourlyRate > 0 || input.calculation != null);
   const hasBills = allBills.length > 0;
 
   return {
     takeHomePay: monthlyTakeHome,
-    grossPay: monthlyGross,
-    totalTaxes: monthlyTaxes,
-    totalDeductions: monthlyDeductions,
-    effectiveTaxRate:
-      monthlyGross > 0
-        ? monthlyTaxes / monthlyGross
-        : (calc?.effectiveTaxRate ?? 0),
     monthlyBills,
     monthlyDisposable,
-    billCount: visibleBills.length,
     billsComingDueCount,
     overdueBillCount,
-    billCategoryTotals,
     housingMonthly: housingMonthlyTotal(creditAccounts),
+    mortgageAccountId: mortgage?.id ?? null,
+    missingPaycheckCount,
     goalCount: input.goals.length,
-    goalsProgress,
-    totalSaved,
-    totalGoalTarget,
-    topGoals,
+    primaryGoal: pickPrimaryGoal(input.goals, now),
     upcomingBills,
-    ytdNetPay,
-    ytdSource,
     monthlyTakeHomeSource: monthlyProjection?.source ?? "estimated",
     monthlyLoggedTakeHome: monthlyProjection?.loggedTakeHome ?? 0,
     monthlyProjectedRemainder: monthlyProjection?.projectedRemainder ?? 0,

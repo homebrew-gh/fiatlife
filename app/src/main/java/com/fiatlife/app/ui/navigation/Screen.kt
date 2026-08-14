@@ -14,10 +14,10 @@ sealed class Screen(
 ) {
     data object Dashboard : Screen(
         route = "dashboard",
-        title = "FiatLife",
-        subtitle = "Your financial dashboard",
-        selectedIcon = Icons.Filled.Dashboard,
-        unselectedIcon = Icons.Outlined.Dashboard
+        title = "Home",
+        subtitle = "This month at a glance",
+        selectedIcon = Icons.Filled.Home,
+        unselectedIcon = Icons.Outlined.Home
     )
 
     data object Salary : Screen(
@@ -120,7 +120,7 @@ sealed class Screen(
 
     companion object {
         /** Bottom tab items (Settings stays in the top bar). */
-        val bottomNavItems = listOf(Dashboard, Salary, Bills, Debt, Goals, Budget)
+        val bottomNavItems = listOf(Dashboard, Bills, Salary, Debt, Goals, Budget)
 
         fun fromRoute(route: String?): Screen? = when {
             route == Dashboard.route -> Dashboard
