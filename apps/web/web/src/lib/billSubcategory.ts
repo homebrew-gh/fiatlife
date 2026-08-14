@@ -160,7 +160,13 @@ export function subcategoriesForGeneral(
   );
 }
 
-export function subcategoryLabel(sub: string): string {
+export function subcategoryLabel(
+  sub: string,
+  options?: { treatMortgageRentAsMortgage?: boolean },
+): string {
+  if (sub === "MORTGAGE_RENT" && options?.treatMortgageRentAsMortgage) {
+    return "Mortgage";
+  }
   return SUBCATEGORY_LABELS[sub as BillSubcategory] ?? sub;
 }
 

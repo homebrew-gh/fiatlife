@@ -5,6 +5,10 @@ import { CreditAccountSheet } from "../components/debt/CreditAccountSheet";
 import { PaymentHistoryList } from "../components/debt/PaymentHistoryList";
 import { StatementAttachments } from "../components/debt/StatementAttachments";
 import { MortgageScheduleSection } from "../components/debt/MortgageScheduleSection";
+import {
+  MortgagePaymentSnapshotCard,
+  snapshotForAccount,
+} from "../components/debt/MortgagePaymentSnapshot";
 import { UpdateBalanceSheet } from "../components/debt/UpdateBalanceSheet";
 import { findLinkedBill } from "../lib/creditBillLink";
 import {
@@ -70,6 +74,8 @@ export function DebtDetailRoute() {
   const promoActive = isPromotionActive(account);
   const promoMonths = monthsUntilPromotionEnds(account);
   const promoClearPayment = paymentToClearPromotion(account);
+
+  const mortgageSnap = snapshotForAccount(account);
 
   const onDelete = async () => {
     if (
@@ -191,7 +197,12 @@ export function DebtDetailRoute() {
       </HeroCard>
 
       {account.type === "MORTGAGE" ? (
-        <MortgageScheduleSection account={account} />
+        <>
+          {mortgageSnap ? (
+            <MortgagePaymentSnapshotCard snapshot={mortgageSnap} />
+          ) : null}
+          <MortgageScheduleSection account={account} />
+        </>
       ) : (
         <PayoffSection account={account} />
       )}

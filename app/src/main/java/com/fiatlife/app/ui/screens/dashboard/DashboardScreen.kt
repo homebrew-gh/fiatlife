@@ -172,6 +172,24 @@ fun DashboardScreen(
                         valueColor = if (state.monthlyDisposable >= 0) ProfitGreen else LossRed
                     )
                 }
+                if (state.housingMonthly > 0.0) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Housing (PITI)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = state.housingMonthly.formatCurrency(),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
                 if (state.billCategoryTotals.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(12.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {

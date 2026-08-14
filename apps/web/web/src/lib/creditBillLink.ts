@@ -10,6 +10,8 @@ import {
   effectiveMonthlyPayment,
   isAmortizingType,
   isRevolvingType,
+  monthlyHomeInsurance,
+  monthlyPropertyTax,
   type CreditAccount,
 } from "./creditAccount";
 
@@ -32,6 +34,7 @@ function dayOfMonthFromMillis(ms: number): number {
 function billSubcategoryForAccount(account: CreditAccount): string {
   if (account.type === "CREDIT_CARD") return "CREDIT_CARD";
   if (account.type === "STUDENT_LOAN") return "STUDENT_LOAN";
+  if (account.type === "MORTGAGE") return "MORTGAGE_RENT";
   return "OTHER_LOAN";
 }
 
@@ -219,12 +222,158 @@ async function ensureAnnualFeeBill(
   return { ...account, annualFeeLinkedBillId: feeBillId };
 }
 
+type HousingLine = {
+  key: "propertyTax" | "homeInsurance" | "hoa" | "pmi";
+  escrowed: boolean;
+  monthlyAmount: number;
+  subcategory: string;
+  nameSuffix: string;
+  linkedId: string | null | undefined;
+  idField:
+    | "linkedPropertyTaxBillId"
+    | "linkedHomeInsuranceBillId"
+    | "linkedHoaBillId"
+    | "linkedPmiBillId";
+};
+
+function housingLines(account: CreditAccount): HousingLine[] {
+  return [
+    {
+      key: "propertyTax",
+      escrowed: account.propertyTaxEscrowed !== false,
+      monthlyAmount: monthlyPropertyTax(account),
+      subcategory: "PROPERTY_TAX",
+      nameSuffix: "Property Tax",
+      linkedId: account.linkedPropertyTaxBillId,
+      idField: "linkedPropertyTaxBillId",
+    },
+    {
+      key: "homeInsurance",
+      escrowed: account.homeInsuranceEscrowed !== false,
+      monthlyAmount: monthlyHomeInsurance(account),
+      subcategory: "HOME_INSURANCE",
+      nameSuffix: "Home Insurance",
+      linkedId: account.linkedHomeInsuranceBillId,
+      idField: "linkedHomeInsuranceBillId",
+    },
+    {
+      key: "hoa",
+      escrowed: Boolean(account.hoaEscrowed),
+      monthlyAmount: Math.max(0, account.monthlyHoa ?? 0),
+      subcategory: "HOA",
+      nameSuffix: "HOA",
+      linkedId: account.linkedHoaBillId,
+      idField: "linkedHoaBillId",
+    },
+    {
+      key: "pmi",
+      escrowed: account.pmiEscrowed !== false,
+      monthlyAmount: Math.max(0, account.monthlyPmi ?? 0),
+      subcategory: "OTHER",
+      nameSuffix: "PMI",
+      linkedId: account.linkedPmiBillId,
+      idField: "linkedPmiBillId",
+    },
+  ];
+}
+
+async function ensureHousingSatelliteBills(
+  account: CreditAccount,
+  ops: BillOps,
+): Promise<CreditAccount> {
+  if (account.type !== "MORTGAGE") {
+    let next = account;
+    for (const line of housingLines(account)) {
+      if (line.linkedId) {
+        const item = ops.getBillById(line.linkedId);
+        if (item) await ops.deleteBill(item);
+        next = { ...next, [line.idField]: null };
+      }
+    }
+    return next;
+  }
+
+  let next = account;
+  for (const line of housingLines(next)) {
+    const needed = !line.escrowed && line.monthlyAmount > 0;
+    if (!needed) {
+      if (line.linkedId) {
+        const item = ops.getBillById(line.linkedId);
+        if (item) await ops.deleteBill(item);
+        next = { ...next, [line.idField]: null };
+      }
+      continue;
+    }
+
+    const billName = `${next.name} ${line.nameSuffix}`;
+    const updateBill = (existing: Bill): Bill => ({
+      ...existing,
+      name: billName,
+      amount: line.monthlyAmount,
+      frequency: "MONTHLY",
+      dueDay: next.dueDay,
+      subcategory: line.subcategory,
+      isRecurring: true,
+      isCancelled: false,
+      linkedCreditAccountId: null,
+      accountName: next.name,
+      billerName: next.name,
+      updatedAt: Date.now(),
+    });
+
+    if (line.linkedId) {
+      const linked = ops.getBillById(line.linkedId);
+      if (linked) {
+        await ops.saveBill(updateBill(linked.bill), linked.source, linked.dTag);
+        continue;
+      }
+    }
+
+    const existingByName = ops.getAllBills().find(
+      (b) =>
+        !b.linkedCreditAccountId &&
+        b.name.toLowerCase() === billName.toLowerCase(),
+    );
+    if (existingByName) {
+      const item = ops.getBillById(existingByName.id);
+      if (item) {
+        await ops.saveBill(updateBill(item.bill), item.source, item.dTag);
+        next = { ...next, [line.idField]: existingByName.id };
+      }
+      continue;
+    }
+
+    const billId = newBillId();
+    const now = Date.now();
+    const bill: Bill = {
+      id: billId,
+      name: billName,
+      amount: line.monthlyAmount,
+      subcategory: line.subcategory,
+      frequency: "MONTHLY",
+      dueDay: next.dueDay,
+      isRecurring: true,
+      isCancelled: false,
+      isPaid: false,
+      paymentHistory: [],
+      accountName: next.name,
+      billerName: next.name,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await ops.saveBill(bill, "NATIVE");
+    next = { ...next, [line.idField]: billId };
+  }
+  return next;
+}
+
 export async function ensureBillsForAccount(
   account: CreditAccount,
   ops: BillOps,
 ): Promise<CreditAccount> {
   const primary = await ensurePrimaryBillForAccount(account, ops);
-  return ensureAnnualFeeBill(primary, ops);
+  const withFee = await ensureAnnualFeeBill(primary, ops);
+  return ensureHousingSatelliteBills(withFee, ops);
 }
 
 export async function inferCreditPaymentFromBalanceDrop(

@@ -227,6 +227,13 @@ enum class BillSubcategory(val generalCategory: BillGeneralCategory) {
         }
 }
 
+fun BillSubcategory.label(treatMortgageRentAsMortgage: Boolean = false): String =
+    if (this == BillSubcategory.MORTGAGE_RENT && treatMortgageRentAsMortgage) {
+        "Mortgage"
+    } else {
+        displayName
+    }
+
 @Serializable
 data class Bill(
     val id: String = "",

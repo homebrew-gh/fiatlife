@@ -12,6 +12,7 @@ import {
 import {
   effectiveAmountDue as accountAmountDue,
   effectiveMonthlyPayment,
+  housingMonthlyTotal,
   type CreditAccount,
 } from "./creditAccount";
 import type { FinancialGoal } from "./goal";
@@ -37,6 +38,7 @@ export type DashboardState = {
   billsComingDueCount: number;
   overdueBillCount: number;
   billCategoryTotals: Partial<Record<BillGeneralCategory, number>>;
+  housingMonthly: number;
   goalCount: number;
   goalsProgress: number;
   totalSaved: number;
@@ -246,6 +248,7 @@ export function computeDashboardState(input: {
     billsComingDueCount,
     overdueBillCount,
     billCategoryTotals,
+    housingMonthly: housingMonthlyTotal(creditAccounts),
     goalCount: input.goals.length,
     goalsProgress,
     totalSaved,

@@ -106,7 +106,11 @@ export function MortgageScheduleSection({
       <div>
         <h2 className="section-title">Mortgage Schedule</h2>
         <p className="text-sm text-muted mt-1">
-          Principal &amp; interest amortization based on your loan terms.
+          Principal &amp; interest amortization based on your loan terms
+          {account.extraMonthlyPrincipal
+            ? `, including ${formatUsd(account.extraMonthlyPrincipal)} extra principal each month`
+            : ""}
+          .
         </p>
       </div>
 

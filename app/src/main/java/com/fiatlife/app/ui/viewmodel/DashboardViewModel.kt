@@ -30,6 +30,7 @@ data class DashboardState(
     /** Unpaid bills that are past due. */
     val overdueBillCount: Int = 0,
     val billCategoryTotals: Map<BillGeneralCategory, Double> = emptyMap(),
+    val housingMonthly: Double = 0.0,
     val goalCount: Int = 0,
     val goalsProgress: Double = 0.0,
     val totalSaved: Double = 0.0,
@@ -239,6 +240,7 @@ private fun buildDashboardState(
         billsComingDueCount = comingDueCount,
         overdueBillCount = overdueCount,
         billCategoryTotals = billCategoryTotals,
+        housingMonthly = creditAccounts.sumOf { it.housingPitiMonthly() },
         goalCount = goals.size,
         goalsProgress = goalsProgress,
         totalSaved = totalSaved,

@@ -4,13 +4,19 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.fiatlife.app.data.repository.BillRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
+import com.fiatlife.app.data.repository.GoalRepository
 import com.fiatlife.app.data.repository.stateWhileSubscribed
 import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.domain.model.CreditAccount
+import com.fiatlife.app.domain.model.CreditAccountType
 import com.fiatlife.app.domain.model.CreditStatementUpdate
 import com.fiatlife.app.domain.model.DebtPayoffSummary
+import com.fiatlife.app.domain.model.FinancialGoal
+import com.fiatlife.app.domain.model.GoalCategory
 import com.fiatlife.app.domain.model.isMinimumPaymentTrap
 import com.fiatlife.app.domain.model.monthlyInterest
+import com.fiatlife.app.domain.model.suggestedEmergencyFundTarget
+import com.fiatlife.app.domain.model.suggestedMaintenanceAnnual
 import com.fiatlife.app.domain.model.summarizeDebtPayoff
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -45,7 +52,8 @@ data class DebtState(
     val editingAccount: CreditAccount? = null,
     val navigateToAccountId: String? = null,
     val isSaving: Boolean = false,
-    val message: String = ""
+    val message: String = "",
+    val pendingMortgageGoals: CreditAccount? = null
 )
 
 private data class DebtComputed(
@@ -64,13 +72,15 @@ private data class DebtUiOverlay(
     val editingAccount: CreditAccount? = null,
     val navigateToAccountId: String? = null,
     val isSaving: Boolean = false,
-    val message: String = ""
+    val message: String = "",
+    val pendingMortgageGoals: CreditAccount? = null
 )
 
 @HiltViewModel
 class DebtViewModel @Inject constructor(
     private val repository: CreditAccountRepository,
-    private val billRepository: BillRepository
+    private val billRepository: BillRepository,
+    private val goalRepository: GoalRepository
 ) : ViewModel() {
 
     private val uiOverlay = MutableStateFlow(DebtUiOverlay())
@@ -97,7 +107,8 @@ class DebtViewModel @Inject constructor(
             editingAccount = ui.editingAccount,
             navigateToAccountId = ui.navigateToAccountId,
             isSaving = ui.isSaving,
-            message = ui.message
+            message = ui.message,
+            pendingMortgageGoals = ui.pendingMortgageGoals
         )
     }.stateWhileSubscribed(viewModelScope, DebtState())
 
@@ -121,17 +132,93 @@ class DebtViewModel @Inject constructor(
         viewModelScope.launch {
             uiOverlay.update { it.copy(isSaving = true) }
             try {
+                val previous = state.value.accounts.find { it.id == account.id }
                 val saved = repository.saveCreditAccount(account)
+                val promptGoals = previous == null && saved.type == CreditAccountType.MORTGAGE
                 uiOverlay.update {
                     it.copy(
                         isSaving = false,
                         showAddDialog = false,
                         editingAccount = null,
-                        navigateToAccountId = saved.id
+                        navigateToAccountId = if (promptGoals) null else saved.id,
+                        pendingMortgageGoals = if (promptGoals) saved else null
                     )
                 }
             } catch (e: Exception) {
                 uiOverlay.update { it.copy(isSaving = false, message = "Error: ${e.message}") }
+            }
+        }
+    }
+
+    fun skipMortgageGoals() {
+        val account = uiOverlay.value.pendingMortgageGoals ?: return
+        uiOverlay.update {
+            it.copy(pendingMortgageGoals = null, navigateToAccountId = account.id)
+        }
+    }
+
+    fun applyMortgageGoals(
+        emergencyMonths: Int,
+        includeEmergency: Boolean,
+        includeMaintenance: Boolean
+    ) {
+        viewModelScope.launch {
+            val account = uiOverlay.value.pendingMortgageGoals ?: return@launch
+            val existing = goalRepository.getAllGoals().first()
+            val now = System.currentTimeMillis()
+            val housing = account.housingPitiMonthly()
+            if (includeEmergency && housing > 0) {
+                val target = suggestedEmergencyFundTarget(housing, emergencyMonths)
+                val current = existing.firstOrNull { it.category == GoalCategory.EMERGENCY_FUND }
+                if (current != null) {
+                    goalRepository.saveGoal(
+                        current.copy(targetAmount = maxOf(current.targetAmount, target), updatedAt = now)
+                    )
+                } else {
+                    goalRepository.saveGoal(
+                        FinancialGoal(
+                            name = "Emergency fund",
+                            category = GoalCategory.EMERGENCY_FUND,
+                            targetAmount = target,
+                            color = GoalCategory.EMERGENCY_FUND.suggestedColor,
+                            createdAt = now,
+                            updatedAt = now
+                        )
+                    )
+                }
+            }
+            val homePrice = account.homePrice
+            if (includeMaintenance && homePrice > 0) {
+                val annual = suggestedMaintenanceAnnual(homePrice)
+                val current = existing.firstOrNull {
+                    it.category == GoalCategory.HOME_IMPROVEMENT &&
+                        it.name.contains("maintenance", ignoreCase = true)
+                }
+                if (current != null) {
+                    goalRepository.saveGoal(
+                        current.copy(
+                            targetAmount = maxOf(current.targetAmount, annual),
+                            monthlyContribution = maxOf(current.monthlyContribution, annual / 12.0),
+                            updatedAt = now
+                        )
+                    )
+                } else {
+                    goalRepository.saveGoal(
+                        FinancialGoal(
+                            name = "Home maintenance",
+                            category = GoalCategory.HOME_IMPROVEMENT,
+                            targetAmount = annual,
+                            monthlyContribution = annual / 12.0,
+                            notes = "About 1% of home price per year.",
+                            color = GoalCategory.HOME_IMPROVEMENT.suggestedColor,
+                            createdAt = now,
+                            updatedAt = now
+                        )
+                    )
+                }
+            }
+            uiOverlay.update {
+                it.copy(pendingMortgageGoals = null, navigateToAccountId = account.id)
             }
         }
     }

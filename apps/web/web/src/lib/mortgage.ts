@@ -1,4 +1,13 @@
-import type { CreditAccount } from "./creditAccount";
+import {
+  currentMonthlyPmi,
+  defaultCreditAccount,
+  effectiveMonthlyPayment,
+  escrowedMonthlyAmount,
+  monthlyHomeInsurance,
+  monthlyPropertyTax,
+  principalAndInterestPayment,
+  type CreditAccount,
+} from "./creditAccount";
 
 export type MortgageScheduleRow = {
   paymentNumber: number;
@@ -332,12 +341,28 @@ export function scheduleForMortgageAccount(
   const inputs = mortgageInputsFromAccount(account);
   if (!inputs) return null;
 
+  const constantEscrow =
+    (account.propertyTaxEscrowed !== false
+      ? monthlyPropertyTax(account)
+      : 0) +
+    (account.homeInsuranceEscrowed !== false
+      ? monthlyHomeInsurance(account)
+      : 0) +
+    (account.hoaEscrowed ? Math.max(0, account.monthlyHoa ?? 0) : 0);
+  const pmi =
+    account.pmiEscrowed !== false ? Math.max(0, account.monthlyPmi ?? 0) : 0;
+
   return buildAmortizationSchedule({
     principal: inputs.principal,
     annualRate: inputs.annualRate,
     termMonths: inputs.termMonths,
     startDateMs: inputs.startDateMs,
     monthlyPayment: inputs.monthlyPayment,
+    extraMonthlyPayment: account.extraMonthlyPrincipal ?? 0,
+    monthlyTaxInsurance: constantEscrow,
+    monthlyPmi: pmi,
+    pmiDropBalance:
+      (account.homePrice ?? 0) > 0 ? (account.homePrice ?? 0) * 0.8 : 0,
     nowMs,
   });
 }
@@ -496,4 +521,96 @@ export function termYearsFromMonths(months: number | null | undefined): number {
 
 export function termMonthsFromYears(years: number): number {
   return Math.max(1, Math.round(years * 12));
+}
+
+export type MortgagePaymentSnapshot = {
+  principal: number;
+  interest: number;
+  extraPrincipal: number;
+  escrow: number;
+  pmi: number;
+  remainingBalance: number;
+  principalPaid: number;
+  interestPaid: number;
+  paymentsRemaining: number;
+  paymentsElapsed: number;
+  payoffDateMs: number | null;
+  monthlyPi: number;
+  servicerDraft: number;
+};
+
+export function currentMortgagePaymentSnapshot(
+  account: CreditAccount,
+  nowMs = Date.now(),
+): MortgagePaymentSnapshot | null {
+  if (account.type !== "MORTGAGE") return null;
+  const pi = principalAndInterestPayment(account);
+  if (pi <= 0 && account.currentBalance <= 0) return null;
+  const balance = Math.max(0, account.currentBalance);
+  const interest = account.apr > 0 ? balance * (account.apr / 12) : 0;
+  let principal = Math.max(0, pi - interest);
+  if (principal > balance) principal = balance;
+  const extra = Math.min(
+    Math.max(0, account.extraMonthlyPrincipal ?? 0),
+    Math.max(0, balance - principal),
+  );
+  const pmi =
+    account.pmiEscrowed !== false ? currentMonthlyPmi(account) : 0;
+  const escrow = Math.max(0, escrowedMonthlyAmount(account) - pmi);
+  const schedule = scheduleForMortgageAccount(account, nowMs);
+  return {
+    principal,
+    interest,
+    extraPrincipal: extra,
+    escrow,
+    pmi,
+    remainingBalance: balance,
+    principalPaid: schedule?.summary.principalPaid ?? 0,
+    interestPaid: schedule?.summary.interestPaid ?? 0,
+    paymentsRemaining: schedule?.summary.paymentsRemaining ?? 0,
+    paymentsElapsed: schedule?.summary.paymentsElapsed ?? 0,
+    payoffDateMs: schedule?.summary.payoffDateMs ?? null,
+    monthlyPi: pi,
+    servicerDraft: effectiveMonthlyPayment(account),
+  };
+}
+
+export function creditAccountFromScenario(
+  result: MortgageScenarioResult,
+  extras?: { name?: string; dueDay?: number; startDateMs?: number },
+): Omit<CreditAccount, "id" | "createdAt" | "updatedAt"> {
+  const now = extras?.startDateMs ?? Date.now();
+  return defaultCreditAccount({
+    name: extras?.name?.trim() || "Mortgage",
+    type: "MORTGAGE",
+    apr: result.annualRate / 100,
+    standardApr: result.annualRate / 100,
+    currentBalance: result.summary.loanAmount,
+    dueDay: extras?.dueDay ?? 1,
+    originalPrincipal: result.summary.loanAmount,
+    termMonths: termMonthsFromYears(result.termYears),
+    monthlyPaymentAmount: result.summary.monthlyPayment,
+    startDate: now,
+    homePrice: result.homePrice,
+    annualPropertyTax: result.breakdown.monthlyPropertyTax * 12,
+    annualHomeInsurance: result.breakdown.monthlyHomeInsurance * 12,
+    monthlyHoa: result.breakdown.monthlyHoa,
+    monthlyPmi: result.breakdown.monthlyPmi,
+    extraMonthlyPrincipal: result.rows[0]?.extraPrincipal ?? 0,
+    propertyTaxEscrowed: true,
+    homeInsuranceEscrowed: true,
+    hoaEscrowed: false,
+    pmiEscrowed: result.breakdown.monthlyPmi > 0,
+  });
+}
+
+export function suggestedEmergencyFundTarget(
+  housingMonthly: number,
+  months: number,
+): number {
+  return Math.max(0, housingMonthly) * months;
+}
+
+export function suggestedMaintenanceAnnual(homePrice: number): number {
+  return Math.max(0, homePrice) * 0.01;
 }

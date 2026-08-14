@@ -39,6 +39,7 @@ import { useBillersData } from "../../lib/billersData";
 import { useBillsData } from "../../lib/billsData";
 import type { CreditAccount } from "../../lib/creditAccount";
 import { effectiveAmountDue as accountAmountDue } from "../../lib/creditAccount";
+import { MortgagePaymentSnapshotCard, snapshotForAccount } from "../../components/debt/MortgagePaymentSnapshot";
 import { useDebtData } from "../../lib/debtData";
 import { formatUsd } from "../../lib/format";
 import { useRecordBillPayment } from "../../lib/useBillPayment";
@@ -396,7 +397,11 @@ export function BillsTab() {
                     >
                       <span className="flex items-center gap-1">
                         <span aria-hidden>{collapsed ? "▸" : "▾"}</span>
-                        {subcategoryLabel(sub)}
+                        {subcategoryLabel(sub, {
+                          treatMortgageRentAsMortgage: creditAccounts.some(
+                            (a) => a.type === "MORTGAGE",
+                          ),
+                        })}
                         <span className="text-xs">({subItems.length})</span>
                       </span>
                       <span className="money">
@@ -567,6 +572,7 @@ function BillCard({
   const linkedAccount = bill.linkedCreditAccountId
     ? creditAccounts.find((a) => a.id === bill.linkedCreditAccountId)
     : undefined;
+  const mortgageSnap = snapshotForAccount(linkedAccount);
   const amountDue = linkedAccount
     ? accountAmountDue(linkedAccount)
     : effectiveAmountDue(bill);
@@ -626,6 +632,9 @@ function BillCard({
             {formatDueCountdown(bill, now)}
             {item.source === "CYPHERLOG" ? " · CypherLog" : ""}
           </p>
+          {mortgageSnap ? (
+            <MortgagePaymentSnapshotCard snapshot={mortgageSnap} compact />
+          ) : null}
         </button>
         <div className="flex items-center gap-3 shrink-0">
           <p className="money text-lg whitespace-nowrap">

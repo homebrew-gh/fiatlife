@@ -21,6 +21,7 @@ import {
   CREDIT_D_TAG_PREFIX,
   creditAccountDTag,
   defaultCreditAccount,
+  housingSatelliteBillIds,
   newCreditAccountId,
   parseCreditAccountRecord,
   serializeCreditAccount,
@@ -395,6 +396,10 @@ function DebtDataProviderInner({ children }: { children: ReactNode }) {
         if (account.annualFeeLinkedBillId) {
           const fee = getBillById(account.annualFeeLinkedBillId);
           if (fee) await deleteBill(fee);
+        }
+        for (const satelliteId of housingSatelliteBillIds(account)) {
+          const satellite = getBillById(satelliteId);
+          if (satellite) await deleteBill(satellite);
         }
         if (account.linkedBillId) {
           const linked = getBillById(account.linkedBillId);

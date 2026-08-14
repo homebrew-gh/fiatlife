@@ -71,6 +71,16 @@ export function CreditAccountSheet({
   const [annualFeeDate, setAnnualFeeDate] = useState("");
   const [annualFeeFrequency, setAnnualFeeFrequency] =
     useState<BillFrequency>("ANNUALLY");
+  const [homePrice, setHomePrice] = useState("");
+  const [annualPropertyTax, setAnnualPropertyTax] = useState("");
+  const [annualHomeInsurance, setAnnualHomeInsurance] = useState("");
+  const [monthlyHoa, setMonthlyHoa] = useState("");
+  const [monthlyPmi, setMonthlyPmi] = useState("");
+  const [extraMonthlyPrincipal, setExtraMonthlyPrincipal] = useState("");
+  const [propertyTaxEscrowed, setPropertyTaxEscrowed] = useState(true);
+  const [homeInsuranceEscrowed, setHomeInsuranceEscrowed] = useState(true);
+  const [hoaEscrowed, setHoaEscrowed] = useState(false);
+  const [pmiEscrowed, setPmiEscrowed] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -149,6 +159,34 @@ export function CreditAccountSheet({
         : "",
     );
     setAnnualFeeFrequency(acc?.annualFeeFrequency ?? "ANNUALLY");
+    setHomePrice(
+      acc?.homePrice != null && acc.homePrice > 0 ? String(acc.homePrice) : "",
+    );
+    setAnnualPropertyTax(
+      acc?.annualPropertyTax != null && acc.annualPropertyTax > 0
+        ? String(acc.annualPropertyTax)
+        : "",
+    );
+    setAnnualHomeInsurance(
+      acc?.annualHomeInsurance != null && acc.annualHomeInsurance > 0
+        ? String(acc.annualHomeInsurance)
+        : "",
+    );
+    setMonthlyHoa(
+      acc?.monthlyHoa != null && acc.monthlyHoa > 0 ? String(acc.monthlyHoa) : "",
+    );
+    setMonthlyPmi(
+      acc?.monthlyPmi != null && acc.monthlyPmi > 0 ? String(acc.monthlyPmi) : "",
+    );
+    setExtraMonthlyPrincipal(
+      acc?.extraMonthlyPrincipal != null && acc.extraMonthlyPrincipal > 0
+        ? String(acc.extraMonthlyPrincipal)
+        : "",
+    );
+    setPropertyTaxEscrowed(acc?.propertyTaxEscrowed !== false);
+    setHomeInsuranceEscrowed(acc?.homeInsuranceEscrowed !== false);
+    setHoaEscrowed(Boolean(acc?.hoaEscrowed));
+    setPmiEscrowed(acc?.pmiEscrowed !== false);
     setError(null);
   }, [open, account]);
 
@@ -254,6 +292,26 @@ export function CreditAccountSheet({
         annualFeeRenewalDateMillis:
           isCreditCard && feeAmount > 0 ? feeDateMillis : null,
         annualFeeFrequency: isCreditCard ? annualFeeFrequency : "ANNUALLY",
+        homePrice: isMortgage ? Math.max(0, Number.parseFloat(homePrice) || 0) : 0,
+        annualPropertyTax: isMortgage
+          ? Math.max(0, Number.parseFloat(annualPropertyTax) || 0)
+          : 0,
+        annualHomeInsurance: isMortgage
+          ? Math.max(0, Number.parseFloat(annualHomeInsurance) || 0)
+          : 0,
+        monthlyHoa: isMortgage ? Math.max(0, Number.parseFloat(monthlyHoa) || 0) : 0,
+        monthlyPmi: isMortgage ? Math.max(0, Number.parseFloat(monthlyPmi) || 0) : 0,
+        extraMonthlyPrincipal: isMortgage
+          ? Math.max(0, Number.parseFloat(extraMonthlyPrincipal) || 0)
+          : 0,
+        propertyTaxEscrowed: isMortgage ? propertyTaxEscrowed : true,
+        homeInsuranceEscrowed: isMortgage ? homeInsuranceEscrowed : true,
+        hoaEscrowed: isMortgage ? hoaEscrowed : false,
+        pmiEscrowed: isMortgage ? pmiEscrowed : true,
+        linkedPropertyTaxBillId: account?.linkedPropertyTaxBillId ?? null,
+        linkedHomeInsuranceBillId: account?.linkedHomeInsuranceBillId ?? null,
+        linkedHoaBillId: account?.linkedHoaBillId ?? null,
+        linkedPmiBillId: account?.linkedPmiBillId ?? null,
       });
       onClose();
     } catch {
@@ -625,6 +683,134 @@ export function CreditAccountSheet({
                   placeholder="Leave blank to calculate from rate & term"
                 />
               </div>
+              {isMortgage ? (
+                <>
+                  <div>
+                    <label className="label" htmlFor="acct-extra">
+                      Extra principal $/mo
+                    </label>
+                    <input
+                      id="acct-extra"
+                      className="input money"
+                      inputMode="decimal"
+                      value={extraMonthlyPrincipal}
+                      onChange={(e) => setExtraMonthlyPrincipal(e.target.value)}
+                      placeholder="0.00"
+                    />
+                  </div>
+                  <CollapsibleSection
+                    title="Taxes, escrow & PMI"
+                    summary="Home price, tax, insurance, HOA — escrowed or paid separately"
+                    bare
+                  >
+                    <div className="space-y-3">
+                      <div>
+                        <label className="label" htmlFor="acct-home-price">
+                          Home price
+                        </label>
+                        <input
+                          id="acct-home-price"
+                          className="input money"
+                          inputMode="decimal"
+                          value={homePrice}
+                          onChange={(e) => setHomePrice(e.target.value)}
+                          placeholder="0.00"
+                        />
+                      </div>
+                      <div>
+                        <label className="label" htmlFor="acct-tax">
+                          Property tax $/yr
+                        </label>
+                        <input
+                          id="acct-tax"
+                          className="input money"
+                          inputMode="decimal"
+                          value={annualPropertyTax}
+                          onChange={(e) => setAnnualPropertyTax(e.target.value)}
+                          placeholder="0.00"
+                        />
+                        <label className="flex items-center gap-2 text-sm mt-1">
+                          <input
+                            type="checkbox"
+                            checked={propertyTaxEscrowed}
+                            onChange={(e) =>
+                              setPropertyTaxEscrowed(e.target.checked)
+                            }
+                          />
+                          Escrowed in this payment
+                        </label>
+                      </div>
+                      <div>
+                        <label className="label" htmlFor="acct-ins">
+                          Home insurance $/yr
+                        </label>
+                        <input
+                          id="acct-ins"
+                          className="input money"
+                          inputMode="decimal"
+                          value={annualHomeInsurance}
+                          onChange={(e) =>
+                            setAnnualHomeInsurance(e.target.value)
+                          }
+                          placeholder="0.00"
+                        />
+                        <label className="flex items-center gap-2 text-sm mt-1">
+                          <input
+                            type="checkbox"
+                            checked={homeInsuranceEscrowed}
+                            onChange={(e) =>
+                              setHomeInsuranceEscrowed(e.target.checked)
+                            }
+                          />
+                          Escrowed in this payment
+                        </label>
+                      </div>
+                      <div>
+                        <label className="label" htmlFor="acct-hoa">
+                          HOA $/mo
+                        </label>
+                        <input
+                          id="acct-hoa"
+                          className="input money"
+                          inputMode="decimal"
+                          value={monthlyHoa}
+                          onChange={(e) => setMonthlyHoa(e.target.value)}
+                          placeholder="0.00"
+                        />
+                        <label className="flex items-center gap-2 text-sm mt-1">
+                          <input
+                            type="checkbox"
+                            checked={hoaEscrowed}
+                            onChange={(e) => setHoaEscrowed(e.target.checked)}
+                          />
+                          Escrowed in this payment
+                        </label>
+                      </div>
+                      <div>
+                        <label className="label" htmlFor="acct-pmi">
+                          PMI $/mo
+                        </label>
+                        <input
+                          id="acct-pmi"
+                          className="input money"
+                          inputMode="decimal"
+                          value={monthlyPmi}
+                          onChange={(e) => setMonthlyPmi(e.target.value)}
+                          placeholder="0.00"
+                        />
+                        <label className="flex items-center gap-2 text-sm mt-1">
+                          <input
+                            type="checkbox"
+                            checked={pmiEscrowed}
+                            onChange={(e) => setPmiEscrowed(e.target.checked)}
+                          />
+                          Escrowed in this payment
+                        </label>
+                      </div>
+                    </div>
+                  </CollapsibleSection>
+                </>
+              ) : null}
             </fieldset>
           ) : null}
 

@@ -295,6 +295,13 @@ export function DashboardTab() {
               </div>
             </div>
 
+            {dash.housingMonthly > 0 ? (
+              <div className="flex justify-between text-sm">
+                <span className="text-muted">Housing (PITI)</span>
+                <span className="money">{formatUsd(dash.housingMonthly)}</span>
+              </div>
+            ) : null}
+
             {categoryEntries.length > 0 ? (
               <div>
                 <p className="text-xs text-muted font-medium mb-2">

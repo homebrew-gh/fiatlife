@@ -720,7 +720,15 @@ function ScenarioForm({
   );
 }
 
-function ScenarioResultCard({ result }: { result: MortgageScenarioResult }) {
+function ScenarioResultCard({
+  result,
+  onSaveAsAccount,
+  saving,
+}: {
+  result: MortgageScenarioResult;
+  onSaveAsAccount?: (result: MortgageScenarioResult) => void;
+  saving?: boolean;
+}) {
   const [showSchedule, setShowSchedule] = useState(false);
   const payoff = result.summary.payoffDateMs
     ? formatMortgageDate(result.summary.payoffDateMs)
@@ -874,6 +882,16 @@ function ScenarioResultCard({ result }: { result: MortgageScenarioResult }) {
           </p>
         </div>
       ) : null}
+      {onSaveAsAccount ? (
+        <button
+          type="button"
+          className="btn-primary text-sm w-full"
+          onClick={() => onSaveAsAccount(result)}
+          disabled={saving}
+        >
+          {saving ? "Saving…" : "Save as mortgage account"}
+        </button>
+      ) : null}
       <button
         type="button"
         className="btn-ghost text-sm w-full"
@@ -1021,11 +1039,15 @@ export function MortgageCalculator({
   suggestedTakeHomeMonthlyIncome,
   conservativeTakeHome,
   trackedMonthlyDebts = 0,
+  onSaveAsAccount,
+  savingAccount,
 }: {
   suggestedGrossMonthlyIncome?: number;
   suggestedTakeHomeMonthlyIncome?: number;
   conservativeTakeHome?: ConservativeMonthlyTakeHome;
   trackedMonthlyDebts?: number;
+  onSaveAsAccount?: (result: MortgageScenarioResult) => void;
+  savingAccount?: boolean;
 } = {}) {
   const [draft, setDraft] = useState(() => defaultDraft("Scenario A"));
   const [saved, setSaved] = useState<MortgageScenarioResult[]>([]);
@@ -1096,7 +1118,11 @@ export function MortgageCalculator({
         <section className="card p-5 space-y-3">
           <h2 className="section-title">Live Preview</h2>
           {preview ? (
-            <ScenarioResultCard result={{ ...preview, label: "Live preview" }} />
+            <ScenarioResultCard
+              result={{ ...preview, label: "Live preview" }}
+              onSaveAsAccount={onSaveAsAccount}
+              saving={savingAccount}
+            />
           ) : (
             <p className="text-sm text-muted">
               Enter a home price, down payment, and term to see estimates.
@@ -1119,7 +1145,12 @@ export function MortgageCalculator({
           <h2 className="section-title">Saved Scenarios</h2>
           <div className="grid md:grid-cols-2 gap-3">
             {saved.map((result) => (
-              <ScenarioResultCard key={result.label} result={result} />
+              <ScenarioResultCard
+                key={result.label}
+                result={result}
+                onSaveAsAccount={onSaveAsAccount}
+                saving={savingAccount}
+              />
             ))}
           </div>
         </div>

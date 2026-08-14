@@ -35,6 +35,8 @@ import { isPaidForCurrentCycle } from "../../lib/bill";
 import { useBillsData } from "../../lib/billsData";
 import { useDebtData } from "../../lib/debtData";
 import { formatUsd } from "../../lib/format";
+import { MortgageGoalsPrompt } from "../../components/debt/MortgageGoalsPrompt";
+import { useGoalsData } from "../../lib/goalsData";
 
 function DebtAccountCard({
   account,
@@ -150,7 +152,10 @@ export function DebtTab() {
   const [showSheet, setShowSheet] = useState(false);
   const [statementAccount, setStatementAccount] =
     useState<CreditAccount | null>(null);
+  const [goalsPromptAccount, setGoalsPromptAccount] =
+    useState<CreditAccount | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const { goals, saveGoal, saving: goalsSaving } = useGoalsData();
 
   const summary = useMemo(() => summarizeDebt(accounts), [accounts]);
   const payoff = useMemo(() => summarizeDebtPayoff(accounts), [accounts]);
@@ -185,7 +190,11 @@ export function DebtTab() {
   ) => {
     const saved = await addAccount(input);
     setShowSheet(false);
-    navigate(`/app/debt/${saved.id}`);
+    if (saved.type === "MORTGAGE") {
+      setGoalsPromptAccount(saved);
+    } else {
+      navigate(`/app/debt/${saved.id}`);
+    }
   };
 
   return (
@@ -365,6 +374,26 @@ export function DebtTab() {
         }}
         saving={saving}
       />
+      {goalsPromptAccount ? (
+        <MortgageGoalsPrompt
+          account={goalsPromptAccount}
+          existingGoals={goals}
+          saving={goalsSaving}
+          onSkip={() => {
+            const id = goalsPromptAccount.id;
+            setGoalsPromptAccount(null);
+            navigate(`/app/debt/${id}`);
+          }}
+          onApply={async (nextGoals) => {
+            const id = goalsPromptAccount.id;
+            for (const goal of nextGoals) {
+              await saveGoal(goal);
+            }
+            setGoalsPromptAccount(null);
+            navigate(`/app/debt/${id}`);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

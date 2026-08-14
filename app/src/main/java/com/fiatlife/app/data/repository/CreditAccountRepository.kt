@@ -125,16 +125,20 @@ class CreditAccountRepository @Inject constructor(
     /** Ensure account-linked bills are in sync (monthly payment + optional annual fee bill). */
     private suspend fun ensureBillForAccount(account: CreditAccount): CreditAccount {
         val primaryUpdated = ensurePrimaryBillForAccount(account)
-        return ensureAnnualFeeBill(primaryUpdated)
+        val withFee = ensureAnnualFeeBill(primaryUpdated)
+        return ensureHousingSatelliteBills(withFee)
+    }
+
+    private fun billSubcategoryForAccount(account: CreditAccount): BillSubcategory = when (account.type) {
+        CreditAccountType.CREDIT_CARD -> BillSubcategory.CREDIT_CARD
+        CreditAccountType.STUDENT_LOAN -> BillSubcategory.STUDENT_LOAN
+        CreditAccountType.MORTGAGE -> BillSubcategory.MORTGAGE_RENT
+        else -> BillSubcategory.OTHER_LOAN
     }
 
     /** Keep the account-linked payment reminder synchronized without deleting its history at zero balance. */
     private suspend fun ensurePrimaryBillForAccount(account: CreditAccount): CreditAccount {
-        val subcategory = when (account.type) {
-            CreditAccountType.CREDIT_CARD -> BillSubcategory.CREDIT_CARD
-            CreditAccountType.STUDENT_LOAN -> BillSubcategory.STUDENT_LOAN
-            else -> BillSubcategory.OTHER_LOAN
-        }
+        val subcategory = billSubcategoryForAccount(account)
         val allBills = billRepository.getAllBills().first()
         suspend fun updateLinkedBill(existing: Bill) {
             billRepository.saveBill(
@@ -280,6 +284,135 @@ class CreditAccountRepository @Inject constructor(
         return linked
     }
 
+    private data class HousingLine(
+        val escrowed: Boolean,
+        val monthlyAmount: Double,
+        val subcategory: BillSubcategory,
+        val nameSuffix: String,
+        val linkedId: String?,
+        val applyId: (CreditAccount, String?) -> CreditAccount
+    )
+
+    private fun housingLines(account: CreditAccount): List<HousingLine> = listOf(
+        HousingLine(
+            escrowed = account.propertyTaxEscrowed,
+            monthlyAmount = account.monthlyPropertyTax(),
+            subcategory = BillSubcategory.PROPERTY_TAX,
+            nameSuffix = "Property Tax",
+            linkedId = account.linkedPropertyTaxBillId,
+            applyId = { acc, id -> acc.copy(linkedPropertyTaxBillId = id) }
+        ),
+        HousingLine(
+            escrowed = account.homeInsuranceEscrowed,
+            monthlyAmount = account.monthlyHomeInsurance(),
+            subcategory = BillSubcategory.HOME_INSURANCE,
+            nameSuffix = "Home Insurance",
+            linkedId = account.linkedHomeInsuranceBillId,
+            applyId = { acc, id -> acc.copy(linkedHomeInsuranceBillId = id) }
+        ),
+        HousingLine(
+            escrowed = account.hoaEscrowed,
+            monthlyAmount = account.monthlyHoa.coerceAtLeast(0.0),
+            subcategory = BillSubcategory.HOA,
+            nameSuffix = "HOA",
+            linkedId = account.linkedHoaBillId,
+            applyId = { acc, id -> acc.copy(linkedHoaBillId = id) }
+        ),
+        HousingLine(
+            escrowed = account.pmiEscrowed,
+            monthlyAmount = account.monthlyPmi.coerceAtLeast(0.0),
+            subcategory = BillSubcategory.OTHER,
+            nameSuffix = "PMI",
+            linkedId = account.linkedPmiBillId,
+            applyId = { acc, id -> acc.copy(linkedPmiBillId = id) }
+        )
+    )
+
+    private suspend fun ensureHousingSatelliteBills(account: CreditAccount): CreditAccount {
+        if (account.type != CreditAccountType.MORTGAGE) {
+            var next = account
+            var changed = false
+            for (line in housingLines(account)) {
+                val id = line.linkedId ?: continue
+                billRepository.getBillById(id).first()?.let { billRepository.deleteBill(it) }
+                next = line.applyId(next, null)
+                changed = true
+            }
+            if (changed) persistAccountWithoutEnsure(next)
+            return next
+        }
+
+        var next = account
+        var changed = false
+        for (line in housingLines(next)) {
+            val needed = !line.escrowed && line.monthlyAmount > 0.0
+            if (!needed) {
+                val id = line.linkedId
+                if (id != null) {
+                    billRepository.getBillById(id).first()?.let { billRepository.deleteBill(it) }
+                    next = line.applyId(next, null)
+                    changed = true
+                }
+                continue
+            }
+            val billName = "${next.name} ${line.nameSuffix}"
+            val updateBill: (Bill) -> Bill = { existing ->
+                existing.copy(
+                    name = billName,
+                    amount = line.monthlyAmount,
+                    frequency = BillFrequency.MONTHLY,
+                    dueDay = next.dueDay,
+                    subcategory = line.subcategory,
+                    isRecurring = true,
+                    isCancelled = false,
+                    linkedCreditAccountId = null,
+                    accountName = next.name,
+                    billerName = next.name,
+                    updatedAt = System.currentTimeMillis()
+                )
+            }
+            val linkedId = line.linkedId
+            if (linkedId != null) {
+                val existingLinked = billRepository.getBillById(linkedId).first()
+                if (existingLinked != null) {
+                    billRepository.saveBill(updateBill(existingLinked))
+                    continue
+                }
+            }
+            val existingByName = billRepository.getAllBills().first().firstOrNull { b ->
+                b.linkedCreditAccountId == null &&
+                    b.name.equals(billName, ignoreCase = true)
+            }
+            if (existingByName != null) {
+                billRepository.saveBill(updateBill(existingByName))
+                next = line.applyId(next, existingByName.id)
+                changed = true
+                continue
+            }
+            val billId = UUID.randomUUID().toString()
+            val now = System.currentTimeMillis()
+            billRepository.saveBill(
+                Bill(
+                    id = billId,
+                    name = billName,
+                    amount = line.monthlyAmount,
+                    subcategory = line.subcategory,
+                    frequency = BillFrequency.MONTHLY,
+                    dueDay = next.dueDay,
+                    isRecurring = true,
+                    accountName = next.name,
+                    billerName = next.name,
+                    createdAt = now,
+                    updatedAt = now
+                )
+            )
+            next = line.applyId(next, billId)
+            changed = true
+        }
+        if (changed) persistAccountWithoutEnsure(next)
+        return next
+    }
+
     private suspend fun createAndLinkBill(account: CreditAccount, billSubcategory: BillSubcategory): CreditAccount {
         val billId = UUID.randomUUID().toString()
         val bill = Bill(
@@ -322,6 +455,9 @@ class CreditAccountRepository @Inject constructor(
             billRepository.getBillById(feeBillId).first()?.let { feeBill ->
                 billRepository.deleteBill(feeBill)
             }
+        }
+        account.housingSatelliteBillIds().forEach { satelliteId ->
+            billRepository.getBillById(satelliteId).first()?.let { billRepository.deleteBill(it) }
         }
         creditAccountDao.delete(
             CreditAccountEntity(id = account.id, jsonData = "", type = account.type.name)
@@ -436,11 +572,7 @@ class CreditAccountRepository @Inject constructor(
                 return@forEach
             }
 
-            val subcategory = when (account.type) {
-                CreditAccountType.CREDIT_CARD -> BillSubcategory.CREDIT_CARD
-                CreditAccountType.STUDENT_LOAN -> BillSubcategory.STUDENT_LOAN
-                else -> BillSubcategory.OTHER_LOAN
-            }
+            val subcategory = billSubcategoryForAccount(account)
             createAndLinkBill(account, subcategory)
             created++
         }

@@ -24,7 +24,10 @@ import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.ui.navigation.Screen
 import com.fiatlife.app.domain.model.BillPayment
 import com.fiatlife.app.domain.model.StatementEntry
+import com.fiatlife.app.domain.model.CreditAccountType
+import com.fiatlife.app.domain.model.label
 import com.fiatlife.app.ui.components.CurrencyTextField
+import com.fiatlife.app.ui.components.MortgageSnapshotLines
 import com.fiatlife.app.ui.components.MoneyText
 import com.fiatlife.app.ui.components.SectionCard
 import com.fiatlife.app.ui.components.formatCurrency
@@ -118,7 +121,14 @@ fun BillDetailScreen(
                         Spacer(modifier = Modifier.height(4.dp))
                         AssistChip(
                             onClick = {},
-                            label = { Text(b.effectiveSubcategory.displayName, style = MaterialTheme.typography.labelMedium) }
+                            label = {
+                                Text(
+                                    b.effectiveSubcategory.label(
+                                        linkedCreditAccount?.type == CreditAccountType.MORTGAGE
+                                    ),
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                            }
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         MoneyText(
@@ -248,6 +258,14 @@ fun BillDetailScreen(
                                 )
                             }
                         }
+                    }
+                }
+            }
+
+            if (linkedCreditAccount?.type == CreditAccountType.MORTGAGE) {
+                item {
+                    SectionCard(title = "This mortgage payment", icon = Icons.Filled.Home) {
+                        MortgageSnapshotLines(account = linkedCreditAccount!!)
                     }
                 }
             }

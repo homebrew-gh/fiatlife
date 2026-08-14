@@ -29,6 +29,10 @@ import { formatUsd } from "../lib/format";
 import { effectiveAmountDue as accountAmountDue } from "../lib/creditAccount";
 import { useRecordBillPayment } from "../lib/useBillPayment";
 import { useSaveBill } from "../lib/useSaveBill";
+import {
+  MortgagePaymentSnapshotCard,
+  snapshotForAccount,
+} from "../components/debt/MortgagePaymentSnapshot";
 
 function formatDate(ms: number): string {
   if (ms <= 0) return "—";
@@ -101,6 +105,7 @@ export function BillDetailRoute() {
   const pastDue = isPastDue(bill, now);
   const paidCycle = isPaidForCurrentCycle(bill, now);
   const nextDue = nextDueDateMillis(bill, now);
+  const mortgageSnap = snapshotForAccount(linkedAccount);
 
   const onSaveEdit = async (input: BillSheetInput) => {
     await saveBillWithBiller(input, item);
@@ -137,7 +142,9 @@ export function BillDetailRoute() {
           <h1 className="page-title">{bill.name}</h1>
           <p className="text-sm text-muted mt-1">
             {GENERAL_CATEGORY_LABELS[generalCategoryForBill(bill)]} ·{" "}
-            {subcategoryLabel(effectiveSubcategory(bill))} ·{" "}
+            {subcategoryLabel(effectiveSubcategory(bill), {
+              treatMortgageRentAsMortgage: linkedAccount?.type === "MORTGAGE",
+            })} ·{" "}
             {frequencyLabel(bill.frequency)}
           </p>
         </div>
@@ -187,6 +194,10 @@ export function BillDetailRoute() {
           </span>
         ) : null}
       </div>
+
+      {mortgageSnap ? (
+        <MortgagePaymentSnapshotCard snapshot={mortgageSnap} />
+      ) : null}
 
       <section className="card p-4 space-y-3">
         <h2 className="font-medium">Details</h2>

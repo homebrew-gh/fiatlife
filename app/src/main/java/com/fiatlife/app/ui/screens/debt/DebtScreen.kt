@@ -23,6 +23,8 @@ import com.fiatlife.app.domain.model.CreditAccountType
 import com.fiatlife.app.domain.model.CreditCardMinPaymentType
 import com.fiatlife.app.domain.model.PromotionAppliesTo
 import com.fiatlife.app.domain.model.formatPayoffDate
+import com.fiatlife.app.domain.model.suggestedEmergencyFundTarget
+import com.fiatlife.app.domain.model.suggestedMaintenanceAnnual
 import com.fiatlife.app.ui.components.CurrencyTextField
 import com.fiatlife.app.ui.components.EmptyState
 import com.fiatlife.app.ui.components.MoneyText
@@ -307,6 +309,16 @@ fun DebtScreen(
         )
     }
 
+    state.pendingMortgageGoals?.let { mortgage ->
+        MortgageGoalsDialog(
+            account = mortgage,
+            onSkip = { viewModel.skipMortgageGoals() },
+            onApply = { months, emergency, maintenance ->
+                viewModel.applyMortgageGoals(months, emergency, maintenance)
+            }
+        )
+    }
+
     statementAccount?.let { account ->
         UpdateStatementDialog(
             account = account,
@@ -482,6 +494,19 @@ internal fun CreditAccountDialog(
     var originalPrincipal by remember { mutableStateOf(account?.originalPrincipal?.toString()?.takeIf { it != "0.0" } ?: "") }
     var termMonths by remember { mutableStateOf(account?.termMonths?.toString() ?: "") }
     var monthlyPaymentAmount by remember { mutableStateOf(account?.monthlyPaymentAmount?.toString() ?: "") }
+    var loanStartDate by remember {
+        mutableStateOf(account?.startDate?.let { formatIsoDate(it) } ?: "")
+    }
+    var homePrice by remember { mutableStateOf(account?.homePrice?.toString()?.takeIf { it != "0.0" } ?: "") }
+    var annualPropertyTax by remember { mutableStateOf(account?.annualPropertyTax?.toString()?.takeIf { it != "0.0" } ?: "") }
+    var annualHomeInsurance by remember { mutableStateOf(account?.annualHomeInsurance?.toString()?.takeIf { it != "0.0" } ?: "") }
+    var monthlyHoa by remember { mutableStateOf(account?.monthlyHoa?.toString()?.takeIf { it != "0.0" } ?: "") }
+    var monthlyPmi by remember { mutableStateOf(account?.monthlyPmi?.toString()?.takeIf { it != "0.0" } ?: "") }
+    var extraMonthlyPrincipal by remember { mutableStateOf(account?.extraMonthlyPrincipal?.toString()?.takeIf { it != "0.0" } ?: "") }
+    var propertyTaxEscrowed by remember { mutableStateOf(account?.propertyTaxEscrowed ?: true) }
+    var homeInsuranceEscrowed by remember { mutableStateOf(account?.homeInsuranceEscrowed ?: true) }
+    var hoaEscrowed by remember { mutableStateOf(account?.hoaEscrowed ?: false) }
+    var pmiEscrowed by remember { mutableStateOf(account?.pmiEscrowed ?: true) }
     var annualFeeAmount by remember { mutableStateOf(account?.annualFeeAmount?.toString()?.takeIf { it != "0.0" } ?: "") }
     var annualFeeRenewalDate by remember {
         mutableStateOf(account?.annualFeeRenewalDateMillis?.let { formatIsoDate(it) } ?: "")
@@ -782,14 +807,25 @@ internal fun CreditAccountDialog(
                     CurrencyTextField(
                         value = originalPrincipal,
                         onValueChange = { originalPrincipal = it },
-                        label = "Original principal",
+                        label = if (type == CreditAccountType.MORTGAGE) "Loan amount" else "Original principal",
                         placeholder = "0"
                     )
+                    if (type == CreditAccountType.MORTGAGE) {
+                        OutlinedTextField(
+                            value = loanStartDate,
+                            onValueChange = { loanStartDate = it.take(10) },
+                            label = { Text("Loan start (YYYY-MM-DD)") },
+                            placeholder = { Text("2020-06-01") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            shape = MaterialTheme.shapes.medium
+                        )
+                    }
                     OutlinedTextField(
                         value = termMonths,
                         onValueChange = { termMonths = it.filter { c -> c.isDigit() }.take(5) },
-                        label = { Text("Term (months)") },
-                        placeholder = { Text("e.g. 60") },
+                        label = { Text(if (type == CreditAccountType.MORTGAGE) "Term (months)" else "Term (months)") },
+                        placeholder = { Text("e.g. 360") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         shape = MaterialTheme.shapes.medium
@@ -797,9 +833,75 @@ internal fun CreditAccountDialog(
                     CurrencyTextField(
                         value = monthlyPaymentAmount,
                         onValueChange = { monthlyPaymentAmount = it },
-                        label = "Monthly payment",
+                        label = if (type == CreditAccountType.MORTGAGE) "Monthly P&I payment" else "Monthly payment",
                         placeholder = "0"
                     )
+                    if (type == CreditAccountType.MORTGAGE) {
+                        CurrencyTextField(
+                            value = extraMonthlyPrincipal,
+                            onValueChange = { extraMonthlyPrincipal = it },
+                            label = "Extra principal $/mo",
+                            placeholder = "0"
+                        )
+                        CurrencyTextField(
+                            value = homePrice,
+                            onValueChange = { homePrice = it },
+                            label = "Home price",
+                            placeholder = "0"
+                        )
+                        CurrencyTextField(
+                            value = annualPropertyTax,
+                            onValueChange = { annualPropertyTax = it },
+                            label = "Property tax $/yr",
+                            placeholder = "0"
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = propertyTaxEscrowed,
+                                onCheckedChange = { propertyTaxEscrowed = it }
+                            )
+                            Text("Tax escrowed in this payment")
+                        }
+                        CurrencyTextField(
+                            value = annualHomeInsurance,
+                            onValueChange = { annualHomeInsurance = it },
+                            label = "Home insurance $/yr",
+                            placeholder = "0"
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = homeInsuranceEscrowed,
+                                onCheckedChange = { homeInsuranceEscrowed = it }
+                            )
+                            Text("Insurance escrowed in this payment")
+                        }
+                        CurrencyTextField(
+                            value = monthlyHoa,
+                            onValueChange = { monthlyHoa = it },
+                            label = "HOA $/mo",
+                            placeholder = "0"
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = hoaEscrowed,
+                                onCheckedChange = { hoaEscrowed = it }
+                            )
+                            Text("HOA escrowed in this payment")
+                        }
+                        CurrencyTextField(
+                            value = monthlyPmi,
+                            onValueChange = { monthlyPmi = it },
+                            label = "PMI $/mo",
+                            placeholder = "0"
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = pmiEscrowed,
+                                onCheckedChange = { pmiEscrowed = it }
+                            )
+                            Text("PMI escrowed in this payment")
+                        }
+                    }
                 }
                 OutlinedTextField(
                     value = notes,
@@ -871,12 +973,26 @@ internal fun CreditAccountDialog(
                             originalPrincipal = if (isAmortizing) (originalPrincipal.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0) else 0.0,
                             termMonths = termMonths.toIntOrNull()?.takeIf { it > 0 },
                             monthlyPaymentAmount = monthlyPaymentAmount.toDoubleOrNull()?.takeIf { it >= 0 },
-                            startDate = account?.startDate,
+                            startDate = if (type == CreditAccountType.MORTGAGE) parseIsoDate(loanStartDate) else account?.startDate,
                             endDate = account?.endDate,
                             annualFeeLinkedBillId = account?.annualFeeLinkedBillId,
                             annualFeeAmount = if (type == CreditAccountType.CREDIT_CARD) feeAmount else 0.0,
                             annualFeeRenewalDateMillis = if (type == CreditAccountType.CREDIT_CARD && feeAmount > 0.0) feeDateMillis else null,
-                            annualFeeFrequency = if (type == CreditAccountType.CREDIT_CARD) annualFeeFrequency else BillFrequency.ANNUALLY
+                            annualFeeFrequency = if (type == CreditAccountType.CREDIT_CARD) annualFeeFrequency else BillFrequency.ANNUALLY,
+                            homePrice = if (type == CreditAccountType.MORTGAGE) (homePrice.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0) else 0.0,
+                            annualPropertyTax = if (type == CreditAccountType.MORTGAGE) (annualPropertyTax.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0) else 0.0,
+                            annualHomeInsurance = if (type == CreditAccountType.MORTGAGE) (annualHomeInsurance.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0) else 0.0,
+                            monthlyHoa = if (type == CreditAccountType.MORTGAGE) (monthlyHoa.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0) else 0.0,
+                            monthlyPmi = if (type == CreditAccountType.MORTGAGE) (monthlyPmi.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0) else 0.0,
+                            extraMonthlyPrincipal = if (type == CreditAccountType.MORTGAGE) (extraMonthlyPrincipal.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0) else 0.0,
+                            propertyTaxEscrowed = if (type == CreditAccountType.MORTGAGE) propertyTaxEscrowed else true,
+                            homeInsuranceEscrowed = if (type == CreditAccountType.MORTGAGE) homeInsuranceEscrowed else true,
+                            hoaEscrowed = if (type == CreditAccountType.MORTGAGE) hoaEscrowed else false,
+                            pmiEscrowed = if (type == CreditAccountType.MORTGAGE) pmiEscrowed else true,
+                            linkedPropertyTaxBillId = account?.linkedPropertyTaxBillId,
+                            linkedHomeInsuranceBillId = account?.linkedHomeInsuranceBillId,
+                            linkedHoaBillId = account?.linkedHoaBillId,
+                            linkedPmiBillId = account?.linkedPmiBillId
                         )
                     )
                 },
@@ -890,6 +1006,71 @@ internal fun CreditAccountDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+private fun MortgageGoalsDialog(
+    account: CreditAccount,
+    onSkip: () -> Unit,
+    onApply: (emergencyMonths: Int, includeEmergency: Boolean, includeMaintenance: Boolean) -> Unit
+) {
+    val housing = account.housingPitiMonthly()
+    val maintenanceAnnual = suggestedMaintenanceAnnual(account.homePrice)
+    var months by remember { mutableStateOf(3) }
+    var wantEmergency by remember { mutableStateOf(housing > 0.0) }
+    var wantMaintenance by remember { mutableStateOf(account.homePrice > 0.0) }
+    AlertDialog(
+        onDismissRequest = onSkip,
+        title = { Text("Set aside for the house?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Optional. You can skip or edit these later in Goals.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                if (housing > 0.0) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = wantEmergency, onCheckedChange = { wantEmergency = it })
+                        Text(
+                            "Emergency fund at $months months of housing (" +
+                                suggestedEmergencyFundTarget(housing, months).formatCurrency() + ")"
+                        )
+                    }
+                    if (wantEmergency) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = months == 3,
+                                onClick = { months = 3 },
+                                label = { Text("3 months") }
+                            )
+                            FilterChip(
+                                selected = months == 6,
+                                onClick = { months = 6 },
+                                label = { Text("6 months") }
+                            )
+                        }
+                    }
+                }
+                if (account.homePrice > 0.0) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = wantMaintenance, onCheckedChange = { wantMaintenance = it })
+                        Text(
+                            "Home maintenance ${maintenanceAnnual.formatCurrency()}/yr (" +
+                                (maintenanceAnnual / 12.0).formatCurrency() + "/mo)"
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onApply(months, wantEmergency, wantMaintenance) }) {
+                Text("Save goals")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onSkip) { Text("Skip") }
         }
     )
 }

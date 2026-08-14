@@ -32,6 +32,7 @@ import com.fiatlife.app.domain.model.projectPayoff
 import com.fiatlife.app.ui.components.MoneyText
 import com.fiatlife.app.ui.components.CurrencyTextField
 import com.fiatlife.app.ui.navigation.Screen
+import com.fiatlife.app.ui.components.MortgageSnapshotLines
 import com.fiatlife.app.ui.components.SectionCard
 import com.fiatlife.app.ui.components.formatCurrency
 import com.fiatlife.app.ui.viewmodel.DebtDetailViewModel
@@ -173,6 +174,13 @@ fun DebtDetailScreen(
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
+
+                if (acc.type == com.fiatlife.app.domain.model.CreditAccountType.MORTGAGE) {
+                    SectionCard(title = "This mortgage payment", icon = Icons.Filled.Home) {
+                        MortgageSnapshotLines(account = acc)
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
 
                 if (acc.apr > 0 && acc.currentBalance > 0) {
                     PayoffProjectionCard(acc)

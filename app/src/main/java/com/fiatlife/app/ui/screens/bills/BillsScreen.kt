@@ -37,6 +37,7 @@ import com.fiatlife.app.domain.model.StatementEntry
 import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.domain.model.BillSubcategory
 import com.fiatlife.app.domain.model.BillWithSource
+import com.fiatlife.app.domain.model.label
 import com.fiatlife.app.ui.navigation.Screen
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -380,6 +381,9 @@ fun BillsScreen(
                             subtotal = group.subtotal,
                             expanded = isExpanded,
                             collapsible = isCollapsible,
+                            treatMortgageRentAsMortgage = state.creditAccounts.any {
+                                it.type == com.fiatlife.app.domain.model.CreditAccountType.MORTGAGE
+                            },
                             onToggle = {
                                 if (isCollapsible) {
                                     subscriptionExpandedBySubcategory[subcategoryKey] = !isExpanded
@@ -800,7 +804,7 @@ private fun BillCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = bill.effectiveSubcategory.displayName,
+                        text = bill.effectiveSubcategory.label(card.treatMortgageRentAsMortgage),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -847,6 +851,14 @@ private fun BillCard(
                         )
                     }
                 }
+                card.mortgageSnapshot?.let { snap ->
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "This payment ${(snap.principal + snap.extraPrincipal).formatCurrency()} principal · ${snap.interest.formatCurrency()} interest",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
             MoneyText(
                 amount = card.amountDue,
@@ -879,6 +891,7 @@ private fun SubscriptionSubcategoryHeader(
     subtotal: Double,
     expanded: Boolean,
     collapsible: Boolean,
+    treatMortgageRentAsMortgage: Boolean = false,
     onToggle: () -> Unit
 ) {
     Surface(
@@ -897,14 +910,14 @@ private fun SubscriptionSubcategoryHeader(
             if (collapsible) {
                 Icon(
                     imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                    contentDescription = if (expanded) "Collapse ${subcategory.displayName}" else "Expand ${subcategory.displayName}",
+                    contentDescription = if (expanded) "Collapse ${subcategory.label(treatMortgageRentAsMortgage)}" else "Expand ${subcategory.label(treatMortgageRentAsMortgage)}",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.width(8.dp))
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = subcategory.displayName,
+                    text = subcategory.label(treatMortgageRentAsMortgage),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold
                 )

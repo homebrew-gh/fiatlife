@@ -100,7 +100,22 @@ data class CreditAccount(
     // Credit card annual membership fee
     val annualFeeAmount: Double = 0.0,
     val annualFeeRenewalDateMillis: Long? = null,
-    val annualFeeFrequency: BillFrequency = BillFrequency.ANNUALLY
+    val annualFeeFrequency: BillFrequency = BillFrequency.ANNUALLY,
+    // Mortgage housing (ignored for other types)
+    val homePrice: Double = 0.0,
+    val annualPropertyTax: Double = 0.0,
+    val annualHomeInsurance: Double = 0.0,
+    val monthlyHoa: Double = 0.0,
+    val monthlyPmi: Double = 0.0,
+    val extraMonthlyPrincipal: Double = 0.0,
+    val propertyTaxEscrowed: Boolean = true,
+    val homeInsuranceEscrowed: Boolean = true,
+    val hoaEscrowed: Boolean = false,
+    val pmiEscrowed: Boolean = true,
+    val linkedPropertyTaxBillId: String? = null,
+    val linkedHomeInsuranceBillId: String? = null,
+    val linkedHoaBillId: String? = null,
+    val linkedPmiBillId: String? = null
 ) {
     /** Minimum payment due (revolving). */
     fun minimumDue(): Double = when (minimumPaymentType) {
@@ -133,6 +148,8 @@ data class CreditAccount(
     fun effectiveAmountDue(asOfMillis: Long = System.currentTimeMillis()): Double =
         if (statementOverrideActive(asOfMillis)) {
             statementAmountDue?.coerceAtLeast(0.0) ?: minimumDue()
+        } else if (type.isAmortizing) {
+            effectiveMonthlyPayment()
         } else {
             minimumDue()
         }
@@ -200,9 +217,57 @@ data class CreditAccount(
         return currentBalance / months
     }
 
-    /** Monthly payment to use for totals and display. Revolving: only count when balance > 0 (use minimum due). Amortizing: fixed monthly payment. */
+    fun monthlyPropertyTax(): Double = (annualPropertyTax / 12.0).coerceAtLeast(0.0)
+
+    fun monthlyHomeInsurance(): Double = (annualHomeInsurance / 12.0).coerceAtLeast(0.0)
+
+    fun pmiActive(asOfBalance: Double = currentBalance): Boolean {
+        if (monthlyPmi <= 0.0) return false
+        if (homePrice > 0.0) return asOfBalance > homePrice * 0.8
+        return true
+    }
+
+    fun currentMonthlyPmi(): Double =
+        if (pmiActive()) monthlyPmi.coerceAtLeast(0.0) else 0.0
+
+    fun principalAndInterestPayment(): Double =
+        if (type.isAmortizing) (monthlyPaymentAmount ?: 0.0).coerceAtLeast(0.0) else 0.0
+
+    /** Escrowed tax, insurance, HOA, and active PMI included in the servicer draft. */
+    fun escrowedMonthlyAmount(): Double {
+        if (type != CreditAccountType.MORTGAGE) return 0.0
+        var sum = 0.0
+        if (propertyTaxEscrowed) sum += monthlyPropertyTax()
+        if (homeInsuranceEscrowed) sum += monthlyHomeInsurance()
+        if (hoaEscrowed) sum += monthlyHoa.coerceAtLeast(0.0)
+        if (pmiEscrowed) sum += currentMonthlyPmi()
+        return sum
+    }
+
+    /** Full housing cost (PITI) regardless of escrow. Excludes extra principal. */
+    fun housingPitiMonthly(): Double {
+        if (type != CreditAccountType.MORTGAGE) return 0.0
+        return principalAndInterestPayment() +
+            monthlyPropertyTax() +
+            monthlyHomeInsurance() +
+            monthlyHoa.coerceAtLeast(0.0) +
+            currentMonthlyPmi()
+    }
+
+    fun housingSatelliteBillIds(): List<String> = listOfNotNull(
+        linkedPropertyTaxBillId,
+        linkedHomeInsuranceBillId,
+        linkedHoaBillId,
+        linkedPmiBillId
+    )
+
+    /** Monthly payment to use for totals and display. Revolving: only count when balance > 0 (use minimum due). Mortgage: P&I + extra principal + escrow. Other amortizing: fixed monthly payment. */
     fun effectiveMonthlyPayment(): Double = when {
         type.isRevolving -> if (currentBalance > 0) effectiveAmountDue() else 0.0
+        type == CreditAccountType.MORTGAGE ->
+            principalAndInterestPayment() +
+                extraMonthlyPrincipal.coerceAtLeast(0.0) +
+                escrowedMonthlyAmount()
         type.isAmortizing -> monthlyPaymentAmount ?: 0.0
         else -> 0.0
     }

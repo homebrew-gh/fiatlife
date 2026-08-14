@@ -92,6 +92,20 @@ export type CreditAccount = {
   annualFeeAmount: number;
   annualFeeRenewalDateMillis?: number | null;
   annualFeeFrequency: BillFrequency;
+  homePrice?: number;
+  annualPropertyTax?: number;
+  annualHomeInsurance?: number;
+  monthlyHoa?: number;
+  monthlyPmi?: number;
+  extraMonthlyPrincipal?: number;
+  propertyTaxEscrowed?: boolean;
+  homeInsuranceEscrowed?: boolean;
+  hoaEscrowed?: boolean;
+  pmiEscrowed?: boolean;
+  linkedPropertyTaxBillId?: string | null;
+  linkedHomeInsuranceBillId?: string | null;
+  linkedHoaBillId?: string | null;
+  linkedPmiBillId?: string | null;
 };
 
 export function creditAccountDTag(id: string): string {
@@ -198,6 +212,9 @@ export function effectiveAmountDue(
 ): number {
   if (statementOverrideActive(account, asOf)) {
     return Math.max(0, account.statementAmountDue ?? 0);
+  }
+  if (isAmortizingType(account.type)) {
+    return effectiveMonthlyPayment(account);
   }
   return minimumDue(account);
 }
@@ -313,9 +330,79 @@ export function paymentToClearPromotion(
   return account.currentBalance / months;
 }
 
+export function monthlyPropertyTax(account: CreditAccount): number {
+  return Math.max(0, (account.annualPropertyTax ?? 0) / 12);
+}
+
+export function monthlyHomeInsurance(account: CreditAccount): number {
+  return Math.max(0, (account.annualHomeInsurance ?? 0) / 12);
+}
+
+export function pmiActive(
+  account: CreditAccount,
+  asOfBalance = account.currentBalance,
+): boolean {
+  const monthlyPmi = account.monthlyPmi ?? 0;
+  if (monthlyPmi <= 0) return false;
+  const homePrice = account.homePrice ?? 0;
+  if (homePrice > 0) return asOfBalance > homePrice * 0.8;
+  return true;
+}
+
+export function currentMonthlyPmi(account: CreditAccount): number {
+  return pmiActive(account) ? Math.max(0, account.monthlyPmi ?? 0) : 0;
+}
+
+export function principalAndInterestPayment(account: CreditAccount): number {
+  if (!isAmortizingType(account.type)) return 0;
+  return Math.max(0, account.monthlyPaymentAmount ?? 0);
+}
+
+export function escrowedMonthlyAmount(account: CreditAccount): number {
+  if (account.type !== "MORTGAGE") return 0;
+  let sum = 0;
+  if (account.propertyTaxEscrowed !== false) sum += monthlyPropertyTax(account);
+  if (account.homeInsuranceEscrowed !== false) sum += monthlyHomeInsurance(account);
+  if (account.hoaEscrowed) sum += Math.max(0, account.monthlyHoa ?? 0);
+  if (account.pmiEscrowed !== false) sum += currentMonthlyPmi(account);
+  return sum;
+}
+
+/** Full housing cost (PITI) regardless of escrow. Excludes extra principal. */
+export function housingPitiMonthly(account: CreditAccount): number {
+  if (account.type !== "MORTGAGE") return 0;
+  return (
+    principalAndInterestPayment(account) +
+    monthlyPropertyTax(account) +
+    monthlyHomeInsurance(account) +
+    Math.max(0, account.monthlyHoa ?? 0) +
+    currentMonthlyPmi(account)
+  );
+}
+
+export function housingSatelliteBillIds(account: CreditAccount): string[] {
+  return [
+    account.linkedPropertyTaxBillId,
+    account.linkedHomeInsuranceBillId,
+    account.linkedHoaBillId,
+    account.linkedPmiBillId,
+  ].filter((id): id is string => Boolean(id));
+}
+
+export function housingMonthlyTotal(accounts: CreditAccount[]): number {
+  return accounts.reduce((sum, a) => sum + housingPitiMonthly(a), 0);
+}
+
 export function effectiveMonthlyPayment(account: CreditAccount): number {
   if (isRevolvingType(account.type)) {
     return account.currentBalance > 0 ? effectiveAmountDue(account) : 0;
+  }
+  if (account.type === "MORTGAGE") {
+    return (
+      principalAndInterestPayment(account) +
+      Math.max(0, account.extraMonthlyPrincipal ?? 0) +
+      escrowedMonthlyAmount(account)
+    );
   }
   if (isAmortizingType(account.type)) {
     return account.monthlyPaymentAmount ?? 0;
@@ -414,6 +501,20 @@ export function defaultCreditAccount(
     annualFeeAmount: partial?.annualFeeAmount ?? 0,
     annualFeeRenewalDateMillis: partial?.annualFeeRenewalDateMillis ?? null,
     annualFeeFrequency: partial?.annualFeeFrequency ?? "ANNUALLY",
+    homePrice: partial?.homePrice ?? 0,
+    annualPropertyTax: partial?.annualPropertyTax ?? 0,
+    annualHomeInsurance: partial?.annualHomeInsurance ?? 0,
+    monthlyHoa: partial?.monthlyHoa ?? 0,
+    monthlyPmi: partial?.monthlyPmi ?? 0,
+    extraMonthlyPrincipal: partial?.extraMonthlyPrincipal ?? 0,
+    propertyTaxEscrowed: partial?.propertyTaxEscrowed ?? true,
+    homeInsuranceEscrowed: partial?.homeInsuranceEscrowed ?? true,
+    hoaEscrowed: partial?.hoaEscrowed ?? false,
+    pmiEscrowed: partial?.pmiEscrowed ?? true,
+    linkedPropertyTaxBillId: partial?.linkedPropertyTaxBillId ?? null,
+    linkedHomeInsuranceBillId: partial?.linkedHomeInsuranceBillId ?? null,
+    linkedHoaBillId: partial?.linkedHoaBillId ?? null,
+    linkedPmiBillId: partial?.linkedPmiBillId ?? null,
   };
 }
 
@@ -495,6 +596,28 @@ export function parseCreditAccountRecord(
           : null,
       annualFeeFrequency:
         (parsed.annualFeeFrequency as BillFrequency) ?? "ANNUALLY",
+      homePrice: Number(parsed.homePrice ?? 0),
+      annualPropertyTax: Number(parsed.annualPropertyTax ?? 0),
+      annualHomeInsurance: Number(parsed.annualHomeInsurance ?? 0),
+      monthlyHoa: Number(parsed.monthlyHoa ?? 0),
+      monthlyPmi: Number(parsed.monthlyPmi ?? 0),
+      extraMonthlyPrincipal: Number(parsed.extraMonthlyPrincipal ?? 0),
+      propertyTaxEscrowed: parsed.propertyTaxEscrowed !== false,
+      homeInsuranceEscrowed: parsed.homeInsuranceEscrowed !== false,
+      hoaEscrowed: Boolean(parsed.hoaEscrowed),
+      pmiEscrowed: parsed.pmiEscrowed !== false,
+      linkedPropertyTaxBillId:
+        parsed.linkedPropertyTaxBillId != null
+          ? String(parsed.linkedPropertyTaxBillId)
+          : null,
+      linkedHomeInsuranceBillId:
+        parsed.linkedHomeInsuranceBillId != null
+          ? String(parsed.linkedHomeInsuranceBillId)
+          : null,
+      linkedHoaBillId:
+        parsed.linkedHoaBillId != null ? String(parsed.linkedHoaBillId) : null,
+      linkedPmiBillId:
+        parsed.linkedPmiBillId != null ? String(parsed.linkedPmiBillId) : null,
     });
   } catch {
     return null;

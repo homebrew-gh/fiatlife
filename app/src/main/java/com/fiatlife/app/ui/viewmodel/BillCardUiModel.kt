@@ -1,6 +1,8 @@
 package com.fiatlife.app.ui.viewmodel
 
 import com.fiatlife.app.domain.model.BillWithSource
+import com.fiatlife.app.domain.model.CreditAccountType
+import com.fiatlife.app.domain.model.currentMortgagePaymentSnapshot
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -16,7 +18,9 @@ data class BillCardUiModel(
     val dueDateText: String? = null,
     val countdownLabel: String? = null,
     val showPastDue: Boolean = false,
-    val amountDue: Double = 0.0
+    val amountDue: Double = 0.0,
+    val treatMortgageRentAsMortgage: Boolean = false,
+    val mortgageSnapshot: com.fiatlife.app.domain.model.MortgagePaymentSnapshot? = null
 )
 
 private val billCardDateFormat = ThreadLocal.withInitial {
@@ -69,7 +73,9 @@ internal fun buildBillCardUiModel(
         dueDateText = dueDateText,
         countdownLabel = countdownLabel,
         showPastDue = showPastDue,
-        amountDue = linkedAccount?.effectiveAmountDue() ?: bill.effectiveAmountDue()
+        amountDue = linkedAccount?.effectiveAmountDue() ?: bill.effectiveAmountDue(),
+        treatMortgageRentAsMortgage = linkedAccount?.type == CreditAccountType.MORTGAGE,
+        mortgageSnapshot = linkedAccount?.let { currentMortgagePaymentSnapshot(it) }
     )
 }
 
