@@ -184,9 +184,8 @@ pub async fn fetch_cypherlog_subscription_events(
     fetch_kind_events(keys, relay_url, KIND_CYPHERLOG_SUBSCRIPTION, opts).await
 }
 
-/// Fetch from every relay and merge kind-30078 replaceable events by `#d` tag
-/// (newest `created_at` wins — matches Android read-primary / multi-write semantics).
-pub async fn fetch_app_data_events_from_relays(
+/// Fetch kind-30078 events from every configured relay (no per-`#d` merge).
+pub async fn fetch_raw_app_data_events_from_relays(
     keys: &Keys,
     relay_urls: &[String],
     relay_opts: impl Fn(&str) -> RelayConnectOptions,
@@ -223,7 +222,35 @@ pub async fn fetch_app_data_events_from_relays(
         return Err(anyhow!("all relay fetches failed: {}", errors.join("; ")));
     }
 
+    Ok(all_events)
+}
+
+/// Fetch from every relay and merge kind-30078 replaceable events by `#d` tag
+/// (newest `created_at` wins — matches Android read-primary / multi-write semantics).
+pub async fn fetch_app_data_events_from_relays(
+    keys: &Keys,
+    relay_urls: &[String],
+    relay_opts: impl Fn(&str) -> RelayConnectOptions,
+) -> anyhow::Result<Vec<Event>> {
+    let all_events =
+        fetch_raw_app_data_events_from_relays(keys, relay_urls, relay_opts).await?;
     Ok(merge_replaceable_app_data_events(all_events))
+}
+
+fn event_to_app_data_record(keys: &Keys, event: Event) -> AppDataRecord {
+    let decrypted = decrypt_from_self(keys, &event.content);
+    let (plaintext, decrypt_error) = match decrypted {
+        Ok(plain) => (Some(plain), None),
+        Err(err) => (None, Some(err.to_string())),
+    };
+    AppDataRecord {
+        event_id: event.id.to_string(),
+        d_tag: event.tags.identifier().map(str::to_owned),
+        ciphertext: event.content,
+        plaintext,
+        decrypt_error,
+        tags: event.tags.iter().map(|t| t.clone().to_vec()).collect(),
+    }
 }
 
 pub async fn fetch_cypherlog_subscriptions_from_relays(
@@ -352,29 +379,47 @@ pub async fn fetch_decrypted_app_data(
     relay_urls: &[String],
     relay_opts: impl Fn(&str) -> RelayConnectOptions,
 ) -> anyhow::Result<Vec<AppDataRecord>> {
-    let events = fetch_app_data_events_from_relays(keys, relay_urls, relay_opts).await?;
-    Ok(events
-        .into_iter()
-        .map(|event| {
-            let decrypted = decrypt_from_self(keys, &event.content);
-            let (plaintext, decrypt_error) = match decrypted {
-                Ok(plain) => (Some(plain), None),
-                Err(err) => (None, Some(err.to_string())),
-            };
-            AppDataRecord {
-                event_id: event.id.to_string(),
-                d_tag: event.tags.identifier().map(str::to_owned),
-                ciphertext: event.content,
-                plaintext,
-                decrypt_error,
-                tags: event
-                    .tags
-                    .iter()
-                    .map(|t| t.clone().to_vec())
-                    .collect(),
+    use crate::salary_merge::{merge_salary_events_to_record, SALARY_D_TAG};
+
+    let all_events =
+        fetch_raw_app_data_events_from_relays(keys, relay_urls, relay_opts).await?;
+
+    let mut by_d_tag: HashMap<String, Vec<Event>> = HashMap::new();
+    let mut without_d_tag = Vec::new();
+    for event in all_events {
+        match event.tags.identifier() {
+            Some(d_tag) => by_d_tag.entry(d_tag.to_string()).or_default().push(event),
+            None => without_d_tag.push(event),
+        }
+    }
+
+    let mut records = Vec::new();
+    for (d_tag, events) in by_d_tag {
+        if d_tag == SALARY_D_TAG {
+            // Merge salary copies so paycheck logs survive an empty newer event.
+            // A merge failure (malformed JSON, re-encrypt error) must never break
+            // the whole fetch — fall back to the newest copy decrypted as-is.
+            match merge_salary_events_to_record(keys, events.clone()) {
+                Ok(Some(record)) => records.push(record),
+                Ok(None) => {}
+                Err(err) => {
+                    tracing::warn!(?err, "salary merge failed; using newest copy as-is");
+                    if let Some(event) = events.into_iter().max_by_key(|e| e.created_at) {
+                        records.push(event_to_app_data_record(keys, event));
+                    }
+                }
             }
-        })
-        .collect())
+        } else {
+            let Some(event) = events.into_iter().max_by_key(|e| e.created_at) else {
+                continue;
+            };
+            records.push(event_to_app_data_record(keys, event));
+        }
+    }
+    for event in without_d_tag {
+        records.push(event_to_app_data_record(keys, event));
+    }
+    Ok(records)
 }
 
 

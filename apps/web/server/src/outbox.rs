@@ -157,6 +157,16 @@ impl Outbox {
         }
     }
 
+    /// Discard all currently-failed items without retrying. Used when the user
+    /// dismisses a stuck "not synced" badge (e.g. the relay keeps rejecting an
+    /// event). Returns the number of items cleared.
+    pub async fn clear_failed(&self) -> usize {
+        let mut inner = self.inner.lock().await;
+        let count = inner.failed.len();
+        inner.failed.clear();
+        count
+    }
+
     /// Re-queue all currently-failed items for another round of delivery.
     pub async fn retry_failed(&self) -> usize {
         let items: Vec<FailedItem> = {

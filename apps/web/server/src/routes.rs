@@ -83,6 +83,7 @@ pub async fn build_router(cfg: Config) -> anyhow::Result<Router> {
         .route("/nostr/deletion", post(publish_nostr_deletion))
         .route("/nostr/outbox", get(outbox_status))
         .route("/nostr/outbox/retry", post(outbox_retry))
+        .route("/nostr/outbox/clear", post(outbox_clear))
         .route("/blossom/status", get(blossom_status))
         .route("/blossom/upload", post(blossom_upload))
         .route("/blossom/:sha256", get(blossom_download_handler));
@@ -574,6 +575,11 @@ async fn outbox_status(State(s): State<AppState>) -> Json<OutboxStatusResponse> 
 
 async fn outbox_retry(State(s): State<AppState>) -> Json<OutboxStatusResponse> {
     s.outbox.retry_failed().await;
+    Json(s.outbox.status().await.into())
+}
+
+async fn outbox_clear(State(s): State<AppState>) -> Json<OutboxStatusResponse> {
+    s.outbox.clear_failed().await;
     Json(s.outbox.status().await.into())
 }
 

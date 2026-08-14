@@ -51,6 +51,24 @@ host: http://your-start9.local
 make x86-import install
 ```
 
+### Sideload updates (not reinstall)
+
+StartOS only treats a sideload as an **update** when the package **version string is higher** than what is installed. Rebuilding without bumping the version produces the same `0.4.0:N` label, so the UI offers install/reinstall instead of update.
+
+Before each sideload rebuild, **increment the downstream revision** in `startos/versions/`:
+
+1. Add `startos/versions/v0.4.0.N.ts` with `version: '0.4.0:N'` and release notes.
+2. Set it as `current` in `startos/versions/index.ts` and add the previous current to `other`.
+3. Rebuild: `make x86-import`
+
+Version format is `<upstream>:<downstream>` (ExVer). FiatLife wrapper bumps only change the part after the colon (`0.4.0:4` → `0.4.0:5`). No migration is needed for most wrapper-only changes — use an empty `up: async () => {}`.
+
+Inspect the built package version:
+
+```bash
+start-cli s9pk inspect fiatlife_x86_64.s9pk manifest | jq .version
+```
+
 ## Local dev (web + server)
 
 ```bash

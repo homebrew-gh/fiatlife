@@ -14,6 +14,7 @@ mod nostr_support;
 mod outbox;
 mod relay_raw;
 mod routes;
+mod salary_merge;
 mod session;
 mod state;
 
