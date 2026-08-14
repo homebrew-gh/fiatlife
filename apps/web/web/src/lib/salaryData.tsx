@@ -16,19 +16,27 @@ import {
   calculateDepositAllocations,
   calculatePaycheck,
   defaultSalaryConfig,
+  effectiveRateAt,
   applyInferredPayRatesForAllLogYears,
   generatePaycheckLogsForMissingDates,
   mergeSalaryConfigPreserveLogs,
   normalizeSalaryConfig,
-  parseSalaryRecord,
+  resolveSalaryConfigFromAppDataRecords,
   salaryFingerprint,
   type AnnualProjection,
   type DirectDeposit,
   type DepositAllocation,
+  type EffectiveRate,
   type PaycheckCalculation,
   type PaycheckLogEntry,
   type SalaryConfig,
 } from "./salary";
+
+/** Local, non-persisted pay-rate override used by the Model calculator. */
+export type WhatIfPayRate = {
+  hourlyRate?: number;
+  annualSalary?: number;
+};
 
 type SalaryDataContextValue = {
   config: SalaryConfig;
@@ -36,6 +44,16 @@ type SalaryDataContextValue = {
   annualOvertimeHours: number;
   annualProjection: AnnualProjection;
   annualBaseline: AnnualProjection;
+  /** Most current pay rate inferred from saved config + logged paychecks. */
+  currentEffectiveRate: EffectiveRate;
+  /** Local pay-rate override for the Model calculator (null = use logged rate). */
+  whatIfPayRate: WhatIfPayRate | null;
+  setWhatIfPayRate: (patch: WhatIfPayRate) => void;
+  resetWhatIfPayRate: () => void;
+  /** Model calculations honoring the what-if pay-rate override. */
+  modelCalculation: PaycheckCalculation;
+  modelAnnualProjection: AnnualProjection;
+  modelAnnualBaseline: AnnualProjection;
   loading: boolean;
   error: string | null;
   saving: boolean;
@@ -78,6 +96,9 @@ export function SalaryDataProvider({ children }: { children: ReactNode }) {
   const [whatIfDirectDeposits, setWhatIfDirectDepositsState] = useState<
     DirectDeposit[] | null
   >(null);
+  const [whatIfPayRate, setWhatIfPayRateState] = useState<WhatIfPayRate | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -102,15 +123,19 @@ export function SalaryDataProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     try {
       const records = await api.listAppData();
-      const record = records.find((r) => r.d_tag === SALARY_D_TAG);
-      if (record?.plaintext) {
-        const parsed = parseSalaryRecord(record.plaintext);
-        if (parsed) {
-          const withInferred = applyInferredPayRatesForAllLogYears(parsed);
-          setConfigState(withInferred);
-          setSavedFingerprint(salaryFingerprint(withInferred));
-        }
+      const parsed = resolveSalaryConfigFromAppDataRecords(records);
+      if (parsed) {
+        const withInferred = applyInferredPayRatesForAllLogYears(parsed);
+        setConfigState(withInferred);
+        setSavedFingerprint(salaryFingerprint(withInferred));
       } else {
+        const salaryRecord = records.find((r) => r.d_tag === SALARY_D_TAG);
+        if (salaryRecord && !salaryRecord.plaintext) {
+          setError(
+            salaryRecord.decrypt_error ??
+              "Could not decrypt paycheck data from the relay.",
+          );
+        }
         const fresh = defaultSalaryConfig();
         setConfigState(fresh);
         setSavedFingerprint(salaryFingerprint(fresh));
@@ -142,6 +167,14 @@ export function SalaryDataProvider({ children }: { children: ReactNode }) {
     setWhatIfDirectDepositsState(null);
   }, []);
 
+  const setWhatIfPayRate = useCallback((patch: WhatIfPayRate) => {
+    setWhatIfPayRateState((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  const resetWhatIfPayRate = useCallback(() => {
+    setWhatIfPayRateState(null);
+  }, []);
+
   const persist = useCallback(async (next: SalaryConfig) => {
     cancelPendingPersist();
     const fingerprint = salaryFingerprint(next);
@@ -154,10 +187,7 @@ export function SalaryDataProvider({ children }: { children: ReactNode }) {
         ? next
         : { ...next, id: crypto.randomUUID() };
       const records = await api.listAppData();
-      const remoteRecord = records.find((r) => r.d_tag === SALARY_D_TAG);
-      const remote = remoteRecord?.plaintext
-        ? parseSalaryRecord(remoteRecord.plaintext)
-        : null;
+      const remote = resolveSalaryConfigFromAppDataRecords(records);
       const merged = mergeSalaryConfigPreserveLogs(withId, remote);
       const updatedAt = Date.now();
       const saved = { ...merged, updatedAt };
@@ -248,21 +278,54 @@ export function SalaryDataProvider({ children }: { children: ReactNode }) {
     [config, annualOvertimeHours],
   );
 
+  const currentEffectiveRate = useMemo(
+    () => effectiveRateAt(config, Date.now()),
+    [config],
+  );
+
+  // Apply the local pay-rate override (if any) on top of the saved config.
+  // Clearing payRateHistory makes the overridden base rate take effect for the
+  // Model calculations without disturbing logged paychecks or inferred raises.
+  const modelConfig = useMemo<SalaryConfig>(() => {
+    if (!whatIfPayRate) return config;
+    return {
+      ...config,
+      hourlyRate: whatIfPayRate.hourlyRate ?? config.hourlyRate,
+      annualSalary: whatIfPayRate.annualSalary ?? config.annualSalary,
+      payRateHistory: [],
+    };
+  }, [config, whatIfPayRate]);
+
+  const modelDerived = useMemo(
+    () =>
+      whatIfPayRate
+        ? recalc(modelConfig, annualOvertimeHours)
+        : derived,
+    [whatIfPayRate, modelConfig, annualOvertimeHours, derived],
+  );
+
   const effectiveWhatIfDeposits =
     whatIfDirectDeposits ?? config.directDeposits;
   const whatIfDepositAllocations = useMemo(
     () =>
       calculateDepositAllocations(
         effectiveWhatIfDeposits,
-        derived.calculation.netPay,
+        modelDerived.calculation.netPay,
       ),
-    [effectiveWhatIfDeposits, derived.calculation.netPay],
+    [effectiveWhatIfDeposits, modelDerived.calculation.netPay],
   );
 
   const value = useMemo(
     () => ({
       config,
       annualOvertimeHours,
+      currentEffectiveRate,
+      whatIfPayRate,
+      setWhatIfPayRate,
+      resetWhatIfPayRate,
+      modelCalculation: modelDerived.calculation,
+      modelAnnualProjection: modelDerived.annualProjection,
+      modelAnnualBaseline: modelDerived.annualBaseline,
       whatIfDirectDeposits,
       whatIfDepositsCustomized: whatIfDirectDeposits !== null,
       whatIfDepositAllocations,
@@ -283,6 +346,11 @@ export function SalaryDataProvider({ children }: { children: ReactNode }) {
     [
       config,
       annualOvertimeHours,
+      currentEffectiveRate,
+      whatIfPayRate,
+      setWhatIfPayRate,
+      resetWhatIfPayRate,
+      modelDerived,
       whatIfDirectDeposits,
       whatIfDepositAllocations,
       loading,

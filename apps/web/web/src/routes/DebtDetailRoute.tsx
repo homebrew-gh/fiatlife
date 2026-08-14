@@ -10,8 +10,12 @@ import { findLinkedBill } from "../lib/creditBillLink";
 import {
   CREDIT_ACCOUNT_TYPE_LABELS,
   effectiveMonthlyPayment,
+  effectiveApr,
   formatIsoDate,
   isRevolvingType,
+  isPromotionActive,
+  monthsUntilPromotionEnds,
+  paymentToClearPromotion,
   utilizationPercent,
   type CreditAccount,
 } from "../lib/creditAccount";
@@ -24,6 +28,7 @@ import {
 import { useBillsData } from "../lib/billsData";
 import { useDebtData } from "../lib/debtData";
 import { formatUsd } from "../lib/format";
+import { ErrorBanner, HeroCard } from "../components/ui";
 
 export function DebtDetailRoute() {
   const { accountId } = useParams<{ accountId: string }>();
@@ -35,7 +40,7 @@ export function DebtDetailRoute() {
     error,
     saving,
     saveAccount,
-    updateBalance,
+    updateStatement,
     deleteAccount,
     attachStatement,
   } = useDebtData();
@@ -47,7 +52,7 @@ export function DebtDetailRoute() {
   );
 
   const [showEdit, setShowEdit] = useState(false);
-  const [showBalance, setShowBalance] = useState(false);
+  const [showStatement, setShowStatement] = useState(false);
   const [attaching, setAttaching] = useState(false);
 
   if (!accountId) return <Navigate to="/app/debt" replace />;
@@ -62,6 +67,9 @@ export function DebtDetailRoute() {
 
   const util = utilizationPercent(account);
   const monthly = effectiveMonthlyPayment(account);
+  const promoActive = isPromotionActive(account);
+  const promoMonths = monthsUntilPromotionEnds(account);
+  const promoClearPayment = paymentToClearPromotion(account);
 
   const onDelete = async () => {
     if (
@@ -122,12 +130,10 @@ export function DebtDetailRoute() {
       </div>
 
       {error ? (
-        <p className="notice-error text-sm" role="alert">
-          {error}
-        </p>
+        <ErrorBanner message={error} />
       ) : null}
 
-      <section className="card p-6 bg-primary-container text-on-primary-container text-center">
+      <HeroCard className="p-6" center>
         <p className="text-sm opacity-80">Current balance</p>
         <p className="font-mono text-3xl font-bold mt-2">
           {formatUsd(account.currentBalance)}
@@ -154,11 +160,35 @@ export function DebtDetailRoute() {
         <button
           type="button"
           className="btn-ghost mt-4 text-sm"
-          onClick={() => setShowBalance(true)}
+          onClick={() => setShowStatement(true)}
         >
-          Update balance
+          Update statement
         </button>
-      </section>
+        {promoActive ? (
+          <div className="mt-3">
+            <span className="badge-success rounded-pill px-3 py-1 text-xs font-medium">
+              {((account.promotionalApr ?? 0) * 100).toFixed(2)}% promo ·{" "}
+              {promoMonths} mo left
+            </span>
+            {promoClearPayment != null ? (
+              <p
+                className={clsx(
+                  "text-xs mt-2",
+                  promoClearPayment > monthly || account.deferredInterest
+                    ? "text-warn"
+                    : "text-muted",
+                )}
+              >
+                {formatUsd(promoClearPayment)}/mo clears the current balance
+                before the promotion ends.
+                {account.deferredInterest
+                  ? " Deferred interest may be charged at expiry."
+                  : ""}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </HeroCard>
 
       {account.type === "MORTGAGE" ? (
         <MortgageScheduleSection account={account} />
@@ -174,12 +204,19 @@ export function DebtDetailRoute() {
               Open Bills
             </Link>
           </div>
-          <div className="rounded-lg bg-surface-variant/60 p-3">
+          <div className="rounded-lg bg-surfaceVariant/60 p-3">
             <p className="font-medium text-body">{linkedBill.bill.name}</p>
             <p className="text-sm text-muted mt-1">
               {formatUsd(linkedBill.bill.amount)} · {linkedBill.bill.frequency.toLowerCase()}
             </p>
           </div>
+          <button
+            type="button"
+            className="btn-ghost text-sm"
+            onClick={() => setShowStatement(true)}
+          >
+            Update linked statement
+          </button>
         </section>
       ) : null}
 
@@ -191,10 +228,16 @@ export function DebtDetailRoute() {
       <section className="card p-4 space-y-3">
         <h2 className="section-title">Overview</h2>
         <dl className="space-y-2 text-sm">
-          {account.apr > 0 ? (
+          {effectiveApr(account) > 0 || promoActive ? (
             <div className="flex justify-between gap-4">
-              <dt className="text-muted">APR</dt>
-              <dd>{(account.apr * 100).toFixed(2)}%</dd>
+              <dt className="text-muted">Current APR</dt>
+              <dd>{(effectiveApr(account) * 100).toFixed(2)}%</dd>
+            </div>
+          ) : null}
+          {account.standardApr != null && promoActive ? (
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted">APR after promotion</dt>
+              <dd>{(account.standardApr * 100).toFixed(2)}%</dd>
             </div>
           ) : null}
           {isRevolvingType(account.type) && account.creditLimit > 0 ? (
@@ -271,10 +314,10 @@ export function DebtDetailRoute() {
       />
 
       <UpdateBalanceSheet
-        open={showBalance}
+        open={showStatement}
         account={account}
-        onClose={() => setShowBalance(false)}
-        onUpdate={updateBalance}
+        onClose={() => setShowStatement(false)}
+        onUpdate={updateStatement}
         saving={saving}
       />
     </div>

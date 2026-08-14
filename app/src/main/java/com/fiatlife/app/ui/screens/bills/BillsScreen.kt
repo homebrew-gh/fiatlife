@@ -46,6 +46,7 @@ import com.fiatlife.app.ui.components.MoneyText
 import com.fiatlife.app.ui.components.EmptyState
 import com.fiatlife.app.ui.components.PercentageTextField
 import com.fiatlife.app.ui.components.formatCurrency
+import com.fiatlife.app.ui.screens.debt.UpdateStatementDialog
 import com.fiatlife.app.ui.theme.ProfitGreen
 import com.fiatlife.app.ui.viewmodel.BillCardUiModel
 import com.fiatlife.app.ui.viewmodel.BillsViewModel
@@ -74,6 +75,7 @@ fun BillsScreen(
     val summaryPaymentBreakdown = if (showingAnnual) state.annualPaymentBreakdown else state.paymentBreakdown
     val summaryPaymentSubtotalBanks = if (showingAnnual) state.annualPaymentSubtotalBanks else state.paymentSubtotalBanks
     val summaryPaymentSubtotalCredit = if (showingAnnual) state.annualPaymentSubtotalCredit else state.paymentSubtotalCredit
+    var statementAccount by remember { mutableStateOf<CreditAccount?>(null) }
 
     LaunchedEffect(Unit) {
         viewModel.showPastDueAutopayDialogIfNeeded()
@@ -144,11 +146,31 @@ fun BillsScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                         )
-                        Text(
-                            text = "Swipe to switch monthly/annual · Double-tap for details",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
-                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                            SegmentedButton(
+                                selected = !showingAnnual,
+                                onClick = { summaryMode = "monthly" },
+                                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+                            ) { Text("Monthly") }
+                            SegmentedButton(
+                                selected = showingAnnual,
+                                onClick = { summaryMode = "annual" },
+                                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+                            ) { Text("Annual") }
+                        }
+                        TextButton(
+                            onClick = { summaryExpanded = !summaryExpanded },
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        ) {
+                            Text(if (summaryExpanded) "Hide details" else "Show details")
+                            Icon(
+                                if (summaryExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                contentDescription = null
+                            )
+                        }
                         Button(
                             onClick = { navController.navigate(Screen.CompanyHistory.route) }
                         ) {
@@ -326,7 +348,7 @@ fun BillsScreen(
                         onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
                         onMarkPaid = { viewModel.recordPayment(item) },
                         onCreditClick = item.bill.linkedCreditAccountId?.let { linkedId ->
-                            { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
+                            { statementAccount = state.creditAccounts.find { it.id == linkedId } }
                         }
                     )
                 }
@@ -373,7 +395,7 @@ fun BillsScreen(
                                 onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
                                 onMarkPaid = { viewModel.recordPayment(item) },
                                 onCreditClick = item.bill.linkedCreditAccountId?.let { linkedId ->
-                                    { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
+                                    { statementAccount = state.creditAccounts.find { it.id == linkedId } }
                                 }
                             )
                         }
@@ -402,7 +424,7 @@ fun BillsScreen(
                             onClick = { navController.navigate(Screen.BillDetail.routeWithId(item.id)) },
                             onMarkPaid = { viewModel.recordPayment(item) },
                             onCreditClick = item.bill.linkedCreditAccountId?.let { linkedId ->
-                                { navController.navigate(Screen.DebtDetail.routeWithId(linkedId)) }
+                                { statementAccount = state.creditAccounts.find { it.id == linkedId } }
                             }
                         )
                     }
@@ -414,7 +436,7 @@ fun BillsScreen(
                     EmptyState(
                         icon = Icons.Filled.Receipt,
                         title = "No bills yet",
-                        subtitle = "Tap + to add your first bill"
+                        subtitle = "Tap + to add a bill. Credit cards and loans start on the Debt tab — FiatLife creates a due-date reminder here."
                     )
                 }
             }
@@ -460,10 +482,22 @@ fun BillsScreen(
             item = item,
             currentBalance = state.creditAccounts.find { it.id == item.bill.linkedCreditAccountId }?.currentBalance
                 ?: item.bill.creditCardDetails?.currentBalance ?: 0.0,
-            defaultAmount = item.bill.effectiveAmountDue(),
+            defaultAmount = state.creditAccounts.find { it.id == item.bill.linkedCreditAccountId }?.effectiveAmountDue()
+                ?: item.bill.effectiveAmountDue(),
             onDismiss = { viewModel.dismissCreditLoanPaymentDialog() },
             onConfirm = { amount, newBalance ->
                 viewModel.recordCreditLoanPayment(item, amount, newBalance)
+            }
+        )
+    }
+
+    statementAccount?.let { account ->
+        UpdateStatementDialog(
+            account = account,
+            onDismiss = { statementAccount = null },
+            onSave = { update ->
+                viewModel.updateStatement(account, update)
+                statementAccount = null
             }
         )
     }
@@ -815,16 +849,25 @@ private fun BillCard(
                 }
             }
             MoneyText(
-                amount = bill.effectiveAmountDue(),
+                amount = card.amountDue,
                 style = MaterialTheme.typography.titleMedium
             )
-            Spacer(modifier = Modifier.width(4.dp))
-            Icon(
-                Icons.Filled.ChevronRight,
-                contentDescription = "View details",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp)
-            )
+            if (onCreditClick != null) {
+                TextButton(
+                    onClick = onCreditClick,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                ) {
+                    Text("Update")
+                }
+            } else {
+                Spacer(modifier = Modifier.width(4.dp))
+                Icon(
+                    Icons.Filled.ChevronRight,
+                    contentDescription = "View details",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
     }
 }
@@ -938,6 +981,7 @@ internal fun BillDialog(
         BillSubcategory.entries.filter { it.generalCategory == generalCategory }
     }
 
+    val linkedToDebt = bill?.linkedCreditAccountId != null
     val cc = bill?.creditCardDetails
     var currentBalance by remember(bill, subcategory) {
         mutableStateOf(if (subcategory == BillSubcategory.CREDIT_CARD) (cc?.currentBalance ?: 0.0).toString() else "0")
@@ -987,16 +1031,26 @@ internal fun BillDialog(
                         shape = MaterialTheme.shapes.medium
                     )
                 }
-                if (subcategory != BillSubcategory.CREDIT_CARD) {
+                if (subcategory != BillSubcategory.CREDIT_CARD || linkedToDebt) {
                     item {
                         CurrencyTextField(
                             value = amount,
                             onValueChange = { amount = it },
-                            label = "Amount"
+                            label = "Amount",
+                            enabled = !linkedToDebt
                         )
                     }
                 }
-                if (subcategory == BillSubcategory.CREDIT_CARD) {
+                if (linkedToDebt) {
+                    item {
+                        Text(
+                            "Balance, APR, and statement amount are managed by the linked Debt account.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                if (subcategory == BillSubcategory.CREDIT_CARD && !linkedToDebt) {
                     item {
                         CurrencyTextField(
                             value = currentBalance,
@@ -1082,12 +1136,13 @@ internal fun BillDialog(
                 item {
                     ExposedDropdownMenuBox(
                         expanded = generalCategoryExpanded,
-                        onExpandedChange = { generalCategoryExpanded = it }
+                        onExpandedChange = { if (!linkedToDebt) generalCategoryExpanded = it }
                     ) {
                         OutlinedTextField(
                             value = generalCategory.displayName,
                             onValueChange = {},
                             readOnly = true,
+                            enabled = !linkedToDebt,
                             label = { Text("General Category") },
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(generalCategoryExpanded) },
                             modifier = Modifier
@@ -1115,12 +1170,13 @@ internal fun BillDialog(
                 item {
                     ExposedDropdownMenuBox(
                         expanded = subcategoryExpanded,
-                        onExpandedChange = { subcategoryExpanded = it }
+                        onExpandedChange = { if (!linkedToDebt) subcategoryExpanded = it }
                     ) {
                         OutlinedTextField(
                             value = subcategory.displayName,
                             onValueChange = {},
                             readOnly = true,
+                            enabled = !linkedToDebt,
                             label = { Text("Subcategory") },
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(subcategoryExpanded) },
                             modifier = Modifier
@@ -1170,9 +1226,8 @@ internal fun BillDialog(
                         Text("Recurring bill")
                         Switch(
                             checked = isRecurring,
-                            onCheckedChange = {
-                                isRecurring = it
-                            }
+                            onCheckedChange = { isRecurring = it },
+                            enabled = !linkedToDebt
                         )
                     }
                 }
@@ -1181,13 +1236,14 @@ internal fun BillDialog(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             ExposedDropdownMenuBox(
                                 expanded = frequencyExpanded,
-                                onExpandedChange = { frequencyExpanded = it },
+                                onExpandedChange = { if (!linkedToDebt) frequencyExpanded = it },
                                 modifier = Modifier.weight(1f)
                             ) {
                                 OutlinedTextField(
                                     value = frequency.displayName,
                                     onValueChange = {},
                                     readOnly = true,
+                                    enabled = !linkedToDebt,
                                     label = { Text("Frequency") },
                                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(frequencyExpanded) },
                                     modifier = Modifier.menuAnchor(),
@@ -1215,6 +1271,7 @@ internal fun BillDialog(
                                 label = { Text("Due Day") },
                                 modifier = Modifier.weight(0.5f),
                                 singleLine = true,
+                                enabled = !linkedToDebt,
                                 shape = MaterialTheme.shapes.medium
                             )
                         }
@@ -1391,7 +1448,9 @@ internal fun BillDialog(
                         CreditCardMinPaymentType.PERCENT_OF_BALANCE -> 2.0
                         else -> 0.0
                     }
-                    val ccDetails = if (subcategory == BillSubcategory.CREDIT_CARD) {
+                    val ccDetails = if (linkedToDebt) {
+                        null
+                    } else if (subcategory == BillSubcategory.CREDIT_CARD) {
                         CreditCardDetails(
                             currentBalance = balance.coerceAtLeast(0.0),
                             apr = apr.coerceAtLeast(0.0),
@@ -1400,7 +1459,11 @@ internal fun BillDialog(
                             interestChargedLastPeriod = bill?.creditCardDetails?.interestChargedLastPeriod ?: 0.0
                         )
                     } else null
-                    val effectiveAmount = ccDetails?.minimumDue(ccDetails.currentBalance) ?: (amount.toDoubleOrNull() ?: 0.0)
+                    val effectiveAmount = if (linkedToDebt) {
+                        bill?.amount ?: (amount.toDoubleOrNull() ?: 0.0)
+                    } else {
+                        ccDetails?.minimumDue(ccDetails.currentBalance) ?: (amount.toDoubleOrNull() ?: 0.0)
+                    }
                     val showInCypherLogArg = if (showInCypherLogVisible) showInCypherLog else null
                     val initialPurchaseDateMillis = if (isRecurring) parseIsoDate(initialPurchaseDate) else null
                     val oneTimeDueDateMillis = if (!isRecurring) parseIsoDate(oneTimeDueDate) else null

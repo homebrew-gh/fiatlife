@@ -2,9 +2,12 @@ package com.fiatlife.app.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.fiatlife.app.data.repository.BillRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.data.repository.stateWhileSubscribed
+import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.domain.model.CreditAccount
+import com.fiatlife.app.domain.model.CreditStatementUpdate
 import com.fiatlife.app.domain.model.DebtPayoffSummary
 import com.fiatlife.app.domain.model.isMinimumPaymentTrap
 import com.fiatlife.app.domain.model.monthlyInterest
@@ -16,7 +19,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -24,7 +26,10 @@ import javax.inject.Inject
 data class DebtAccountCardUiModel(
     val monthlyInterest: Double = 0.0,
     val isMinimumPaymentTrap: Boolean = false,
-    val monthlyPayment: Double = 0.0
+    val monthlyPayment: Double = 0.0,
+    val dueDays: Int = 0,
+    val overdue: Boolean = false,
+    val paidThisCycle: Boolean = false
 )
 
 data class DebtState(
@@ -64,14 +69,17 @@ private data class DebtUiOverlay(
 
 @HiltViewModel
 class DebtViewModel @Inject constructor(
-    private val repository: CreditAccountRepository
+    private val repository: CreditAccountRepository,
+    private val billRepository: BillRepository
 ) : ViewModel() {
 
     private val uiOverlay = MutableStateFlow(DebtUiOverlay())
 
     val state: StateFlow<DebtState> = combine(
-        repository.getAllCreditAccounts()
-            .map { accounts -> buildDebtComputed(accounts) }
+        combine(
+            repository.getAllCreditAccounts(),
+            billRepository.getAllBills()
+        ) { accounts, bills -> buildDebtComputed(accounts, bills) }
             .flowOn(Dispatchers.Default)
             .distinctUntilChanged(),
         uiOverlay
@@ -133,21 +141,55 @@ class DebtViewModel @Inject constructor(
             repository.deleteCreditAccount(account)
         }
     }
+
+    fun updateStatement(account: CreditAccount, update: CreditStatementUpdate) {
+        viewModelScope.launch {
+            uiOverlay.update { it.copy(isSaving = true) }
+            try {
+                repository.updateStatement(account, update)
+                uiOverlay.update { it.copy(isSaving = false) }
+            } catch (e: Exception) {
+                uiOverlay.update {
+                    it.copy(isSaving = false, message = "Statement update failed: ${e.message}")
+                }
+            }
+        }
+    }
 }
 
-private fun buildDebtComputed(accounts: List<CreditAccount>): DebtComputed {
+private fun paidThisCycle(account: CreditAccount, bills: List<Bill>): Boolean {
+    val bill = bills.firstOrNull { it.id == account.linkedBillId }
+        ?: bills.firstOrNull { it.linkedCreditAccountId == account.id }
+    return bill?.isPaidForCurrentCycle() == true
+}
+
+private fun buildDebtComputed(
+    accounts: List<CreditAccount>,
+    bills: List<Bill>
+): DebtComputed {
     val revolving = accounts.filter { it.type.isRevolving }
     val totalAvailable = revolving.sumOf { it.creditLimit.coerceAtLeast(0.0) }
     val totalUtilized = revolving.sumOf { it.currentBalance }
     val utilization = if (totalAvailable > 0) totalUtilized / totalAvailable else 0.0
+    val paidById = accounts.associate { it.id to paidThisCycle(it, bills) }
     val sorted = accounts.sortedWith(
-        compareBy<CreditAccount> { !it.type.isRevolving }.thenBy { it.name.lowercase() }
+        compareBy<CreditAccount> { it.currentBalance <= 0.0 }
+            .thenByDescending { it.dueUrgency(paidById[it.id] == true).overdue }
+            .thenBy {
+                val urgency = it.dueUrgency(paidById[it.id] == true)
+                if (urgency.overdue) -urgency.days else urgency.days
+            }
+            .thenBy { it.name.lowercase() }
     )
     val accountCardById = sorted.associate { account ->
+        val urgency = account.dueUrgency(paidById[account.id] == true)
         account.id to DebtAccountCardUiModel(
             monthlyInterest = account.monthlyInterest(),
             isMinimumPaymentTrap = account.isMinimumPaymentTrap(),
-            monthlyPayment = account.effectiveMonthlyPayment()
+            monthlyPayment = account.effectiveMonthlyPayment(),
+            dueDays = urgency.days,
+            overdue = urgency.overdue,
+            paidThisCycle = paidById[account.id] == true
         )
     }
     return DebtComputed(

@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import clsx from "clsx";
 import { GoalSheet } from "../../components/goals/GoalSheet";
 import { UpdateProgressSheet } from "../../components/goals/UpdateProgressSheet";
 import { formatUsd } from "../../lib/format";
@@ -13,6 +12,12 @@ import {
   type FinancialGoal,
 } from "../../lib/goal";
 import { useGoalsData } from "../../lib/goalsData";
+import {
+  EmptyState,
+  ErrorBanner,
+  HeroCard,
+  PageHeader,
+} from "../../components/ui";
 
 function goalColor(goal: FinancialGoal): string {
   if (/^#[0-9A-Fa-f]{6}$/.test(goal.color)) return goal.color;
@@ -60,7 +65,7 @@ function GoalCard({
         </span>
       </div>
 
-      <div className="mt-2 h-2 rounded-full bg-surface-variant overflow-hidden">
+      <div className="mt-2 h-2 rounded-full bg-surfaceVariant overflow-hidden">
         <div
           className="h-full rounded-full transition-all"
           style={{ width: `${progress}%`, backgroundColor: color }}
@@ -173,22 +178,13 @@ export function GoalsTab() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="page-title">Goals</h1>
-          <p className="text-sm text-muted mt-1">
-            Savings targets synced with Android via your Nostr relay.
-          </p>
-        </div>
-        <div className="flex gap-2 shrink-0">
-          <button
-            type="button"
-            className="btn-ghost text-sm"
-            onClick={() => void onRefresh()}
-            disabled={refreshing || loading}
-          >
-            {refreshing ? "Refreshing…" : "Refresh"}
-          </button>
+      <PageHeader
+        title="Goals"
+        description="Savings targets synced with Android via your Nostr relay."
+        refreshing={refreshing}
+        onRefresh={() => void onRefresh()}
+        refreshDisabled={loading}
+        actions={
           <button
             type="button"
             className="btn-primary text-sm"
@@ -197,27 +193,23 @@ export function GoalsTab() {
           >
             Add goal
           </button>
-        </div>
-      </div>
+        }
+      />
 
-      {error ? (
-        <p className="notice-error text-sm" role="alert">
-          {error}
-        </p>
-      ) : null}
+      {error ? <ErrorBanner message={error} /> : null}
 
       {loading ? (
         <p className="text-sm text-muted">Loading goals…</p>
       ) : (
         <>
-          <section className="card p-6 bg-primary-container text-on-primary-container">
+          <HeroCard className="p-6" center>
             <h2 className="text-center text-sm font-medium opacity-80">
               Overall Progress
             </h2>
             <p className="text-center font-serif text-4xl font-bold mt-2">
               {summary.overallProgress.toFixed(0)}%
             </p>
-            <div className="mt-3 h-2 rounded-full bg-on-primary-container/20 overflow-hidden">
+            <div className="mt-3 h-2 rounded-full bg-surfaceVariant overflow-hidden">
               <div
                 className="h-full rounded-full bg-success transition-all"
                 style={{
@@ -228,13 +220,13 @@ export function GoalsTab() {
             <div className="mt-4 grid grid-cols-3 gap-2 text-center text-sm">
               <div>
                 <p className="opacity-70">Saved</p>
-                <p className="font-semibold font-mono">
+                <p className="money font-semibold">
                   {formatUsd(summary.totalSaved)}
                 </p>
               </div>
               <div>
                 <p className="opacity-70">Target</p>
-                <p className="font-semibold font-mono">
+                <p className="money font-semibold">
                   {formatUsd(summary.totalTarget)}
                 </p>
               </div>
@@ -243,22 +235,18 @@ export function GoalsTab() {
                 <p className="font-semibold">{goals.length}</p>
               </div>
             </div>
-          </section>
+          </HeroCard>
 
           {goals.length === 0 ? (
-            <div className="card p-8 text-center">
-              <p className="font-medium text-body">No goals yet</p>
-              <p className="text-sm text-muted mt-1">
-                Start tracking your financial goals.
-              </p>
-              <button
-                type="button"
-                className={clsx("btn-primary mt-4")}
-                onClick={openAdd}
-              >
-                Add your first goal
-              </button>
-            </div>
+            <EmptyState
+              title="No goals yet"
+              description="Start tracking your financial goals."
+              action={
+                <button type="button" className="btn-primary" onClick={openAdd}>
+                  Add your first goal
+                </button>
+              }
+            />
           ) : (
             <div className="space-y-4">
               {goals.map((goal) => (

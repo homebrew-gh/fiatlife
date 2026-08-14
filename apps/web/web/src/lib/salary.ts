@@ -1167,6 +1167,45 @@ export function missingPaydaysForYear(
   return scheduled.filter((day) => !loggedDays.has(day));
 }
 
+/**
+ * Paychecks in a typical conservative month (e.g. two for biweekly — not
+ * occasional three-paycheck months).
+ */
+export function conservativePaychecksPerMonth(
+  frequency: PayFrequency,
+): number {
+  return Math.max(1, Math.floor(PERIODS_PER_YEAR[frequency] / 12));
+}
+
+export type ConservativeMonthlyTakeHome = {
+  /** Base net per paycheck (no overtime). */
+  perPaycheckNet: number;
+  paychecksPerMonth: number;
+  /** perPaycheckNet × paychecksPerMonth */
+  monthlyTakeHome: number;
+};
+
+/**
+ * Conservative monthly take-home for affordability budgeting: base-rate net pay
+ * after taxes and deductions, times paychecks in a typical month (two for
+ * biweekly/semi-monthly). Excludes overtime, bonuses, and logged paycheck variance.
+ */
+export function computeConservativeMonthlyTakeHome(
+  config: SalaryConfig,
+  asOf = Date.now(),
+): ConservativeMonthlyTakeHome {
+  const perPaycheckNet = calculatePaycheck(
+    { ...config, overtimeHours: 0 },
+    asOf,
+  ).netPay;
+  const paychecksPerMonth = conservativePaychecksPerMonth(config.payFrequency);
+  return {
+    perPaycheckNet,
+    paychecksPerMonth,
+    monthlyTakeHome: perPaycheckNet * paychecksPerMonth,
+  };
+}
+
 export type MonthlyTakeHomeSource = "logged" | "estimated" | "mixed";
 
 export type MonthlyTakeHomeProjection = {
@@ -1946,6 +1985,24 @@ export function mergeSalaryConfigPreserveLogs(
     merged = { ...merged, payRateHistory: existingHistory };
   }
   return normalizeSalaryConfig(merged);
+}
+
+/** Merge all relay salary copies (by JSON `updatedAt`) preserving paycheck logs. */
+export function resolveSalaryConfigFromAppDataRecords(
+  records: Array<{ d_tag?: string | null; plaintext?: string | null }>,
+): SalaryConfig | null {
+  const configs = records
+    .filter((r) => r.d_tag === SALARY_D_TAG && r.plaintext)
+    .map((r) => parseSalaryRecord(r.plaintext!))
+    .filter((c): c is SalaryConfig => c != null);
+  if (configs.length === 0) return null;
+
+  const sorted = [...configs].sort((a, b) => a.updatedAt - b.updatedAt);
+  let merged = sorted[0]!;
+  for (let i = 1; i < sorted.length; i++) {
+    merged = mergeSalaryConfigPreserveLogs(sorted[i]!, merged);
+  }
+  return merged;
 }
 
 export function normalizeSalaryConfig(

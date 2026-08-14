@@ -34,6 +34,15 @@ export const ALL_MIN_PAYMENT_TYPES = [
 
 export type CreditCardMinPaymentType = (typeof ALL_MIN_PAYMENT_TYPES)[number];
 
+export const ALL_PROMOTION_APPLIES_TO = [
+  "PURCHASES",
+  "BALANCE_TRANSFER",
+  "BOTH",
+] as const;
+
+export type PromotionAppliesTo =
+  (typeof ALL_PROMOTION_APPLIES_TO)[number];
+
 export const MIN_PAYMENT_TYPE_LABELS: Record<CreditCardMinPaymentType, string> = {
   FIXED: "Fixed amount",
   PERCENT_OF_BALANCE: "% of balance",
@@ -53,7 +62,17 @@ export type CreditAccount = {
   institution: string;
   accountNumberLast4: string;
   apr: number;
+  /** Ongoing APR after a promotion. Falls back to `apr` for older records. */
+  standardApr?: number | null;
+  promotionalApr?: number | null;
+  promotionalAprEndDate?: number | null;
+  promotionAppliesTo?: PromotionAppliesTo | null;
+  deferredInterest?: boolean;
   currentBalance: number;
+  /** Issuer-reported statement balance date. */
+  statementBalanceAsOfMillis?: number | null;
+  /** Issuer-reported amount due; null uses the configured minimum formula. */
+  statementAmountDue?: number | null;
   dueDay: number;
   linkedBillId?: string | null;
   annualFeeLinkedBillId?: string | null;
@@ -133,9 +152,170 @@ export function minimumDue(account: CreditAccount): number {
   }
 }
 
+function dueDateInMonth(dueDay: number, year: number, month: number): Date {
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const date = new Date(year, month, Math.min(Math.max(1, dueDay), lastDay));
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function endOfDayMillis(date: Date): number {
+  return date.getTime() + 86_400_000 - 1;
+}
+
+/** Statement amount due applies until that cycle's due date passes. */
+export function statementOverrideActive(
+  account: CreditAccount,
+  asOf = Date.now(),
+): boolean {
+  if (
+    account.statementAmountDue == null ||
+    !Number.isFinite(account.statementAmountDue)
+  ) {
+    return false;
+  }
+  if (account.statementBalanceAsOfMillis == null) return true;
+  const stmt = new Date(account.statementBalanceAsOfMillis);
+  let cycleDue = dueDateInMonth(
+    account.dueDay,
+    stmt.getFullYear(),
+    stmt.getMonth(),
+  );
+  if (account.statementBalanceAsOfMillis > endOfDayMillis(cycleDue)) {
+    const next = new Date(stmt.getFullYear(), stmt.getMonth() + 1, 1);
+    cycleDue = dueDateInMonth(
+      account.dueDay,
+      next.getFullYear(),
+      next.getMonth(),
+    );
+  }
+  return asOf <= endOfDayMillis(cycleDue);
+}
+
+export function effectiveAmountDue(
+  account: CreditAccount,
+  asOf = Date.now(),
+): number {
+  if (statementOverrideActive(account, asOf)) {
+    return Math.max(0, account.statementAmountDue ?? 0);
+  }
+  return minimumDue(account);
+}
+
+export type DueUrgency = {
+  days: number;
+  overdue: boolean;
+};
+
+export function dueUrgency(
+  account: CreditAccount,
+  paidThisCycle = false,
+  asOf = Date.now(),
+): DueUrgency {
+  const now = new Date(asOf);
+  now.setHours(0, 0, 0, 0);
+  const thisMonthDue = dueDateInMonth(
+    account.dueDay,
+    now.getFullYear(),
+    now.getMonth(),
+  );
+  if (
+    account.currentBalance > 0 &&
+    asOf > endOfDayMillis(thisMonthDue) &&
+    !paidThisCycle
+  ) {
+    return {
+      days: Math.max(
+        1,
+        Math.ceil((asOf - thisMonthDue.getTime()) / 86_400_000),
+      ),
+      overdue: true,
+    };
+  }
+  let next = thisMonthDue;
+  if (asOf > endOfDayMillis(thisMonthDue)) {
+    const following = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    next = dueDateInMonth(
+      account.dueDay,
+      following.getFullYear(),
+      following.getMonth(),
+    );
+  }
+  return {
+    days: Math.max(
+      0,
+      Math.ceil((next.getTime() - now.getTime()) / 86_400_000),
+    ),
+    overdue: false,
+  };
+}
+
+export function sortAccountsByUrgency(
+  accounts: CreditAccount[],
+  paidThisCycleById: Record<string, boolean> = {},
+): CreditAccount[] {
+  return [...accounts].sort((a, b) => {
+    if (a.currentBalance <= 0 && b.currentBalance > 0) return 1;
+    if (b.currentBalance <= 0 && a.currentBalance > 0) return -1;
+    const ua = dueUrgency(a, paidThisCycleById[a.id] === true);
+    const ub = dueUrgency(b, paidThisCycleById[b.id] === true);
+    if (ua.overdue !== ub.overdue) return ua.overdue ? -1 : 1;
+    if (ua.overdue && ub.overdue) return ub.days - ua.days;
+    return ua.days - ub.days;
+  });
+}
+
+export function isPromotionActive(
+  account: CreditAccount,
+  asOf = Date.now(),
+): boolean {
+  return (
+    account.promotionalApr != null &&
+    account.promotionalAprEndDate != null &&
+    account.promotionalAprEndDate >= asOf
+  );
+}
+
+export function effectiveApr(
+  account: CreditAccount,
+  asOf = Date.now(),
+): number {
+  if (isPromotionActive(account, asOf)) {
+    return Math.max(0, account.promotionalApr ?? 0);
+  }
+  return Math.max(0, account.standardApr ?? account.apr);
+}
+
+export function monthsUntilPromotionEnds(
+  account: CreditAccount,
+  asOf = Date.now(),
+): number | null {
+  if (!isPromotionActive(account, asOf) || account.promotionalAprEndDate == null) {
+    return null;
+  }
+  const start = new Date(asOf);
+  const end = new Date(account.promotionalAprEndDate);
+  return Math.max(
+    1,
+    (end.getFullYear() - start.getFullYear()) * 12 +
+      end.getMonth() -
+      start.getMonth() +
+      (end.getDate() >= start.getDate() ? 1 : 0),
+  );
+}
+
+export function paymentToClearPromotion(
+  account: CreditAccount,
+  asOf = Date.now(),
+): number | null {
+  const months = monthsUntilPromotionEnds(account, asOf);
+  if (months == null || months <= 0 || account.currentBalance <= 0) return null;
+  return account.currentBalance / months;
+}
+
 export function effectiveMonthlyPayment(account: CreditAccount): number {
   if (isRevolvingType(account.type)) {
-    return account.currentBalance > 0 ? minimumDue(account) : 0;
+    return account.currentBalance > 0 ? effectiveAmountDue(account) : 0;
   }
   if (isAmortizingType(account.type)) {
     return account.monthlyPaymentAmount ?? 0;
@@ -207,7 +387,14 @@ export function defaultCreditAccount(
     institution: partial?.institution ?? "",
     accountNumberLast4: partial?.accountNumberLast4 ?? "",
     apr: partial?.apr ?? 0,
+    standardApr: partial?.standardApr ?? partial?.apr ?? 0,
+    promotionalApr: partial?.promotionalApr ?? null,
+    promotionalAprEndDate: partial?.promotionalAprEndDate ?? null,
+    promotionAppliesTo: partial?.promotionAppliesTo ?? null,
+    deferredInterest: partial?.deferredInterest ?? false,
     currentBalance: partial?.currentBalance ?? 0,
+    statementBalanceAsOfMillis: partial?.statementBalanceAsOfMillis ?? null,
+    statementAmountDue: partial?.statementAmountDue ?? null,
     dueDay: partial?.dueDay ?? 1,
     linkedBillId: partial?.linkedBillId ?? null,
     annualFeeLinkedBillId: partial?.annualFeeLinkedBillId ?? null,
@@ -247,7 +434,32 @@ export function parseCreditAccountRecord(
       institution: String(parsed.institution ?? ""),
       accountNumberLast4: String(parsed.accountNumberLast4 ?? ""),
       apr: Number(parsed.apr ?? 0),
+      standardApr:
+        parsed.standardApr != null
+          ? Number(parsed.standardApr)
+          : Number(parsed.apr ?? 0),
+      promotionalApr:
+        parsed.promotionalApr != null ? Number(parsed.promotionalApr) : null,
+      promotionalAprEndDate:
+        parsed.promotionalAprEndDate != null
+          ? Number(parsed.promotionalAprEndDate)
+          : null,
+      promotionAppliesTo:
+        parsed.promotionAppliesTo === "PURCHASES" ||
+        parsed.promotionAppliesTo === "BALANCE_TRANSFER" ||
+        parsed.promotionAppliesTo === "BOTH"
+          ? parsed.promotionAppliesTo
+          : null,
+      deferredInterest: Boolean(parsed.deferredInterest ?? false),
       currentBalance: Number(parsed.currentBalance ?? 0),
+      statementBalanceAsOfMillis:
+        parsed.statementBalanceAsOfMillis != null
+          ? Number(parsed.statementBalanceAsOfMillis)
+          : null,
+      statementAmountDue:
+        parsed.statementAmountDue != null
+          ? Number(parsed.statementAmountDue)
+          : null,
       dueDay: Number(parsed.dueDay ?? 1),
       linkedBillId:
         parsed.linkedBillId != null ? String(parsed.linkedBillId) : null,

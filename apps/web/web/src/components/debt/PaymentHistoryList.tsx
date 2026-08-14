@@ -33,7 +33,7 @@ export function PaymentHistoryList({
           className="flex items-center justify-between py-2.5 text-sm"
         >
           <span className="text-muted">{formatPaymentDate(payment.date)}</span>
-          <span className="font-mono font-medium text-money">
+          <span className="font-mono font-medium text-moneyColor">
             {formatUsd(payment.amount)}
           </span>
         </li>

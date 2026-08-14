@@ -29,6 +29,13 @@ import {
   type YtdBreakdownLine,
 } from "../../lib/salary";
 import { FILING_STATUS_LABELS } from "../../lib/tax";
+import {
+  CollapsibleSection,
+  EmptyState,
+  ErrorBanner,
+  PageHeader,
+  SegmentedControl,
+} from "../../components/ui";
 
 type PaycheckView = "summary" | "whatif";
 type SummaryStatsView = "ytd" | "annual";
@@ -122,29 +129,16 @@ export function PaycheckTab() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="page-title">Paycheck</h1>
-          <p className="text-sm text-muted mt-1">
-            Track actual paychecks on Summary. Use Model for raises, bonuses,
-            and other scenarios.
-          </p>
-        </div>
-        <div className="flex gap-2 shrink-0">
-          <button
-            type="button"
-            className="btn-ghost text-sm"
-            onClick={() => void onRefresh()}
-            disabled={refreshing}
-          >
-            {refreshing ? "Syncing…" : "Sync"}
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="Paycheck"
+        description="Track actual paychecks on Summary. Use Model for raises, bonuses, and other scenarios."
+        refreshing={refreshing}
+        onRefresh={() => void onRefresh()}
+      />
 
       <div className="flex items-stretch gap-2">
         <div className="flex-1 min-w-0">
-          <SegmentedBar
+          <SegmentedControl
             options={VIEWS}
             value={view}
             onChange={setView}
@@ -180,11 +174,7 @@ export function PaycheckTab() {
         <p className="text-muted text-sm">Loading paycheck data…</p>
       ) : null}
 
-      {salary.error ? (
-        <div className="card-quiet p-4 text-sm text-error" role="alert">
-          {salary.error}
-        </div>
-      ) : null}
+      {salary.error ? <ErrorBanner message={salary.error} /> : null}
 
       {!salary.loading ? (
         <>
@@ -212,12 +202,16 @@ export function PaycheckTab() {
           {view === "whatif" ? (
             <WhatIfView
               config={salary.config}
-              calc={salary.calculation}
+              calc={salary.modelCalculation}
               setConfig={salary.setConfig}
               annualOvertimeHours={salary.annualOvertimeHours}
-              projection={salary.annualProjection}
-              baseline={salary.annualBaseline}
+              projection={salary.modelAnnualProjection}
+              baseline={salary.modelAnnualBaseline}
               onOvertimeChange={salary.setAnnualOvertimeHours}
+              currentEffectiveRate={salary.currentEffectiveRate}
+              whatIfPayRate={salary.whatIfPayRate}
+              onPayRateChange={salary.setWhatIfPayRate}
+              onResetPayRate={salary.resetWhatIfPayRate}
               whatIfDeposits={salary.whatIfDirectDeposits ?? salary.config.directDeposits}
               whatIfDepositAllocations={salary.whatIfDepositAllocations}
               whatIfDepositsCustomized={salary.whatIfDepositsCustomized}
@@ -352,6 +346,20 @@ function SummaryView({
         </button>
       </div>
 
+      {config.hourlyRate <= 0 &&
+      (config.annualSalary ?? 0) <= 0 &&
+      (config.paycheckLog ?? []).length === 0 ? (
+        <EmptyState
+          title="Set up your paycheck"
+          description="Add your pay rate in Model, or log a paycheck to start tracking take-home and taxes."
+          action={
+            <button type="button" className="btn-primary" onClick={onLogPaycheck}>
+              Log paycheck
+            </button>
+          }
+        />
+      ) : null}
+
       <section className="card p-5 bg-dollar-gradient">
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs tracking-wider text-muted font-medium">
@@ -379,7 +387,7 @@ function SummaryView({
           {ytd.progressPercent.toFixed(0)}% of projected annual net (
           {formatUsd(ytd.annualNetTarget)})
         </p>
-        <SegmentedBar
+        <SegmentedControl
           className="mt-4"
           options={[
             { id: "ytd", label: "Year To Date" },
@@ -403,6 +411,10 @@ function SummaryView({
             <Stat label="OT hours YTD" value={ytd.overtimeHours.toFixed(1)} />
           </div>
 
+          <CollapsibleSection
+            title="Detailed breakdown"
+            summary="Earnings, taxes, and deductions"
+          >
           <BreakdownCard
             title="Earnings"
             lines={ytd.earnings}
@@ -442,6 +454,7 @@ function SummaryView({
               total={ytd.employerContributions.reduce((s, l) => s + l.amount, 0)}
             />
           ) : null}
+          </CollapsibleSection>
         </>
       ) : (
         <>
@@ -534,6 +547,10 @@ function SummaryView({
             </p>
           </section>
 
+          <CollapsibleSection
+            title="Annual details"
+            summary="Federal return estimate and full breakdown"
+          >
           <FederalTaxReturnSection
             projection={federalReturn}
             filingStatus={config.filingStatus}
@@ -581,14 +598,18 @@ function SummaryView({
               )}
             />
           ) : null}
+          </CollapsibleSection>
         </>
       )}
 
       {statsView === "ytd" ? (
         <>
-      <section className="card p-5">
-        <h2 className="section-title">Paycheck Schedule</h2>
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <CollapsibleSection
+        title="Paycheck Schedule"
+        summary="Pay frequency and first payday"
+        defaultOpen={!canDetectMissing}
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="label" htmlFor="summary-pay-freq">
               Pay frequency
@@ -635,13 +656,13 @@ function SummaryView({
             />
           </div>
         </div>
-        <p className="text-xs text-muted mt-2">
+        <p className="text-xs text-muted">
           {config.payFrequency === "WEEKLY" ||
           config.payFrequency === "BIWEEKLY"
             ? "Pay frequency and first payday are required for weekly and biweekly schedules. Logged paychecks on matching dates are recognized automatically."
             : "Pay frequency drives YTD counting and Model calculations. First payday improves monthly estimates."}
         </p>
-      </section>
+      </CollapsibleSection>
 
       <section className="card p-5">
         <div className="flex items-start justify-between gap-3">
@@ -773,20 +794,26 @@ function SummaryView({
         )}
       </section>
 
-      <PayRateHistorySection
-        payType={config.payType}
-        history={config.payRateHistory ?? []}
-        onChange={(list) => setConfig((c) => ({ ...c, payRateHistory: list }))}
-        inferred={inferredPayRates}
-        year={year}
-      />
+      <CollapsibleSection
+        title="Pay setup"
+        summary="Raises and direct deposits"
+        bare
+      >
+        <PayRateHistorySection
+          payType={config.payType}
+          history={config.payRateHistory ?? []}
+          onChange={(list) => setConfig((c) => ({ ...c, payRateHistory: list }))}
+          inferred={inferredPayRates}
+          year={year}
+        />
 
-      <DirectDepositsSection
-        deposits={config.directDeposits}
-        allocations={calc.depositAllocations}
-        netPay={calc.netPay}
-        onChange={(list) => setConfig((c) => ({ ...c, directDeposits: list }))}
-      />
+        <DirectDepositsSection
+          deposits={config.directDeposits}
+          allocations={calc.depositAllocations}
+          netPay={calc.netPay}
+          onChange={(list) => setConfig((c) => ({ ...c, directDeposits: list }))}
+        />
+      </CollapsibleSection>
         </>
       ) : null}
     </div>
@@ -801,6 +828,10 @@ function WhatIfView({
   projection,
   baseline,
   onOvertimeChange,
+  currentEffectiveRate,
+  whatIfPayRate,
+  onPayRateChange,
+  onResetPayRate,
   whatIfDeposits,
   whatIfDepositAllocations,
   whatIfDepositsCustomized,
@@ -815,6 +846,10 @@ function WhatIfView({
   projection: ReturnType<typeof useSalaryData>["annualProjection"];
   baseline: ReturnType<typeof useSalaryData>["annualBaseline"];
   onOvertimeChange: (hours: number) => void;
+  currentEffectiveRate: ReturnType<typeof useSalaryData>["currentEffectiveRate"];
+  whatIfPayRate: ReturnType<typeof useSalaryData>["whatIfPayRate"];
+  onPayRateChange: ReturnType<typeof useSalaryData>["setWhatIfPayRate"];
+  onResetPayRate: ReturnType<typeof useSalaryData>["resetWhatIfPayRate"];
   whatIfDeposits: DirectDeposit[];
   whatIfDepositAllocations: ReturnType<
     typeof useSalaryData
@@ -825,6 +860,7 @@ function WhatIfView({
   onLogPaycheck: () => void;
 }) {
   const otDelta = projection.annualOvertimePay - baseline.annualOvertimePay;
+  const payRateFromLogs = (config.paycheckLog ?? []).length > 0;
 
   return (
     <div className="space-y-4">
@@ -880,21 +916,57 @@ function WhatIfView({
             </button>
           ))}
         </div>
-        {config.payType === "SALARY" ? (
-          <NumberField
-            label="Annual salary"
-            value={config.annualSalary ?? 0}
-            onChange={(v) => setConfig((c) => ({ ...c, annualSalary: v }))}
-            money
-          />
-        ) : (
-          <NumberField
-            label="Hourly rate"
-            value={config.hourlyRate}
-            onChange={(v) => setConfig((c) => ({ ...c, hourlyRate: v }))}
-            money
-          />
-        )}
+        <div className="space-y-1">
+          {config.payType === "SALARY" ? (
+            <NumberField
+              label="Annual salary"
+              value={
+                payRateFromLogs
+                  ? (whatIfPayRate?.annualSalary ?? currentEffectiveRate.annualSalary)
+                  : (config.annualSalary ?? 0)
+              }
+              onChange={(v) =>
+                payRateFromLogs
+                  ? onPayRateChange({ annualSalary: v })
+                  : setConfig((c) => ({ ...c, annualSalary: v }))
+              }
+              money
+            />
+          ) : (
+            <NumberField
+              label="Hourly rate"
+              value={
+                payRateFromLogs
+                  ? (whatIfPayRate?.hourlyRate ?? currentEffectiveRate.hourlyRate)
+                  : config.hourlyRate
+              }
+              onChange={(v) =>
+                payRateFromLogs
+                  ? onPayRateChange({ hourlyRate: v })
+                  : setConfig((c) => ({ ...c, hourlyRate: v }))
+              }
+              money
+            />
+          )}
+          {payRateFromLogs ? (
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-muted">
+                {whatIfPayRate
+                  ? "Custom rate — only affects this model."
+                  : "Autofilled from your most recent logged paycheck. Edit to model a different rate."}
+              </p>
+              {whatIfPayRate ? (
+                <button
+                  type="button"
+                  className="btn-ghost text-xs py-1 shrink-0"
+                  onClick={onResetPayRate}
+                >
+                  Use logged rate
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
         <div className="grid grid-cols-2 gap-3">
           {config.payType === "SALARY" ? null : (
             <NumberField
@@ -934,6 +1006,11 @@ function WhatIfView({
         ) : null}
       </section>
 
+      <CollapsibleSection
+        title="Advanced modeling"
+        summary="Withholding, deductions, deposits, and annual OT"
+        bare
+      >
       <section className="card p-5 space-y-3">
         <h2 className="section-title">Withholding overrides</h2>
         <p className="text-xs text-muted">
@@ -1095,6 +1172,7 @@ function WhatIfView({
           negative
         />
       ) : null}
+      </CollapsibleSection>
     </div>
   );
 }
@@ -1447,7 +1525,7 @@ function DirectDepositsSection({
             );
           })}
           {unallocated > 0.01 ? (
-            <li className="flex items-center justify-between gap-3 py-2 border-t border-border">
+            <li className="flex items-center justify-between gap-3 py-2 border-t border-outline">
               <p className="text-sm font-medium text-warn">Unallocated</p>
               <span className="money text-warn">{formatUsd(unallocated)}</span>
             </li>
@@ -1463,49 +1541,6 @@ function DirectDepositsSection({
         onSave={saveDeposit}
       />
     </section>
-  );
-}
-
-function SegmentedBar<T extends string>({
-  options,
-  value,
-  onChange,
-  ariaLabel,
-  className,
-}: {
-  options: { id: T; label: string }[];
-  value: T;
-  onChange: (id: T) => void;
-  ariaLabel: string;
-  className?: string;
-}) {
-  return (
-    <div
-      className={clsx(
-        "flex gap-1 p-1 rounded-lg bg-surfaceVariant/80",
-        className,
-      )}
-      role="tablist"
-      aria-label={ariaLabel}
-    >
-      {options.map((option) => (
-        <button
-          key={option.id}
-          type="button"
-          role="tab"
-          aria-selected={value === option.id}
-          onClick={() => onChange(option.id)}
-          className={clsx(
-            "flex-1 text-xs sm:text-sm py-2 px-2 rounded-md font-medium transition-colors",
-            value === option.id
-              ? "bg-surface text-heading shadow-sm"
-              : "text-muted hover:text-body",
-          )}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
   );
 }
 
@@ -1586,7 +1621,7 @@ function FederalTaxReturnSection({
           amount={projection.federalTaxableIncome}
           bold
         />
-        <div className="border-t border-border pt-2 mt-2 space-y-2">
+        <div className="border-t border-outline pt-2 mt-2 space-y-2">
           <ReturnLine
             label="Estimated federal tax owed"
             amount={projection.estimatedFederalTaxOwed}
@@ -1674,7 +1709,7 @@ function BreakdownCard({
         ))}
       </ul>
       {footer ? (
-        <p className="text-xs text-muted mt-3 border-t border-border pt-2">
+        <p className="text-xs text-muted mt-3 border-t border-outline pt-2">
           {footer}
         </p>
       ) : null}

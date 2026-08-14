@@ -7,6 +7,7 @@ import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.domain.model.Biller
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -107,6 +108,7 @@ class BillerRepository @Inject constructor(
         if (!nostrClient.hasSigner) return
         try {
             withTimeout(30_000) {
+                val localBefore = dao.getAll().first().associateBy { it.id }
                 val deleteIds = mutableListOf<String>()
                 val upsertsById = mutableMapOf<String, BillerEntity>()
                 nostrClient.subscribeToAppData(dTagPrefix = NOSTR_D_TAG_PREFIX).collect { (dTag, decrypted) ->
@@ -127,10 +129,38 @@ class BillerRepository @Inject constructor(
                 }
                 dao.applySyncBatch(upsertsById.values.toList(), deleteIds)
                 Log.d(TAG, "Synced ${upsertsById.size} biller(s) from relay; deleted ${deleteIds.size}")
+                republishStrandedBillers(localBefore, upsertsById, deleteIds)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Biller sync failed: ${e.message}")
         }
+    }
+
+    /**
+     * Self-heal: push local billers the relay doesn't reflect back up so other
+     * clients (e.g. the web app) can see them. Covers billers whose original
+     * publish was never delivered (the outbox is in-memory only) and billers
+     * whose local copy is newer than the relay's.
+     */
+    private suspend fun republishStrandedBillers(
+        localBefore: Map<String, BillerEntity>,
+        relayById: Map<String, BillerEntity>,
+        deleteIds: List<String>
+    ) {
+        val deleted = deleteIds.toSet()
+        var pushed = 0
+        for ((id, local) in localBefore) {
+            if (id in deleted) continue
+            val relay = relayById[id]
+            if (relay != null && local.updatedAt <= relay.updatedAt) continue
+            if (relay != null) dao.upsert(local)
+            val payload = json.encodeToString(Biller.serializer(), local.toDomain())
+            runCatching {
+                nostrClient.publishEncryptedAppData("$NOSTR_D_TAG_PREFIX$id", payload)
+            }.onSuccess { pushed++ }
+                .onFailure { Log.w(TAG, "Self-heal republish failed for biller ${id.take(8)}…: ${it.message}") }
+        }
+        if (pushed > 0) Log.d(TAG, "Self-heal re-published $pushed biller(s) the relay was missing")
     }
 
     private suspend fun publish(biller: Biller) {

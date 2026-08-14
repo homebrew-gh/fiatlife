@@ -6,6 +6,10 @@ import {
   type BillWithSource,
 } from "../../lib/bill";
 import { parseDateInput, todayDateInputValue } from "../../lib/dateInput";
+import {
+  effectiveAmountDue as effectiveAccountAmountDue,
+} from "../../lib/creditAccount";
+import { useDebtData } from "../../lib/debtData";
 import { formatUsd } from "../../lib/format";
 
 export type PayBillMode = "MINIMUM" | "FULL" | "CUSTOM";
@@ -27,6 +31,7 @@ export function PayBillDialog({
   ) => Promise<void>;
   saving: boolean;
 }) {
+  const { getAccountById } = useDebtData();
   const [mode, setMode] = useState<PayBillMode>("MINIMUM");
   const [customAmount, setCustomAmount] = useState("");
   const [newBalance, setNewBalance] = useState("");
@@ -37,8 +42,7 @@ export function PayBillDialog({
     if (!open || !item) return;
     setMode("MINIMUM");
     setCustomAmount("");
-    const balance = item.bill.creditCardDetails?.currentBalance;
-    setNewBalance(balance != null ? String(balance) : "");
+    setNewBalance("");
     setPaymentDate(todayDateInputValue());
     setError(null);
   }, [open, item]);
@@ -46,10 +50,19 @@ export function PayBillDialog({
   if (!open || !item) return null;
 
   const bill = item.bill;
+  const linkedAccount = bill.linkedCreditAccountId
+    ? getAccountById(bill.linkedCreditAccountId)
+    : undefined;
   const creditBill = isCreditOrLoan(bill);
-  const minimum = effectiveAmountDue(bill);
-  const fullBalance = bill.creditCardDetails?.currentBalance ?? bill.amount;
-  const showBalance = creditBill && bill.creditCardDetails != null;
+  const minimum = linkedAccount
+    ? effectiveAccountAmountDue(linkedAccount)
+    : effectiveAmountDue(bill);
+  const fullBalance =
+    linkedAccount?.currentBalance ??
+    bill.creditCardDetails?.currentBalance ??
+    bill.amount;
+  const showBalance =
+    creditBill && (linkedAccount != null || bill.creditCardDetails != null);
 
   const resolvedAmount = (): number => {
     if (!creditBill) return minimum;
@@ -163,7 +176,7 @@ export function PayBillDialog({
           {showBalance ? (
             <div>
               <label className="label" htmlFor="pay-balance">
-                New balance (optional)
+                New balance after payment (optional)
               </label>
               <input
                 id="pay-balance"
@@ -171,8 +184,20 @@ export function PayBillDialog({
                 inputMode="decimal"
                 value={newBalance}
                 onChange={(e) => setNewBalance(e.target.value)}
+                placeholder={formatUsd(
+                  Math.max(0, fullBalance - resolvedAmount()),
+                )}
               />
+              <p className="text-xs text-muted mt-1">
+                Leave blank to subtract the payment from the current account
+                balance.
+              </p>
             </div>
+          ) : null}
+          {linkedAccount ? (
+            <p className="notice-panel p-3 text-sm">
+              Paying this bill updates {linkedAccount.name} in Debt.
+            </p>
           ) : null}
           {error ? (
             <p className="text-sm text-error" role="alert">

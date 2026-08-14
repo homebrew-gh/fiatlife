@@ -41,6 +41,17 @@ type DebtDataContextValue = {
     input: Omit<CreditAccount, "id" | "createdAt" | "updatedAt">,
   ) => Promise<CreditAccount>;
   updateBalance: (accountId: string, currentBalance: number) => Promise<void>;
+  updateStatement: (
+    accountId: string,
+    input: {
+      statementBalance: number;
+      statementBalanceAsOfMillis: number;
+      statementAmountDue: number | null;
+      dueDay: number;
+      paymentAmount: number;
+      balanceAfterPayment: number;
+    },
+  ) => Promise<void>;
   setBalanceFromPayment: (
     accountId: string,
     newBalance: number,
@@ -65,6 +76,7 @@ export function DebtDataProvider({ children }: { children: ReactNode }) {
 function DebtDataProviderInner({ children }: { children: ReactNode }) {
   const {
     bills,
+    loading: billsLoading,
     getBillById,
     getBillsLinkedToAccount,
     saveBill,
@@ -78,6 +90,7 @@ function DebtDataProviderInner({ children }: { children: ReactNode }) {
   const { notify, refresh } = useOptionalSyncStatus();
 
   const accountsRef = useRef(accounts);
+  const legacyMigrationAttempts = useRef(new Set<string>());
   useEffect(() => {
     accountsRef.current = accounts;
   }, [accounts]);
@@ -205,6 +218,76 @@ function DebtDataProviderInner({ children }: { children: ReactNode }) {
     [persistWithBilling],
   );
 
+  useEffect(() => {
+    if (loading || billsLoading) return;
+    const candidates = bills.filter(
+      (item) =>
+        item.source === "NATIVE" &&
+        item.bill.creditCardDetails != null &&
+        !item.bill.linkedCreditAccountId &&
+        !legacyMigrationAttempts.current.has(item.bill.id) &&
+        !accounts.some(
+          (account) =>
+            account.linkedBillId === item.bill.id ||
+            account.name.toLowerCase() === item.bill.name.toLowerCase(),
+        ),
+    );
+    if (candidates.length === 0) return;
+
+    void (async () => {
+      for (const item of candidates) {
+        legacyMigrationAttempts.current.add(item.bill.id);
+        const legacy = item.bill.creditCardDetails;
+        if (!legacy) continue;
+        try {
+          const now = Date.now();
+          const saved = await persistWithBilling(
+            defaultCreditAccount({
+              id: newCreditAccountId(),
+              name: item.bill.name,
+              type: "CREDIT_CARD",
+              institution: item.bill.accountName ?? "",
+              apr: legacy.apr ?? 0,
+              standardApr: legacy.apr ?? 0,
+              currentBalance: Math.max(0, legacy.currentBalance ?? 0),
+              statementAmountDue: Math.max(0, item.bill.amount),
+              dueDay: item.bill.dueDay,
+              linkedBillId: item.bill.id,
+              notes: item.bill.notes ?? "",
+              statementEntries: item.bill.statementEntries ?? [],
+              attachmentHashes: item.bill.attachmentHashes ?? [],
+              minimumPaymentType:
+                legacy.minimumPaymentType ?? "PERCENT_OF_BALANCE",
+              minimumPaymentValue: legacy.minimumPaymentValue ?? 2,
+              createdAt: item.bill.createdAt || now,
+              updatedAt: now,
+            }),
+            null,
+          );
+          await saveBill(
+            {
+              ...item.bill,
+              linkedCreditAccountId: saved.id,
+              creditCardDetails: null,
+              updatedAt: Date.now(),
+            },
+            item.source,
+            item.dTag,
+          );
+        } catch {
+          legacyMigrationAttempts.current.delete(item.bill.id);
+        }
+      }
+    })();
+  }, [
+    accounts,
+    bills,
+    billsLoading,
+    loading,
+    persistWithBilling,
+    saveBill,
+  ]);
+
   const updateBalance = useCallback(
     async (accountId: string, currentBalance: number) => {
       const account = accounts.find((a) => a.id === accountId);
@@ -212,6 +295,66 @@ function DebtDataProviderInner({ children }: { children: ReactNode }) {
       await saveAccount({ ...account, currentBalance });
     },
     [accounts, saveAccount],
+  );
+
+  const updateStatement = useCallback(
+    async (
+      accountId: string,
+      input: {
+        statementBalance: number;
+        statementBalanceAsOfMillis: number;
+        statementAmountDue: number | null;
+        dueDay: number;
+        paymentAmount: number;
+        balanceAfterPayment: number;
+      },
+    ) => {
+      const account = accounts.find((a) => a.id === accountId);
+      if (!account) return;
+      setSaving(true);
+      setError(null);
+      try {
+        let updated = defaultCreditAccount({
+          ...account,
+          currentBalance: Math.max(0, input.balanceAfterPayment),
+          statementBalanceAsOfMillis: input.statementBalanceAsOfMillis,
+          statementAmountDue:
+            input.statementAmountDue == null
+              ? null
+              : Math.max(0, input.statementAmountDue),
+          dueDay: Math.max(1, Math.min(31, input.dueDay)),
+          updatedAt: Date.now(),
+        });
+        updated = await ensureBillsForAccount(updated, billOps);
+        if (input.paymentAmount > 0 && updated.linkedBillId) {
+          const linked = getBillById(updated.linkedBillId);
+          if (linked) {
+            const now = Date.now();
+            await saveBill(
+              {
+                ...linked.bill,
+                paymentHistory: [
+                  ...(linked.bill.paymentHistory ?? []),
+                  { date: now, amount: input.paymentAmount },
+                ],
+                isPaid: true,
+                lastPaidDate: now,
+                updatedAt: now,
+              },
+              linked.source,
+              linked.dTag,
+            );
+          }
+        }
+        await publishAccount(updated);
+      } catch (e) {
+        setError(e instanceof ApiError ? e.message : "Statement update failed.");
+        throw e;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [accounts, billOps, getBillById, publishAccount, saveBill],
   );
 
   // Apply a new balance after a bill payment was already recorded on the linked
@@ -311,6 +454,7 @@ function DebtDataProviderInner({ children }: { children: ReactNode }) {
       saveAccount,
       addAccount,
       updateBalance,
+      updateStatement,
       setBalanceFromPayment,
       deleteAccount,
       attachStatement,
@@ -325,6 +469,7 @@ function DebtDataProviderInner({ children }: { children: ReactNode }) {
       saveAccount,
       addAccount,
       updateBalance,
+      updateStatement,
       setBalanceFromPayment,
       deleteAccount,
       attachStatement,

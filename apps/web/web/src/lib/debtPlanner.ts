@@ -1,4 +1,9 @@
-import { effectiveMonthlyPayment, type CreditAccount } from "./creditAccount";
+import {
+  effectiveApr,
+  effectiveMonthlyPayment,
+  monthsUntilPromotionEnds,
+  type CreditAccount,
+} from "./creditAccount";
 import { summarizeDebtPayoff } from "./debtPayoff";
 
 const MAX_MONTHS = 1200;
@@ -58,7 +63,6 @@ export type DebtPlan = {
 type SimState = {
   account: CreditAccount;
   balance: number;
-  monthlyRate: number;
   minPayment: number;
   /** Fixed extra the user committed to this specific account each month. */
   accountExtra: number;
@@ -66,15 +70,21 @@ type SimState = {
   payoffMonth: number | null;
 };
 
-function strategyOrder(states: SimState[], strategy: PayoffStrategy): SimState[] {
+function strategyOrder(
+  states: SimState[],
+  strategy: PayoffStrategy,
+  asOfMs: number,
+): SimState[] {
   const active = states.filter((s) => s.balance > 0.005);
   return active.sort((a, b) => {
     if (strategy === "AVALANCHE") {
-      if (b.account.apr !== a.account.apr) return b.account.apr - a.account.apr;
+      const rateDiff =
+        effectiveApr(b.account, asOfMs) - effectiveApr(a.account, asOfMs);
+      if (rateDiff !== 0) return rateDiff;
       return a.balance - b.balance;
     }
     if (a.balance !== b.balance) return a.balance - b.balance;
-    return b.account.apr - a.account.apr;
+    return effectiveApr(b.account, asOfMs) - effectiveApr(a.account, asOfMs);
   });
 }
 
@@ -96,7 +106,6 @@ export function buildDebtPlan(
     .map((a) => ({
       account: a,
       balance: a.currentBalance,
-      monthlyRate: Math.max(0, a.apr) / 12,
       minPayment: Math.max(0, effectiveMonthlyPayment(a)),
       accountExtra: Math.max(0, perAccountExtra[a.id] ?? 0),
       interestPaid: 0,
@@ -117,10 +126,11 @@ export function buildDebtPlan(
   if (states.length > 0 && monthlyBudget > 0) {
     while (states.some((s) => s.balance > 0.005) && month < MAX_MONTHS) {
       month += 1;
+      const monthStart = addMonths(nowMs, month - 1);
 
       for (const s of states) {
         if (s.balance <= 0.005) continue;
-        const interest = s.balance * s.monthlyRate;
+        const interest = s.balance * (effectiveApr(s.account, monthStart) / 12);
         s.balance += interest;
         s.interestPaid += interest;
       }
@@ -137,7 +147,7 @@ export function buildDebtPlan(
       }
 
       // Second pass: throw the remainder at the strategy target(s).
-      for (const s of strategyOrder(states, strategy)) {
+      for (const s of strategyOrder(states, strategy, monthStart)) {
         if (available <= 0.005) break;
         const pay = Math.min(available, s.balance);
         s.balance -= pay;
@@ -206,4 +216,38 @@ function addMonths(nowMs: number, months: number): number {
   const d = new Date(nowMs);
   d.setMonth(d.getMonth() + months);
   return d.getTime();
+}
+
+export type PromoExpiryWarning = {
+  accountId: string;
+  name: string;
+  monthsUntilExpiry: number;
+  payoffMonths: number;
+  deferredInterest: boolean;
+};
+
+/** Accounts whose planned payoff is after the promotional APR ends. */
+export function promoExpiryWarnings(
+  accounts: CreditAccount[],
+  plan: DebtPlan,
+  asOf = Date.now(),
+): PromoExpiryWarning[] {
+  const byId = new Map(plan.accounts.map((a) => [a.accountId, a]));
+  const warnings: PromoExpiryWarning[] = [];
+  for (const account of accounts) {
+    const monthsLeft = monthsUntilPromotionEnds(account, asOf);
+    if (monthsLeft == null || monthsLeft <= 0) continue;
+    const result = byId.get(account.id);
+    if (!result || !Number.isFinite(result.payoffMonths)) continue;
+    if (result.payoffMonths > monthsLeft) {
+      warnings.push({
+        accountId: account.id,
+        name: account.name,
+        monthsUntilExpiry: monthsLeft,
+        payoffMonths: result.payoffMonths,
+        deferredInterest: Boolean(account.deferredInterest),
+      });
+    }
+  }
+  return warnings;
 }

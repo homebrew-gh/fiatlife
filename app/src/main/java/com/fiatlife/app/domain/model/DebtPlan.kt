@@ -52,7 +52,6 @@ data class DebtPlan(
 private class PlanSimState(
     val account: CreditAccount,
     var balance: Double,
-    val monthlyRate: Double,
     val minPayment: Double,
     /** Fixed extra the user committed to this specific account each month. */
     val accountExtra: Double,
@@ -60,13 +59,20 @@ private class PlanSimState(
     var payoffMonth: Int? = null
 )
 
-private fun List<PlanSimState>.strategyOrder(strategy: PayoffStrategy): List<PlanSimState> =
+private fun List<PlanSimState>.strategyOrder(
+    strategy: PayoffStrategy,
+    asOfMillis: Long
+): List<PlanSimState> =
     filter { it.balance > 0.005 }.sortedWith(
         when (strategy) {
             PayoffStrategy.AVALANCHE ->
-                compareByDescending<PlanSimState> { it.account.apr }.thenBy { it.balance }
+                compareByDescending<PlanSimState> {
+                    it.account.effectiveApr(asOfMillis)
+                }.thenBy { it.balance }
             PayoffStrategy.SNOWBALL ->
-                compareBy<PlanSimState> { it.balance }.thenByDescending { it.account.apr }
+                compareBy<PlanSimState> { it.balance }.thenByDescending {
+                    it.account.effectiveApr(asOfMillis)
+                }
         }
     )
 
@@ -89,7 +95,6 @@ fun buildDebtPlan(
             PlanSimState(
                 account = it,
                 balance = it.currentBalance,
-                monthlyRate = it.apr.coerceAtLeast(0.0) / 12.0,
                 minPayment = it.effectiveMonthlyPayment().coerceAtLeast(0.0),
                 accountExtra = (perAccountExtra[it.id] ?: 0.0).coerceAtLeast(0.0)
             )
@@ -105,10 +110,12 @@ fun buildDebtPlan(
     if (states.isNotEmpty() && monthlyBudget > 0) {
         while (states.any { it.balance > 0.005 } && month < MAX_MONTHS) {
             month += 1
+            val monthStart = addMonths(nowMillis, month - 1)
 
             for (s in states) {
                 if (s.balance <= 0.005) continue
-                val interest = s.balance * s.monthlyRate
+                val interest =
+                    s.balance * (s.account.effectiveApr(monthStart) / 12.0)
                 s.balance += interest
                 s.interestPaid += interest
             }
@@ -123,7 +130,7 @@ fun buildDebtPlan(
                 available -= pay
             }
 
-            for (s in states.strategyOrder(strategy)) {
+            for (s in states.strategyOrder(strategy, monthStart)) {
                 if (available <= 0.005) break
                 val pay = minOf(available, s.balance)
                 s.balance -= pay
@@ -188,4 +195,37 @@ private fun addMonths(nowMillis: Long, months: Int): Long {
         add(Calendar.MONTH, months)
     }
     return cal.timeInMillis
+}
+
+data class PromoExpiryWarning(
+    val accountId: String,
+    val name: String,
+    val monthsUntilExpiry: Int,
+    val payoffMonths: Int,
+    val deferredInterest: Boolean
+)
+
+/** Accounts whose planned payoff is after the promotional APR ends. */
+fun promoExpiryWarnings(
+    accounts: List<CreditAccount>,
+    plan: DebtPlan,
+    asOfMillis: Long = System.currentTimeMillis()
+): List<PromoExpiryWarning> {
+    val byId = plan.accounts.associateBy { it.accountId }
+    return accounts.mapNotNull { account ->
+        val monthsLeft = account.monthsUntilPromotionEnds(asOfMillis) ?: return@mapNotNull null
+        if (monthsLeft <= 0) return@mapNotNull null
+        val result = byId[account.id] ?: return@mapNotNull null
+        if (result.payoffMonths == Int.MAX_VALUE || result.payoffMonths > monthsLeft) {
+            PromoExpiryWarning(
+                accountId = account.id,
+                name = account.name,
+                monthsUntilExpiry = monthsLeft,
+                payoffMonths = result.payoffMonths,
+                deferredInterest = account.deferredInterest
+            )
+        } else {
+            null
+        }
+    }
 }

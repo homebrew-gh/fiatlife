@@ -99,7 +99,7 @@ export function CompanyHistoryRoute() {
                 </div>
 
                 {payments.length > 0 ? (
-                  <div className="mt-3 border-t border-border pt-3">
+                  <div className="mt-3 border-t border-outline pt-3">
                     <p className="text-xs tracking-wider text-muted font-medium mb-2">
                       Recent Payments
                     </p>
@@ -134,7 +134,7 @@ export function CompanyHistoryRoute() {
                       key={b.id}
                       className={clsx(
                         "text-xs px-2 py-0.5 rounded-pill",
-                        "bg-surface-variant text-body",
+                        "bg-surfaceVariant text-body",
                       )}
                     >
                       {b.name}

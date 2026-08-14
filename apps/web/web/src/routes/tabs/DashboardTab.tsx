@@ -2,11 +2,24 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import clsx from "clsx";
 import {
+  EmptyState,
+  ErrorBanner,
+  HeroCard,
+  PageHeader,
+} from "../../components/ui";
+import {
   ALL_GENERAL_CATEGORIES,
   GENERAL_CATEGORY_LABELS,
   generalCategoryForBill,
+  monthlyEquivalent,
+  type BillGeneralCategory,
 } from "../../lib/bill";
 import { useBillsData } from "../../lib/billsData";
+import { computeBudgetSummary } from "../../lib/budget";
+import { useBudgetData } from "../../lib/budgetData";
+import { summarizeDebt } from "../../lib/creditAccount";
+import { formatPayoffDate, summarizeDebtPayoff } from "../../lib/debtPayoff";
+import { useDebtData } from "../../lib/debtData";
 import {
   billDisplayAmount,
   billDueLabel,
@@ -28,10 +41,14 @@ export function DashboardTab() {
     error: goalsError,
     reload: reloadGoals,
   } = useGoalsData();
+  const budget = useBudgetData();
+  const debt = useDebtData();
   const [refreshing, setRefreshing] = useState(false);
 
-  const loading = billsLoading || salary.loading || goalsLoading;
-  const error = billsError ?? salary.error ?? goalsError;
+  const loading =
+    billsLoading || salary.loading || goalsLoading || budget.loading || debt.loading;
+  const error =
+    billsError ?? salary.error ?? goalsError ?? budget.error ?? debt.error;
 
   const dash = useMemo(
     () =>
@@ -45,15 +62,52 @@ export function DashboardTab() {
         calculation: salary.calculation,
         bills,
         goals,
+        creditAccounts: debt.accounts,
       }),
-    [salary.config, salary.calculation, bills, goals],
+    [salary.config, salary.calculation, bills, goals, debt.accounts],
+  );
+
+  const billCategoryTotals = useMemo(() => {
+    const totals: Partial<Record<BillGeneralCategory, number>> = {};
+    for (const item of bills) {
+      const bill = item.bill;
+      if (bill.isCancelled) continue;
+      const cat = generalCategoryForBill(bill);
+      totals[cat] = (totals[cat] ?? 0) + monthlyEquivalent(bill);
+    }
+    return totals;
+  }, [bills]);
+
+  const budgetSummary = useMemo(
+    () =>
+      computeBudgetSummary({
+        config: budget.config,
+        billCategoryTotals,
+        takeHome: dash.takeHomePay,
+      }),
+    [budget.config, billCategoryTotals, dash.takeHomePay],
+  );
+
+  const debtSummary = useMemo(
+    () => summarizeDebt(debt.accounts),
+    [debt.accounts],
+  );
+  const debtPayoff = useMemo(
+    () => summarizeDebtPayoff(debt.accounts),
+    [debt.accounts],
   );
 
   const onRefresh = async () => {
     if (refreshing) return;
     setRefreshing(true);
     try {
-      await Promise.all([reloadBills(), salary.reload(), reloadGoals()]);
+      await Promise.all([
+        reloadBills(),
+        salary.reload(),
+        reloadGoals(),
+        budget.reload(),
+        debt.reload(),
+      ]);
     } finally {
       setRefreshing(false);
     }
@@ -65,52 +119,41 @@ export function DashboardTab() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="page-title">Dashboard</h1>
-          <p className="text-sm text-muted mt-1">
-            Monthly take-home, bills, and what&apos;s left over.
-          </p>
-        </div>
-        <button
-          type="button"
-          className="btn-ghost text-sm shrink-0"
-          onClick={() => void onRefresh()}
-          disabled={refreshing}
-        >
-          {refreshing ? "Syncing…" : "Sync"}
-        </button>
-      </div>
+      <PageHeader
+        title="Dashboard"
+        description="Monthly take-home, bills, and what's left over."
+        refreshing={refreshing}
+        onRefresh={() => void onRefresh()}
+      />
 
       {loading ? (
         <p className="text-muted text-sm">Loading dashboard…</p>
       ) : null}
 
-      {error ? (
-        <div className="card-quiet p-4 text-sm text-error" role="alert">
-          {error}
-        </div>
-      ) : null}
+      {error ? <ErrorBanner message={error} /> : null}
 
       {!loading && !error && !dash.hasData ? (
-        <section className="card p-6 text-center">
-          <p className="text-muted text-sm">
-            Set up your{" "}
-            <Link to="/app/paycheck" className="text-accent underline">
-              paycheck
-            </Link>{" "}
-            and{" "}
-            <Link to="/app/bills" className="text-accent underline">
-              bills
-            </Link>{" "}
-            to see your financial overview.
-          </p>
-        </section>
+        <EmptyState
+          title="Get started"
+          description={
+            <>
+              Set up your{" "}
+              <Link to="/app/paycheck" className="text-accent underline">
+                paycheck
+              </Link>{" "}
+              and{" "}
+              <Link to="/app/bills" className="text-accent underline">
+                bills
+              </Link>{" "}
+              to see your financial overview.
+            </>
+          }
+        />
       ) : null}
 
       {!loading && !error && dash.hasData ? (
         <>
-          <section className="card p-5 bg-dollar-gradient text-center">
+          <HeroCard center>
             <p className="text-xs tracking-wider text-muted font-medium">
               Take Home This Month
             </p>
@@ -189,7 +232,7 @@ export function DashboardTab() {
                 </div>
               ) : null}
             </div>
-          </section>
+          </HeroCard>
 
           <div className="grid grid-cols-2 gap-3">
             <QuickStat
@@ -203,6 +246,32 @@ export function DashboardTab() {
               tone="warn"
             />
           </div>
+
+          {budgetSummary.totalTarget > 0 || debtSummary.accountCount > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {dash.takeHomePay > 0 || budgetSummary.totalTarget > 0 ? (
+                <Link
+                  to="/app/budget"
+                  className="badge-autopay text-xs px-3 py-1.5 rounded-pill font-medium"
+                >
+                  {budgetSummary.totalTarget > 0
+                    ? `Unbudgeted ${formatUsd(budgetSummary.unbudgeted)}`
+                    : "Set budget targets"}
+                </Link>
+              ) : null}
+              {debtSummary.accountCount > 0 ? (
+                <Link
+                  to="/app/debt"
+                  className="badge-autopay text-xs px-3 py-1.5 rounded-pill font-medium"
+                >
+                  {formatUsd(debtSummary.totalDebt)} debt
+                  {debtPayoff.allFeasible && debtPayoff.debtFreeDateMs != null
+                    ? ` · free ${formatPayoffDate(debtPayoff.debtFreeDateMs)}`
+                    : ""}
+                </Link>
+              ) : null}
+            </div>
+          ) : null}
 
           <section className="card p-5 space-y-4">
             <h2 className="section-title">Monthly Overview</h2>
@@ -303,7 +372,7 @@ export function DashboardTab() {
                         ) : null}
                       </div>
                       <p className="money text-base shrink-0">
-                        {formatUsd(billDisplayAmount(bill))}
+                        {formatUsd(billDisplayAmount(bill, debt.accounts))}
                       </p>
                     </li>
                   );

@@ -290,10 +290,10 @@ export function LogPaycheckSheet({
               <span className="money text-right text-error">
                 −{formatUsd(totalPre + totalPost)}
               </span>
-              <span className="text-body font-medium border-t border-border pt-1 mt-1">
+              <span className="text-body font-medium border-t border-outline pt-1 mt-1">
                 Net
               </span>
-              <span className="money text-right text-lg border-t border-border pt-1 mt-1">
+              <span className="money text-right text-lg border-t border-outline pt-1 mt-1">
                 {formatUsd(net)}
               </span>
             </div>

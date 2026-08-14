@@ -4,6 +4,10 @@ import { BillSheet, type BillSheetInput } from "../components/BillSheet";
 import { BillStatementAttachments } from "../components/bills/BillStatementAttachments";
 import { PayBillDialog } from "../components/bills/PayBillDialog";
 import {
+  UpdateBalanceSheet,
+  type StatementUpdateInput,
+} from "../components/debt/UpdateBalanceSheet";
+import {
   annualTotalPaidSoFar,
   canSkipInterval,
   effectiveAmountDue,
@@ -22,6 +26,7 @@ import { useBillersData } from "../lib/billersData";
 import { useBillsData } from "../lib/billsData";
 import { useDebtData } from "../lib/debtData";
 import { formatUsd } from "../lib/format";
+import { effectiveAmountDue as accountAmountDue } from "../lib/creditAccount";
 import { useRecordBillPayment } from "../lib/useBillPayment";
 import { useSaveBill } from "../lib/useSaveBill";
 
@@ -51,7 +56,11 @@ export function BillDetailRoute() {
   } = useBillsData();
   const { billers } = useBillersData();
   const { accounts: bankAccounts } = useBankAccountsData();
-  const { accounts: creditAccounts } = useDebtData();
+  const {
+    accounts: creditAccounts,
+    updateStatement,
+    saving: debtSaving,
+  } = useDebtData();
   const recordBillPayment = useRecordBillPayment();
   const saveBillWithBiller = useSaveBill();
 
@@ -79,6 +88,7 @@ export function BillDetailRoute() {
 
   const [showEdit, setShowEdit] = useState(false);
   const [showPay, setShowPay] = useState(false);
+  const [showStatement, setShowStatement] = useState(false);
   const [attaching, setAttaching] = useState(false);
 
   if (!billId) return <Navigate to="/app/bills" replace />;
@@ -132,7 +142,11 @@ export function BillDetailRoute() {
           </p>
         </div>
         <p className="money text-2xl shrink-0">
-          {formatUsd(effectiveAmountDue(bill))}
+          {formatUsd(
+            linkedAccount
+              ? accountAmountDue(linkedAccount)
+              : effectiveAmountDue(bill),
+          )}
         </p>
       </div>
 
@@ -153,7 +167,7 @@ export function BillDetailRoute() {
             Paid this cycle
           </span>
         ) : (
-          <span className="text-xs px-2 py-0.5 rounded-pill bg-surface-variant text-muted">
+          <span className="text-xs px-2 py-0.5 rounded-pill bg-surfaceVariant text-muted">
             {formatDueCountdown(bill, now)}
           </span>
         )}
@@ -163,12 +177,12 @@ export function BillDetailRoute() {
           </span>
         ) : null}
         {bill.isCancelled ? (
-          <span className="text-xs px-2 py-0.5 rounded-pill bg-surface-variant text-muted">
+          <span className="text-xs px-2 py-0.5 rounded-pill bg-surfaceVariant text-muted">
             Cancelled
           </span>
         ) : null}
         {item.source === "CYPHERLOG" ? (
-          <span className="text-xs px-2 py-0.5 rounded-pill bg-surface-variant text-muted">
+          <span className="text-xs px-2 py-0.5 rounded-pill bg-surfaceVariant text-muted">
             CypherLog
           </span>
         ) : null}
@@ -209,8 +223,17 @@ export function BillDetailRoute() {
           <dt className="text-muted">Paid YTD</dt>
           <dd className="money">{formatUsd(annualTotalPaidSoFar(bill, now))}</dd>
         </dl>
+        {linkedAccount ? (
+          <button
+            type="button"
+            className="btn-ghost text-sm mt-3"
+            onClick={() => setShowStatement(true)}
+          >
+            Update linked statement
+          </button>
+        ) : null}
         {bill.notes ? (
-          <p className="text-sm text-muted border-t border-border pt-3">
+          <p className="text-sm text-muted border-t border-outline pt-3">
             {bill.notes}
           </p>
         ) : null}
@@ -258,7 +281,7 @@ export function BillDetailRoute() {
               .map((p, i) => (
                 <li
                   key={`${p.date}-${i}`}
-                  className="flex justify-between text-sm border-b border-border pb-2 last:border-0"
+                  className="flex justify-between text-sm border-b border-outline pb-2 last:border-0"
                 >
                   <span className="text-muted">{formatDate(p.date)}</span>
                   <span className="money">{formatUsd(p.amount)}</span>
@@ -358,6 +381,16 @@ export function BillDetailRoute() {
         onClose={() => setShowPay(false)}
         onConfirm={onPay}
         saving={saving}
+      />
+      <UpdateBalanceSheet
+        open={showStatement}
+        account={linkedAccount ?? null}
+        onClose={() => setShowStatement(false)}
+        onUpdate={async (accountId: string, input: StatementUpdateInput) => {
+          await updateStatement(accountId, input);
+          setShowStatement(false);
+        }}
+        saving={debtSaving}
       />
     </div>
   );

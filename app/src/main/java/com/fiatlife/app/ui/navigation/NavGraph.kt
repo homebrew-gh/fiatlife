@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -70,7 +69,6 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
                 MainAppTopBar(
                     title = currentScreen?.title ?: "FiatLife",
                     subtitle = currentScreen?.subtitle?.takeIf { it.isNotBlank() } ?: "Your financial dashboard",
-                    onGoalsClick = { navController.navigate(Screen.Goals.route) },
                     onSettingsClick = { navController.navigate(Screen.Settings.route) }
                 )
             }
@@ -192,7 +190,6 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
 private fun MainAppTopBar(
     title: String,
     subtitle: String,
-    onGoalsClick: () -> Unit,
     onSettingsClick: () -> Unit
 ) {
     val mainViewModel: MainAppViewModel = hiltViewModel()
@@ -211,9 +208,6 @@ private fun MainAppTopBar(
             isSyncing = mainState.isManualSyncing,
             onSyncClick = { mainViewModel.manualSyncFromRelay() },
             actions = {
-                IconButton(onClick = onGoalsClick) {
-                    Icon(Icons.Filled.EmojiEvents, contentDescription = "Goals")
-                }
                 IconButton(onClick = onSettingsClick) {
                     Icon(Icons.Filled.Settings, contentDescription = "Settings")
                 }

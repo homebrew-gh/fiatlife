@@ -39,6 +39,7 @@ fun SalaryScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var showTaxSetup by remember { mutableStateOf(false) }
     var summaryStatsAnnual by remember { mutableStateOf(false) }
+    var showAdvancedModel by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.message) {
         if (state.message.isNotBlank()) {
@@ -111,7 +112,13 @@ fun SalaryScreen(
                 summaryStatsAnnual,
                 onSummaryStatsAnnualChange = { summaryStatsAnnual = it },
             )
-            SalaryTab.WHATIF -> whatIfContent(state, calc, viewModel)
+            SalaryTab.WHATIF -> whatIfContent(
+                state,
+                calc,
+                viewModel,
+                showAdvancedModel = showAdvancedModel,
+                onShowAdvancedModelChange = { showAdvancedModel = it },
+            )
         }
 
         item { Spacer(modifier = Modifier.height(80.dp)) }
@@ -166,7 +173,9 @@ fun SalaryScreen(
 private fun androidx.compose.foundation.lazy.LazyListScope.whatIfContent(
     state: com.fiatlife.app.ui.viewmodel.SalaryState,
     calc: PaycheckCalculation,
-    viewModel: SalaryViewModel
+    viewModel: SalaryViewModel,
+    showAdvancedModel: Boolean,
+    onShowAdvancedModelChange: (Boolean) -> Unit,
 ) {
     item {
         SectionCard(title = "Hypothetical modeling", icon = Icons.Filled.Info) {
@@ -335,6 +344,26 @@ private fun androidx.compose.foundation.lazy.LazyListScope.whatIfContent(
                 }
             }
         }
+    }
+
+    item {
+        OutlinedButton(
+            onClick = { onShowAdvancedModelChange(!showAdvancedModel) },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                if (showAdvancedModel) "Hide advanced modeling"
+                else "Show advanced modeling"
+            )
+            Icon(
+                if (showAdvancedModel) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = null
+            )
+        }
+    }
+
+    if (!showAdvancedModel) {
+        return
     }
 
     // Withholding overrides
@@ -807,39 +836,55 @@ private fun androidx.compose.foundation.lazy.LazyListScope.summaryContent(
                     StatTile("OT hours", "%.1f".format(ytd.overtimeHours))
                 }
 
-                BreakdownCardCompose("Earnings", ytd.earnings, ytd.grossPay, negative = false)
-                BreakdownCardCompose(
-                    title = "Taxes",
-                    lines = ytd.taxes,
-                    total = ytd.totalTaxes,
-                    negative = true,
-                    footer = "Effective rate ${
-                        if (ytd.grossPay > 0) "%.1f%%".format(ytd.totalTaxes / ytd.grossPay * 100) else "0.0%"
-                    }"
-                )
-                if (ytd.preTaxDeductions.isNotEmpty()) {
-                    BreakdownCardCompose(
-                        "Pre-Tax Deductions",
-                        ytd.preTaxDeductions,
-                        ytd.totalPreTaxDeductions,
-                        negative = true
+                var showYtdDetails by remember { mutableStateOf(false) }
+                TextButton(
+                    onClick = { showYtdDetails = !showYtdDetails },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        if (showYtdDetails) "Hide detailed breakdown"
+                        else "Show detailed breakdown"
+                    )
+                    Icon(
+                        if (showYtdDetails) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                        contentDescription = null
                     )
                 }
-                if (ytd.postTaxDeductions.isNotEmpty()) {
+                if (showYtdDetails) {
+                    BreakdownCardCompose("Earnings", ytd.earnings, ytd.grossPay, negative = false)
                     BreakdownCardCompose(
-                        "Post-Tax Deductions",
-                        ytd.postTaxDeductions,
-                        ytd.totalPostTaxDeductions,
-                        negative = true
+                        title = "Taxes",
+                        lines = ytd.taxes,
+                        total = ytd.totalTaxes,
+                        negative = true,
+                        footer = "Effective rate ${
+                            if (ytd.grossPay > 0) "%.1f%%".format(ytd.totalTaxes / ytd.grossPay * 100) else "0.0%"
+                        }"
                     )
-                }
-                if (ytd.employerContributions.isNotEmpty()) {
-                    BreakdownCardCompose(
-                        "Employer Contributions",
-                        ytd.employerContributions,
-                        ytd.employerContributions.sumOf { it.amount },
-                        negative = false
-                    )
+                    if (ytd.preTaxDeductions.isNotEmpty()) {
+                        BreakdownCardCompose(
+                            "Pre-Tax Deductions",
+                            ytd.preTaxDeductions,
+                            ytd.totalPreTaxDeductions,
+                            negative = true
+                        )
+                    }
+                    if (ytd.postTaxDeductions.isNotEmpty()) {
+                        BreakdownCardCompose(
+                            "Post-Tax Deductions",
+                            ytd.postTaxDeductions,
+                            ytd.totalPostTaxDeductions,
+                            negative = true
+                        )
+                    }
+                    if (ytd.employerContributions.isNotEmpty()) {
+                        BreakdownCardCompose(
+                            "Employer Contributions",
+                            ytd.employerContributions,
+                            ytd.employerContributions.sumOf { it.amount },
+                            negative = false
+                        )
+                    }
                 }
             } else if (annual != null) {
                 Text(
@@ -928,43 +973,59 @@ private fun androidx.compose.foundation.lazy.LazyListScope.summaryContent(
                     )
                 }
 
-                FederalTaxReturnSection(config = state.config, annual = annual)
+                var showAnnualDetails by remember { mutableStateOf(false) }
+                TextButton(
+                    onClick = { showAnnualDetails = !showAnnualDetails },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        if (showAnnualDetails) "Hide annual details"
+                        else "Show annual details"
+                    )
+                    Icon(
+                        if (showAnnualDetails) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                        contentDescription = null
+                    )
+                }
+                if (showAnnualDetails) {
+                    FederalTaxReturnSection(config = state.config, annual = annual)
 
-                if (annual.earnings.isNotEmpty()) {
-                    BreakdownCardCompose("Earnings", annual.earnings, annual.annualGrossPay, negative = false)
-                }
-                if (annual.taxes.isNotEmpty()) {
-                    BreakdownCardCompose(
-                        title = "Taxes",
-                        lines = annual.taxes,
-                        total = annual.annualTotalTaxes,
-                        negative = true,
-                        footer = "Effective rate ${annual.effectiveTaxRate.formatPercentage()}"
-                    )
-                }
-                if (annual.preTaxDeductions.isNotEmpty()) {
-                    BreakdownCardCompose(
-                        "Pre-Tax Deductions",
-                        annual.preTaxDeductions,
-                        annual.annualPreTaxDeductions,
-                        negative = true
-                    )
-                }
-                if (annual.postTaxDeductions.isNotEmpty()) {
-                    BreakdownCardCompose(
-                        "Post-Tax Deductions",
-                        annual.postTaxDeductions,
-                        annual.annualPostTaxDeductions,
-                        negative = true
-                    )
-                }
-                if (annual.employerContributions.isNotEmpty()) {
-                    BreakdownCardCompose(
-                        "Employer Contributions",
-                        annual.employerContributions,
-                        annual.employerContributions.sumOf { it.amount },
-                        negative = false
-                    )
+                    if (annual.earnings.isNotEmpty()) {
+                        BreakdownCardCompose("Earnings", annual.earnings, annual.annualGrossPay, negative = false)
+                    }
+                    if (annual.taxes.isNotEmpty()) {
+                        BreakdownCardCompose(
+                            title = "Taxes",
+                            lines = annual.taxes,
+                            total = annual.annualTotalTaxes,
+                            negative = true,
+                            footer = "Effective rate ${annual.effectiveTaxRate.formatPercentage()}"
+                        )
+                    }
+                    if (annual.preTaxDeductions.isNotEmpty()) {
+                        BreakdownCardCompose(
+                            "Pre-Tax Deductions",
+                            annual.preTaxDeductions,
+                            annual.annualPreTaxDeductions,
+                            negative = true
+                        )
+                    }
+                    if (annual.postTaxDeductions.isNotEmpty()) {
+                        BreakdownCardCompose(
+                            "Post-Tax Deductions",
+                            annual.postTaxDeductions,
+                            annual.annualPostTaxDeductions,
+                            negative = true
+                        )
+                    }
+                    if (annual.employerContributions.isNotEmpty()) {
+                        BreakdownCardCompose(
+                            "Employer Contributions",
+                            annual.employerContributions,
+                            annual.employerContributions.sumOf { it.amount },
+                            negative = false
+                        )
+                    }
                 }
             }
         }
@@ -972,7 +1033,30 @@ private fun androidx.compose.foundation.lazy.LazyListScope.summaryContent(
 
     if (!statsViewAnnual) {
     item {
-        SectionCard(title = "Paycheck Schedule", icon = Icons.Filled.CalendarMonth) {
+        var showSchedule by remember {
+            mutableStateOf(state.config.firstPaydayOfYearMillis == null)
+        }
+        SectionCard(
+            title = "Paycheck Schedule",
+            icon = Icons.Filled.CalendarMonth,
+            action = {
+                IconButton(onClick = { showSchedule = !showSchedule }) {
+                    Icon(
+                        if (showSchedule) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                        contentDescription = if (showSchedule) "Collapse" else "Expand"
+                    )
+                }
+            }
+        ) {
+            if (!showSchedule) {
+                Text(
+                    text = "Pay frequency and first payday",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                return@SectionCard
+            }
+            // schedule fields continue below
             var firstPaydayOfYear by remember(state.config.firstPaydayOfYearMillis) {
                 mutableStateOf(state.config.firstPaydayOfYearMillis?.let { formatIsoDate(it) } ?: "")
             }

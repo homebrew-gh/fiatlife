@@ -369,7 +369,7 @@ export function CompanyHistoryDetailRoute() {
               <Link
                 key={b.id}
                 to={`/app/bills/${b.id}`}
-                className="text-xs px-2 py-0.5 rounded-pill bg-surface-variant text-body hover:opacity-80"
+                className="text-xs px-2 py-0.5 rounded-pill bg-surfaceVariant text-body hover:opacity-80"
               >
                 {b.name}
               </Link>

@@ -36,6 +36,8 @@ class BudgetRepository @Inject constructor(
 
     private var initialBudgetSyncCompleted = false
     private var relayPublishPending = false
+    /** Local budget exists but the relay didn't reflect it — republish after sync. */
+    private var relayBudgetRepairPending = false
 
     /** Call before the first budget sync when a signer is available. */
     fun prepareForInitialRelaySync() {
@@ -87,6 +89,7 @@ class BudgetRepository @Inject constructor(
         if (!nostrClient.hasSigner) return
         val isInitial = !initialBudgetSyncCompleted
         if (isInitial) _relayPublishReady.value = false
+        relayBudgetRepairPending = false
         try {
             withTimeout(30_000) {
                 var latest: BudgetConfig? = null
@@ -104,8 +107,8 @@ class BudgetRepository @Inject constructor(
                 }
                 val resolved = latest
                 val resolvedJson = latestJson
+                val localStored = decodeConfig(budgetDao.getLatestConfigOnce())
                 if (resolved != null && resolvedJson != null) {
-                    val localStored = decodeConfig(budgetDao.getLatestConfigOnce())
                     // Only let the relay copy overwrite local when it is at least as
                     // recent; otherwise newer unpublished local edits would be reverted.
                     if (localStored == null || resolved.updatedAt >= localStored.updatedAt) {
@@ -130,10 +133,18 @@ class BudgetRepository @Inject constructor(
                             "Synced $count budget event(s); kept newer local copy " +
                                 "(local=${localStored.updatedAt} > relay=${resolved.updatedAt})"
                         )
+                        // Local is newer than the relay copy — push it back up.
+                        markRelayBudgetRepairPending()
                     }
                 } else {
                     Log.d(TAG, "Synced $count budget event(s); no usable relay copy")
+                    // Relay has no budget at all but this device does — push it up
+                    // so other clients (e.g. the web app) can see it.
+                    if (localStored != null) markRelayBudgetRepairPending()
                 }
+            }
+            if (_relayPublishReady.value) {
+                flushPendingRelayBudgetRepair()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Sync failed: ${e.message}")
@@ -142,8 +153,22 @@ class BudgetRepository @Inject constructor(
                 initialBudgetSyncCompleted = true
                 _relayPublishReady.value = true
                 flushPendingRelayPublish()
+                flushPendingRelayBudgetRepair()
             }
         }
+    }
+
+    private fun markRelayBudgetRepairPending() {
+        relayBudgetRepairPending = true
+    }
+
+    /** Push the local budget config back to the relay when it was missing or stale. */
+    private suspend fun flushPendingRelayBudgetRepair() {
+        if (!relayBudgetRepairPending) return
+        relayBudgetRepairPending = false
+        if (!nostrClient.hasSigner) return
+        val current = budgetDao.getLatestConfigOnce() ?: return
+        publishToRelay(current.jsonData)
     }
 
     private suspend fun mergeBeforeSave(incoming: BudgetConfig): BudgetConfig {

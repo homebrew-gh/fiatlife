@@ -35,6 +35,8 @@ class SalaryRepository @Inject constructor(
 
     private var initialSalarySyncCompleted = false
     private var relayPublishPending = false
+    /** Relay copy was missing paycheck logs that exist locally — republish after sync. */
+    private var relaySalaryRepairPending = false
 
     /** Call before the first salary sync when a signer is available. */
     fun prepareForInitialRelaySync() {
@@ -86,6 +88,7 @@ class SalaryRepository @Inject constructor(
         if (!nostrClient.hasSigner) return
         val isInitial = !initialSalarySyncCompleted
         if (isInitial) _relayPublishReady.value = false
+        relaySalaryRepairPending = false
         try {
             withTimeout(30_000) {
                 var latest: SalaryConfig? = null
@@ -103,8 +106,11 @@ class SalaryRepository @Inject constructor(
                 }
                 val resolved = latest
                 val resolvedJson = latestJson
+                val localStored = decodeConfig(salaryDao.getLatestConfigOnce())
+                val localHasLogs = localStored?.paycheckLog?.isNotEmpty() == true
+                val relayHasLogs = resolved?.paycheckLog?.isNotEmpty() == true
+
                 if (resolved != null && resolvedJson != null) {
-                    val localStored = decodeConfig(salaryDao.getLatestConfigOnce())
                     // Only let the relay copy overwrite local when it is at least as
                     // recent; otherwise newer unpublished local edits would be reverted.
                     if (localStored == null || resolved.updatedAt >= localStored.updatedAt) {
@@ -134,6 +140,18 @@ class SalaryRepository @Inject constructor(
                 } else {
                     Log.d(TAG, "Synced $count salary event(s); no usable relay copy")
                 }
+
+                // Self-heal: if this device has paycheck logs the relay doesn't
+                // reflect — because an earlier publish was never delivered (the
+                // outbox is in-memory only), or the relay copy was overwritten
+                // without logs — push the local copy back up so other clients
+                // (e.g. the web app) can see it.
+                if (localHasLogs && !relayHasLogs) {
+                    markRelaySalaryRepairPending()
+                }
+            }
+            if (_relayPublishReady.value) {
+                flushPendingRelaySalaryRepair()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Sync failed: ${e.message}")
@@ -142,8 +160,33 @@ class SalaryRepository @Inject constructor(
                 initialSalarySyncCompleted = true
                 _relayPublishReady.value = true
                 flushPendingRelayPublish()
+                flushPendingRelaySalaryRepair()
             }
         }
+    }
+
+    private fun markRelaySalaryRepairPending() {
+        relaySalaryRepairPending = true
+    }
+
+    /** Push local paycheck logs back to the relay when a newer relay copy omitted them. */
+    private suspend fun flushPendingRelaySalaryRepair() {
+        if (!relaySalaryRepairPending) return
+        relaySalaryRepairPending = false
+        if (!nostrClient.hasSigner) return
+        val stored = salaryDao.getLatestConfigOnce() ?: return
+        val config = decodeConfig(stored) ?: return
+        if (config.paycheckLog.isEmpty()) return
+        val repaired = config.copy(updatedAt = System.currentTimeMillis())
+        val jsonStr = json.encodeToString(SalaryConfig.serializer(), repaired)
+        salaryDao.upsert(
+            SalaryEntity(
+                id = repaired.id,
+                jsonData = jsonStr,
+                updatedAt = repaired.updatedAt
+            )
+        )
+        publishToRelay(jsonStr)
     }
 
     private suspend fun mergeBeforeSave(incoming: SalaryConfig): SalaryConfig {

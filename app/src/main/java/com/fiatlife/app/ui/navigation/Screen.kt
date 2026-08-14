@@ -119,8 +119,8 @@ sealed class Screen(
     )
 
     companion object {
-        /** Bottom tab items (Settings and Goals are in the top bar). */
-        val bottomNavItems = listOf(Dashboard, Salary, Bills, Debt, Budget)
+        /** Bottom tab items (Settings stays in the top bar). */
+        val bottomNavItems = listOf(Dashboard, Salary, Bills, Debt, Goals, Budget)
 
         fun fromRoute(route: String?): Screen? = when {
             route == Dashboard.route -> Dashboard

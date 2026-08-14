@@ -27,6 +27,7 @@ fun GoalsScreen(
     viewModel: GoalsViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    var goalPendingDelete by remember { mutableStateOf<FinancialGoal?>(null) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
@@ -131,7 +132,7 @@ fun GoalsScreen(
                         goal = goal,
                         onUpdateProgress = { viewModel.showUpdateProgress(goal) },
                         onEdit = { viewModel.showEditGoal(goal) },
-                        onDelete = { viewModel.deleteGoal(goal) }
+                        onDelete = { goalPendingDelete = goal }
                     )
                 }
             }
@@ -161,6 +162,31 @@ fun GoalsScreen(
             goal = state.updatingGoal!!,
             onDismiss = { viewModel.dismissUpdateProgress() },
             onUpdate = { goalId, amount -> viewModel.updateProgress(goalId, amount) }
+        )
+    }
+
+    goalPendingDelete?.let { goal ->
+        AlertDialog(
+            onDismissRequest = { goalPendingDelete = null },
+            title = { Text("Delete goal?") },
+            text = {
+                Text("Delete “${goal.name}”? This cannot be undone.")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteGoal(goal)
+                        goalPendingDelete = null
+                    }
+                ) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { goalPendingDelete = null }) {
+                    Text("Cancel")
+                }
+            }
         )
     }
 }

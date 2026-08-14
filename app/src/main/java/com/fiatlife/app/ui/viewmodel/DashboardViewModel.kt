@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.repository.BillRepository
+import com.fiatlife.app.data.repository.BudgetRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
 import com.fiatlife.app.data.repository.GoalRepository
@@ -47,7 +48,13 @@ data class DashboardState(
     val isConnected: Boolean = false,
     val hasData: Boolean = false,
     val topGoals: List<FinancialGoal> = emptyList(),
-    val upcomingBills: List<UpcomingBillRow> = emptyList()
+    val upcomingBills: List<UpcomingBillRow> = emptyList(),
+    val budgetUnbudgeted: Double = 0.0,
+    val hasBudgetTargets: Boolean = false,
+    val totalDebt: Double = 0.0,
+    val debtFreeDateMs: Long? = null,
+    val debtPayoffFeasible: Boolean = true,
+    val debtAccountCount: Int = 0,
 )
 
 enum class DashboardYtdSource { NONE, LOGGED, ESTIMATED }
@@ -68,6 +75,7 @@ class DashboardViewModel @Inject constructor(
     private val cypherLogSubscriptionRepository: CypherLogSubscriptionRepository,
     private val goalRepository: GoalRepository,
     private val creditAccountRepository: CreditAccountRepository,
+    private val budgetRepository: BudgetRepository,
     private val nostrClient: NostrClient
 ) : ViewModel() {
 
@@ -85,9 +93,10 @@ class DashboardViewModel @Inject constructor(
             ) { salary, nativeBills, cypherLogBills, goals, connected ->
                 DashboardInputs(salary, nativeBills, cypherLogBills, goals, connected)
             },
-            creditAccountRepository.getAllCreditAccounts()
-        ) { inputs, creditAccounts ->
-            inputs to creditAccounts
+            creditAccountRepository.getAllCreditAccounts(),
+            budgetRepository.getBudgetConfig()
+        ) { inputs, creditAccounts, budgetConfig ->
+            Triple(inputs, creditAccounts, budgetConfig)
         }
 
         combine(baseFlow, monthAnchor) { data, currentMonthAnchor ->
@@ -108,10 +117,10 @@ private data class DashboardInputs(
 )
 
 private fun buildDashboardState(
-    data: Pair<DashboardInputs, List<CreditAccount>>,
+    data: Triple<DashboardInputs, List<CreditAccount>, BudgetConfig?>,
     currentMonthAnchor: Long
 ): DashboardState {
-    val (inputs, creditAccounts) = data
+    val (inputs, creditAccounts, budgetConfig) = data
     val (salary, nativeBills, cypherLogBills, goals, connected) = inputs
     val accountsById = creditAccounts.associateBy { it.id }
     val allBills = (nativeBills + cypherLogBills.map { it.bill }).filterNot { bill ->
@@ -145,6 +154,16 @@ private fun buildDashboardState(
             acc.linkedBillId == bill.id || acc.name.equals(bill.name, ignoreCase = true)
         }
         return matched?.currentBalance ?: 0.0
+    }
+
+    fun linkedAmountDue(bill: Bill): Double {
+        bill.linkedCreditAccountId?.let { id ->
+            accountsById[id]?.let { return it.effectiveAmountDue() }
+        }
+        val matched = creditAccounts.firstOrNull { acc ->
+            acc.linkedBillId == bill.id || acc.name.equals(bill.name, ignoreCase = true)
+        }
+        return matched?.effectiveAmountDue() ?: bill.effectiveAmountDue()
     }
 
     val comingDueCount = visibleBills.count { bill ->
@@ -190,6 +209,14 @@ private fun buildDashboardState(
         }
     }
 
+    val budgetSummary = computeBudgetSummary(
+        config = budgetConfig ?: defaultBudgetConfig(currentMonthAnchor),
+        billCategoryTotals = billCategoryTotals,
+        takeHome = monthlyTakeHome
+    )
+    val payoff = summarizeDebtPayoff(creditAccounts)
+    val totalDebt = creditAccounts.sumOf { it.currentBalance }
+
     return DashboardState(
         takeHomePay = monthlyTakeHome,
         grossPay = monthlyGross,
@@ -223,8 +250,15 @@ private fun buildDashboardState(
         upcomingBills = buildUpcomingBillRows(
             visibleBills = visibleBills,
             threeMonthsFromNow = threeMonthsFromNow,
-            linkedCreditBalance = ::linkedCreditBalance
-        )
+            linkedCreditBalance = ::linkedCreditBalance,
+            linkedAmountDue = ::linkedAmountDue
+        ),
+        budgetUnbudgeted = budgetSummary.unbudgeted,
+        hasBudgetTargets = budgetSummary.totalTarget > 0.0,
+        totalDebt = totalDebt,
+        debtFreeDateMs = payoff.debtFreeDateMillis,
+        debtPayoffFeasible = payoff.allFeasible,
+        debtAccountCount = creditAccounts.size,
     )
 }
 
@@ -235,7 +269,8 @@ private val upcomingBillDateFormat = ThreadLocal.withInitial {
 private fun buildUpcomingBillRows(
     visibleBills: List<Bill>,
     threeMonthsFromNow: Long,
-    linkedCreditBalance: (Bill) -> Double
+    linkedCreditBalance: (Bill) -> Double,
+    linkedAmountDue: (Bill) -> Double
 ): List<UpcomingBillRow> {
     return visibleBills
         .filter { bill ->
@@ -272,7 +307,7 @@ private fun buildUpcomingBillRows(
                 subcategoryName = bill.effectiveSubcategory.displayName,
                 dueDateText = dueDateText,
                 isPastDue = isPastDue,
-                amountDue = bill.effectiveAmountDue()
+                amountDue = linkedAmountDue(bill)
             )
         }
 }

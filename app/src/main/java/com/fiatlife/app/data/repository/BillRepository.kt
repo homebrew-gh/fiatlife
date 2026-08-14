@@ -139,6 +139,7 @@ class BillRepository @Inject constructor(
         if (!nostrClient.hasSigner) return
         try {
             withTimeout(30_000) {
+                val localBefore = billDao.getAll().first().associateBy { it.id }
                 val deleteIds = mutableListOf<String>()
                 val upsertsById = mutableMapOf<String, BillEntity>()
                 nostrClient.subscribeToAppData(dTagPrefix = NOSTR_D_TAG_PREFIX).collect { (dTag, decrypted) ->
@@ -166,11 +167,38 @@ class BillRepository @Inject constructor(
                 }
                 billDao.applySyncBatch(upsertsById.values.toList(), deleteIds)
                 Log.d(TAG, "Synced ${upsertsById.size} bill(s) from relay; deleted ${deleteIds.size}")
+                republishStrandedBills(localBefore, upsertsById, deleteIds)
             }
             backfillLegacyCreditLoanPayments()
         } catch (e: Exception) {
             Log.e(TAG, "Sync failed: ${e.message}")
         }
+    }
+
+    /**
+     * Self-heal: push local bills the relay doesn't reflect back up so other
+     * clients (e.g. the web app) can see them. Covers bills whose original
+     * publish was never delivered (the outbox is in-memory only) and bills
+     * whose local copy is newer than the relay's.
+     */
+    private suspend fun republishStrandedBills(
+        localBefore: Map<String, BillEntity>,
+        relayById: Map<String, BillEntity>,
+        deleteIds: List<String>
+    ) {
+        val deleted = deleteIds.toSet()
+        var pushed = 0
+        for ((id, local) in localBefore) {
+            if (id in deleted) continue
+            val relay = relayById[id]
+            if (relay != null && local.updatedAt <= relay.updatedAt) continue
+            if (relay != null) billDao.upsert(local)
+            runCatching {
+                nostrClient.publishEncryptedAppData("$NOSTR_D_TAG_PREFIX$id", local.jsonData)
+            }.onSuccess { pushed++ }
+                .onFailure { Log.w(TAG, "Self-heal republish failed for bill ${id.take(8)}…: ${it.message}") }
+        }
+        if (pushed > 0) Log.d(TAG, "Self-heal re-published $pushed bill(s) the relay was missing")
     }
 
     /**

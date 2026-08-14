@@ -1,4 +1,5 @@
 import {
+  effectiveApr,
   effectiveMonthlyPayment,
   isRevolvingType,
   type CreditAccount,
@@ -22,8 +23,9 @@ export type PayoffProjection = {
 
 /** Interest that accrues this month at the current balance. */
 export function monthlyInterest(account: CreditAccount): number {
-  if (account.currentBalance <= 0 || account.apr <= 0) return 0;
-  return account.currentBalance * (account.apr / 12);
+  const apr = effectiveApr(account);
+  if (account.currentBalance <= 0 || apr <= 0) return 0;
+  return account.currentBalance * (apr / 12);
 }
 
 /**
@@ -112,12 +114,67 @@ export function projectAccountPayoff(
   extraPayment = 0,
   nowMs = Date.now(),
 ): PayoffProjection {
-  return projectPayoff({
-    balance: account.currentBalance,
-    annualRate: account.apr,
-    monthlyPayment: effectiveMonthlyPayment(account) + Math.max(0, extraPayment),
-    nowMs,
-  });
+  const balance0 = Math.max(0, account.currentBalance);
+  const payment =
+    effectiveMonthlyPayment(account) + Math.max(0, extraPayment);
+  const initialRate = effectiveApr(account, nowMs) / 12;
+  const startInterest = balance0 * initialRate;
+  if (balance0 <= 0) {
+    return {
+      feasible: true,
+      months: 0,
+      totalInterest: 0,
+      payoffDateMs: null,
+      monthlyInterest: 0,
+    };
+  }
+  if (payment <= 0) {
+    return {
+      feasible: false,
+      months: Infinity,
+      totalInterest: Infinity,
+      payoffDateMs: null,
+      monthlyInterest: startInterest,
+    };
+  }
+
+  let balance = balance0;
+  let totalInterest = 0;
+  let months = 0;
+  const cursor = new Date(nowMs);
+  while (balance > 0.005 && months < MAX_MONTHS) {
+    const monthlyRate = effectiveApr(account, cursor.getTime()) / 12;
+    const interest = balance * monthlyRate;
+    if (payment <= interest + 1e-9 && monthlyRate > 0) {
+      return {
+        feasible: false,
+        months: Infinity,
+        totalInterest: Infinity,
+        payoffDateMs: null,
+        monthlyInterest: startInterest,
+      };
+    }
+    balance = balance + interest - Math.min(payment, balance + interest);
+    totalInterest += interest;
+    months += 1;
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+  if (balance > 0.005) {
+    return {
+      feasible: false,
+      months: Infinity,
+      totalInterest: Infinity,
+      payoffDateMs: null,
+      monthlyInterest: startInterest,
+    };
+  }
+  return {
+    feasible: true,
+    months,
+    totalInterest,
+    payoffDateMs: cursor.getTime(),
+    monthlyInterest: startInterest,
+  };
 }
 
 /**
@@ -126,7 +183,7 @@ export function projectAccountPayoff(
  */
 export function isMinimumPaymentTrap(account: CreditAccount): boolean {
   if (!isRevolvingType(account.type)) return false;
-  if (account.currentBalance <= 0 || account.apr <= 0) return false;
+  if (account.currentBalance <= 0 || effectiveApr(account) <= 0) return false;
   const proj = projectAccountPayoff(account);
   return !proj.feasible || proj.months > 360; // > 30 years
 }

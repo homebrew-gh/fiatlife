@@ -7,6 +7,7 @@ import com.fiatlife.app.data.nostr.NostrClient
 import com.fiatlife.app.data.nostr.NostrEvent
 import com.fiatlife.app.domain.model.FinancialGoal
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -118,6 +119,7 @@ class GoalRepository @Inject constructor(
         if (!nostrClient.hasSigner) return
         try {
             withTimeout(30_000) {
+                val localBefore = goalDao.getAll().first().associateBy { it.id }
                 val deleteIds = mutableListOf<String>()
                 val upsertsById = mutableMapOf<String, GoalEntity>()
                 nostrClient.subscribeToAppData(dTagPrefix = NOSTR_D_TAG_PREFIX).collect { (dTag, decrypted) ->
@@ -145,10 +147,39 @@ class GoalRepository @Inject constructor(
                 }
                 goalDao.applySyncBatch(upsertsById.values.toList(), deleteIds)
                 Log.d(TAG, "Synced ${upsertsById.size} goal(s) from relay; deleted ${deleteIds.size}")
+                republishStrandedGoals(localBefore, upsertsById, deleteIds)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Sync failed: ${e.message}")
         }
+    }
+
+    /**
+     * Self-heal: push local goals the relay doesn't reflect back up so other
+     * clients (e.g. the web app) can see them. Covers goals whose original
+     * publish was never delivered (the outbox is in-memory only) and goals
+     * whose local copy is newer than the relay's.
+     */
+    private suspend fun republishStrandedGoals(
+        localBefore: Map<String, GoalEntity>,
+        relayById: Map<String, GoalEntity>,
+        deleteIds: List<String>
+    ) {
+        val deleted = deleteIds.toSet()
+        var pushed = 0
+        for ((id, local) in localBefore) {
+            if (id in deleted) continue
+            val relay = relayById[id]
+            if (relay != null && local.updatedAt <= relay.updatedAt) continue
+            // The relay copy (if any) is missing or stale; restore the newer
+            // local copy the sync batch may have overwritten, then republish.
+            if (relay != null) goalDao.upsert(local)
+            runCatching {
+                nostrClient.publishEncryptedAppData("$NOSTR_D_TAG_PREFIX$id", local.jsonData)
+            }.onSuccess { pushed++ }
+                .onFailure { Log.w(TAG, "Self-heal republish failed for goal ${id.take(8)}…: ${it.message}") }
+        }
+        if (pushed > 0) Log.d(TAG, "Self-heal re-published $pushed goal(s) the relay was missing")
     }
 
     private fun decodeGoalSafely(raw: String, source: String): FinancialGoal? {

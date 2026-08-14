@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CollapsibleSection } from "../ui";
 import type { BillFrequency } from "../../lib/bill";
 import { frequencyLabel } from "../../lib/bill";
 import {
@@ -10,6 +11,7 @@ import {
   isAmortizingType,
   isRevolvingType,
   parseIsoDate,
+  type PromotionAppliesTo,
   type CreditAccount,
   type CreditAccountType,
   type CreditCardMinPaymentType,
@@ -49,6 +51,11 @@ export function CreditAccountSheet({
   const [last4, setLast4] = useState("");
   const [currentBalance, setCurrentBalance] = useState("");
   const [aprPercent, setAprPercent] = useState("");
+  const [promotionalAprPercent, setPromotionalAprPercent] = useState("");
+  const [promotionalAprEndDate, setPromotionalAprEndDate] = useState("");
+  const [promotionAppliesTo, setPromotionAppliesTo] =
+    useState<PromotionAppliesTo>("PURCHASES");
+  const [deferredInterest, setDeferredInterest] = useState(false);
   const [dueDay, setDueDay] = useState("1");
   const [notes, setNotes] = useState("");
   const [creditLimit, setCreditLimit] = useState("");
@@ -79,10 +86,22 @@ export function CreditAccountSheet({
         : "",
     );
     setAprPercent(
-      acc?.apr != null && acc.apr > 0
-        ? (acc.apr * 100).toFixed(2)
+      (acc?.standardApr ?? acc?.apr ?? 0) > 0
+        ? ((acc?.standardApr ?? acc?.apr ?? 0) * 100).toFixed(2)
         : "",
     );
+    setPromotionalAprPercent(
+      acc?.promotionalApr != null
+        ? (acc.promotionalApr * 100).toFixed(2)
+        : "",
+    );
+    setPromotionalAprEndDate(
+      acc?.promotionalAprEndDate != null
+        ? formatIsoDate(acc.promotionalAprEndDate)
+        : "",
+    );
+    setPromotionAppliesTo(acc?.promotionAppliesTo ?? "PURCHASES");
+    setDeferredInterest(acc?.deferredInterest ?? false);
     setDueDay(String(acc?.dueDay ?? 1));
     setNotes(acc?.notes ?? "");
     setCreditLimit(
@@ -151,6 +170,19 @@ export function CreditAccountSheet({
 
     const balance = Number.parseFloat(currentBalance) || 0;
     const apr = (Number.parseFloat(aprPercent) || 0) / 100;
+    const promotionalApr =
+      promotionalAprPercent.trim() === ""
+        ? null
+        : Math.max(0, (Number.parseFloat(promotionalAprPercent) || 0) / 100);
+    const promotionalEnd = parseIsoDate(promotionalAprEndDate);
+    if (
+      revolving &&
+      promotionalApr != null &&
+      promotionalEnd == null
+    ) {
+      setError("Enter the promotional APR end date.");
+      return;
+    }
     const day = Number.parseInt(dueDay, 10);
     if (!Number.isFinite(day) || day < 1 || day > 31) {
       setError("Due day must be 1–31.");
@@ -176,8 +208,24 @@ export function CreditAccountSheet({
         type,
         institution: institution.trim(),
         accountNumberLast4: last4.replace(/\D/g, "").slice(0, 4),
-        apr: Math.max(0, apr),
+        apr:
+          revolving &&
+          promotionalApr != null &&
+          promotionalEnd != null &&
+          promotionalEnd >= Date.now()
+            ? promotionalApr
+            : Math.max(0, apr),
+        standardApr: Math.max(0, apr),
+        promotionalApr: revolving ? promotionalApr : null,
+        promotionalAprEndDate: revolving ? promotionalEnd : null,
+        promotionAppliesTo:
+          revolving && promotionalApr != null ? promotionAppliesTo : null,
+        deferredInterest:
+          revolving && promotionalApr != null ? deferredInterest : false,
         currentBalance: Math.max(0, balance),
+        statementBalanceAsOfMillis:
+          account?.statementBalanceAsOfMillis ?? null,
+        statementAmountDue: account?.statementAmountDue ?? null,
         dueDay: day,
         linkedBillId: account?.linkedBillId ?? null,
         annualFeeLinkedBillId: account?.annualFeeLinkedBillId ?? null,
@@ -379,56 +427,127 @@ export function CreditAccountSheet({
             </>
           ) : null}
 
-          {isCreditCard ? (
+          {revolving ? (
             <fieldset className="space-y-3 border-t border-outline pt-3">
               <legend className="text-sm font-medium text-muted">
-                Membership fee (optional)
+                Promotional APR (optional)
               </legend>
-              <div>
-                <label className="label" htmlFor="acct-fee">
-                  Fee amount
-                </label>
-                <input
-                  id="acct-fee"
-                  className="input money"
-                  inputMode="decimal"
-                  value={annualFeeAmount}
-                  onChange={(e) => setAnnualFeeAmount(e.target.value)}
-                  placeholder="0.00"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label" htmlFor="acct-promo-apr">
+                    Promotional APR %
+                  </label>
+                  <input
+                    id="acct-promo-apr"
+                    className="input"
+                    inputMode="decimal"
+                    value={promotionalAprPercent}
+                    onChange={(e) => setPromotionalAprPercent(e.target.value)}
+                    placeholder="0"
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="acct-promo-end">
+                    Ends on
+                  </label>
+                  <input
+                    id="acct-promo-end"
+                    className="input"
+                    type="date"
+                    value={promotionalAprEndDate}
+                    onChange={(e) => setPromotionalAprEndDate(e.target.value)}
+                  />
+                </div>
               </div>
-              <div>
-                <label className="label" htmlFor="acct-fee-date">
-                  Renewal date (YYYY-MM-DD)
-                </label>
-                <input
-                  id="acct-fee-date"
-                  className="input"
-                  value={annualFeeDate}
-                  onChange={(e) => setAnnualFeeDate(e.target.value.slice(0, 10))}
-                  placeholder="2026-01-15"
-                />
-              </div>
-              <div>
-                <label className="label" htmlFor="acct-fee-freq">
-                  Fee frequency
-                </label>
-                <select
-                  id="acct-fee-freq"
-                  className="input"
-                  value={annualFeeFrequency}
-                  onChange={(e) =>
-                    setAnnualFeeFrequency(e.target.value as BillFrequency)
-                  }
-                >
-                  {FEE_FREQUENCIES.map((f) => (
-                    <option key={f} value={f}>
-                      {frequencyLabel(f)}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {promotionalAprPercent.trim() ? (
+                <>
+                  <div>
+                    <label className="label" htmlFor="acct-promo-applies">
+                      Applies to
+                    </label>
+                    <select
+                      id="acct-promo-applies"
+                      className="input"
+                      value={promotionAppliesTo}
+                      onChange={(e) =>
+                        setPromotionAppliesTo(
+                          e.target.value as PromotionAppliesTo,
+                        )
+                      }
+                    >
+                      <option value="PURCHASES">Purchases</option>
+                      <option value="BALANCE_TRANSFER">Balance transfers</option>
+                      <option value="BOTH">Purchases and balance transfers</option>
+                    </select>
+                  </div>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={deferredInterest}
+                      onChange={(e) => setDeferredInterest(e.target.checked)}
+                    />
+                    Deferred interest may apply if not paid by the end date
+                  </label>
+                </>
+              ) : null}
             </fieldset>
+          ) : null}
+
+          {isCreditCard ? (
+            <CollapsibleSection
+              title="Membership fee"
+              summary="Optional annual or recurring card fee"
+              bare
+            >
+              <fieldset className="space-y-3">
+                <div>
+                  <label className="label" htmlFor="acct-fee">
+                    Fee amount
+                  </label>
+                  <input
+                    id="acct-fee"
+                    className="input money"
+                    inputMode="decimal"
+                    value={annualFeeAmount}
+                    onChange={(e) => setAnnualFeeAmount(e.target.value)}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="acct-fee-date">
+                    Renewal date (YYYY-MM-DD)
+                  </label>
+                  <input
+                    id="acct-fee-date"
+                    className="input"
+                    value={annualFeeDate}
+                    onChange={(e) =>
+                      setAnnualFeeDate(e.target.value.slice(0, 10))
+                    }
+                    placeholder="2026-01-15"
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="acct-fee-freq">
+                    Fee frequency
+                  </label>
+                  <select
+                    id="acct-fee-freq"
+                    className="input"
+                    value={annualFeeFrequency}
+                    onChange={(e) =>
+                      setAnnualFeeFrequency(e.target.value as BillFrequency)
+                    }
+                  >
+                    {FEE_FREQUENCIES.map((f) => (
+                      <option key={f} value={f}>
+                        {frequencyLabel(f)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </fieldset>
+            </CollapsibleSection>
           ) : null}
 
           {amortizing ? (
@@ -509,17 +628,19 @@ export function CreditAccountSheet({
             </fieldset>
           ) : null}
 
-          <div>
-            <label className="label" htmlFor="acct-notes">
-              Notes
-            </label>
-            <textarea
-              id="acct-notes"
-              className="input min-h-[4rem] resize-y"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-            />
-          </div>
+          <CollapsibleSection title="Notes" summary="Optional details" bare>
+            <div>
+              <label className="label" htmlFor="acct-notes">
+                Notes
+              </label>
+              <textarea
+                id="acct-notes"
+                className="input min-h-[4rem] resize-y"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+            </div>
+          </CollapsibleSection>
 
           {error ? (
             <p className="text-sm text-error" role="alert">

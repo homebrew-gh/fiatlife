@@ -36,6 +36,27 @@ enum class CreditAccountType {
             this == PERSONAL_LOAN || this == RETIREMENT_LOAN
 }
 
+@Serializable
+enum class PromotionAppliesTo {
+    PURCHASES,
+    BALANCE_TRANSFER,
+    BOTH
+}
+
+data class CreditStatementUpdate(
+    val statementBalance: Double,
+    val statementBalanceAsOfMillis: Long,
+    val statementAmountDue: Double? = null,
+    val dueDay: Int,
+    val paymentAmount: Double = 0.0,
+    val balanceAfterPayment: Double = statementBalance
+)
+
+data class DueUrgency(
+    val days: Int,
+    val overdue: Boolean
+)
+
 /**
  * A line of credit or loan account (credit card, mortgage, car loan, etc.).
  * Common fields for all types; revolving and amortizing fields used by type.
@@ -48,7 +69,16 @@ data class CreditAccount(
     val institution: String = "",
     val accountNumberLast4: String = "",
     val apr: Double = 0.0,
+    /** Ongoing APR after a promotion; null falls back to legacy [apr]. */
+    val standardApr: Double? = null,
+    val promotionalApr: Double? = null,
+    val promotionalAprEndDate: Long? = null,
+    val promotionAppliesTo: PromotionAppliesTo? = null,
+    val deferredInterest: Boolean = false,
     val currentBalance: Double = 0.0,
+    val statementBalanceAsOfMillis: Long? = null,
+    /** Issuer-reported amount due; null uses the configured minimum formula. */
+    val statementAmountDue: Double? = null,
     val dueDay: Int = 1,
     val linkedBillId: String? = null,
     val annualFeeLinkedBillId: String? = null,
@@ -79,10 +109,134 @@ data class CreditAccount(
         CreditCardMinPaymentType.FULL_BALANCE -> currentBalance.coerceAtLeast(0.0)
     }
 
+    fun statementOverrideActive(asOfMillis: Long = System.currentTimeMillis()): Boolean {
+        val override = statementAmountDue ?: return false
+        if (override.isNaN()) return false
+        val statementAsOf = statementBalanceAsOfMillis ?: return true
+        val statementCal = java.util.Calendar.getInstance().apply { timeInMillis = statementAsOf }
+        var cycleDue = dueDateInMonth(
+            dueDay,
+            statementCal.get(java.util.Calendar.YEAR),
+            statementCal.get(java.util.Calendar.MONTH)
+        )
+        if (statementAsOf > endOfDayMillis(cycleDue)) {
+            statementCal.add(java.util.Calendar.MONTH, 1)
+            cycleDue = dueDateInMonth(
+                dueDay,
+                statementCal.get(java.util.Calendar.YEAR),
+                statementCal.get(java.util.Calendar.MONTH)
+            )
+        }
+        return asOfMillis <= endOfDayMillis(cycleDue)
+    }
+
+    fun effectiveAmountDue(asOfMillis: Long = System.currentTimeMillis()): Double =
+        if (statementOverrideActive(asOfMillis)) {
+            statementAmountDue?.coerceAtLeast(0.0) ?: minimumDue()
+        } else {
+            minimumDue()
+        }
+
+    fun dueUrgency(
+        paidThisCycle: Boolean = false,
+        asOfMillis: Long = System.currentTimeMillis()
+    ): DueUrgency {
+        val now = java.util.Calendar.getInstance().apply { timeInMillis = asOfMillis }
+        val thisMonthDue = dueDateInMonth(
+            dueDay,
+            now.get(java.util.Calendar.YEAR),
+            now.get(java.util.Calendar.MONTH)
+        )
+        if (currentBalance > 0.0 && asOfMillis > endOfDayMillis(thisMonthDue) && !paidThisCycle) {
+            val days = ((asOfMillis - startOfDayMillis(thisMonthDue) + 86_400_000L - 1) / 86_400_000L)
+                .toInt()
+                .coerceAtLeast(1)
+            return DueUrgency(days, overdue = true)
+        }
+        val nextDue = if (asOfMillis > endOfDayMillis(thisMonthDue)) {
+            now.add(java.util.Calendar.MONTH, 1)
+            dueDateInMonth(
+                dueDay,
+                now.get(java.util.Calendar.YEAR),
+                now.get(java.util.Calendar.MONTH)
+            )
+        } else {
+            thisMonthDue
+        }
+        val days = ((startOfDayMillis(nextDue) - startOfDayMillis(asOfMillis) + 86_400_000L - 1) /
+            86_400_000L).toInt().coerceAtLeast(0)
+        return DueUrgency(days, overdue = false)
+    }
+
+    fun isPromotionActive(asOfMillis: Long = System.currentTimeMillis()): Boolean =
+        promotionalApr != null &&
+            promotionalAprEndDate != null &&
+            promotionalAprEndDate >= asOfMillis
+
+    fun effectiveApr(asOfMillis: Long = System.currentTimeMillis()): Double =
+        if (isPromotionActive(asOfMillis)) {
+            promotionalApr?.coerceAtLeast(0.0) ?: 0.0
+        } else {
+            (standardApr ?: apr).coerceAtLeast(0.0)
+        }
+
+    fun monthsUntilPromotionEnds(asOfMillis: Long = System.currentTimeMillis()): Int? {
+        val endMillis = promotionalAprEndDate
+        if (!isPromotionActive(asOfMillis) || endMillis == null) return null
+        val start = java.util.Calendar.getInstance().apply { timeInMillis = asOfMillis }
+        val end = java.util.Calendar.getInstance().apply { timeInMillis = endMillis }
+        val monthDifference =
+            (end.get(java.util.Calendar.YEAR) - start.get(java.util.Calendar.YEAR)) * 12 +
+                end.get(java.util.Calendar.MONTH) - start.get(java.util.Calendar.MONTH)
+        return (monthDifference +
+            if (end.get(java.util.Calendar.DAY_OF_MONTH) >=
+                start.get(java.util.Calendar.DAY_OF_MONTH)
+            ) 1 else 0).coerceAtLeast(1)
+    }
+
+    fun paymentToClearPromotion(asOfMillis: Long = System.currentTimeMillis()): Double? {
+        val months = monthsUntilPromotionEnds(asOfMillis) ?: return null
+        if (currentBalance <= 0.0) return null
+        return currentBalance / months
+    }
+
     /** Monthly payment to use for totals and display. Revolving: only count when balance > 0 (use minimum due). Amortizing: fixed monthly payment. */
     fun effectiveMonthlyPayment(): Double = when {
-        type.isRevolving -> if (currentBalance > 0) minimumDue() else 0.0
+        type.isRevolving -> if (currentBalance > 0) effectiveAmountDue() else 0.0
         type.isAmortizing -> monthlyPaymentAmount ?: 0.0
         else -> 0.0
     }
 }
+
+private fun dueDateInMonth(dueDay: Int, year: Int, month: Int): Long {
+    val cal = java.util.Calendar.getInstance().apply {
+        clear()
+        set(java.util.Calendar.YEAR, year)
+        set(java.util.Calendar.MONTH, month)
+        set(java.util.Calendar.DAY_OF_MONTH, 1)
+        set(
+            java.util.Calendar.DAY_OF_MONTH,
+            dueDay.coerceIn(1, getActualMaximum(java.util.Calendar.DAY_OF_MONTH))
+        )
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }
+    return cal.timeInMillis
+}
+
+private fun startOfDayMillis(millis: Long): Long {
+    val cal = java.util.Calendar.getInstance().apply {
+        timeInMillis = millis
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }
+    return cal.timeInMillis
+}
+
+private fun endOfDayMillis(dayStartMillis: Long): Long =
+    startOfDayMillis(dayStartMillis) + 86_400_000L - 1
+

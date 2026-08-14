@@ -15,6 +15,7 @@ import com.fiatlife.app.domain.model.BillSource
 import com.fiatlife.app.domain.model.BillWithSource
 import com.fiatlife.app.domain.model.Biller
 import com.fiatlife.app.domain.model.CreditAccount
+import com.fiatlife.app.domain.model.CreditStatementUpdate
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -128,7 +129,10 @@ class BillDetailViewModel @Inject constructor(
                 bill.linkedCreditAccountId?.let { accountId ->
                     creditAccountRepository.getCreditAccountById(accountId).first()?.let { acc ->
                         val balance = newBalance ?: (acc.currentBalance - amount).coerceAtLeast(0.0)
-                        creditAccountRepository.saveCreditAccount(acc.copy(currentBalance = balance))
+                        creditAccountRepository.saveCreditAccount(
+                            acc.copy(currentBalance = balance),
+                            inferPayment = false
+                        )
                     }
                 }
             }
@@ -187,6 +191,16 @@ class BillDetailViewModel @Inject constructor(
 
     fun clearMessage() {
         _message.update { "" }
+    }
+
+    fun updateStatement(account: CreditAccount, update: CreditStatementUpdate) {
+        viewModelScope.launch {
+            try {
+                creditAccountRepository.updateStatement(account, update)
+            } catch (e: Exception) {
+                _message.update { "Statement update failed: ${e.message}" }
+            }
+        }
     }
 
     suspend fun getStatementBytes(hash: String): Result<ByteArray> =

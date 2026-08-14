@@ -41,7 +41,7 @@ function ScheduleTable({
                 key={row.paymentNumber}
                 className={clsx(
                   "border-b border-outline/50",
-                  isCurrent && "bg-primary-container/30",
+                  isCurrent && "bg-primaryContainer/30",
                   isPaid && "opacity-60",
                 )}
               >
@@ -111,23 +111,23 @@ export function MortgageScheduleSection({
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-        <div className="rounded-lg bg-surface-variant/60 p-3">
+        <div className="rounded-lg bg-surfaceVariant/60 p-3">
           <p className="text-muted">Monthly P&amp;I</p>
           <p className="font-mono font-semibold mt-1">
             {formatUsd(summary.monthlyPayment)}
           </p>
         </div>
-        <div className="rounded-lg bg-surface-variant/60 p-3">
+        <div className="rounded-lg bg-surfaceVariant/60 p-3">
           <p className="text-muted">Total interest</p>
           <p className="font-mono font-semibold mt-1">
             {formatUsd(summary.totalInterest)}
           </p>
         </div>
-        <div className="rounded-lg bg-surface-variant/60 p-3">
+        <div className="rounded-lg bg-surfaceVariant/60 p-3">
           <p className="text-muted">Payoff date</p>
           <p className="font-semibold mt-1">{payoffLabel}</p>
         </div>
-        <div className="rounded-lg bg-surface-variant/60 p-3">
+        <div className="rounded-lg bg-surfaceVariant/60 p-3">
           <p className="text-muted">Payments left</p>
           <p className="font-semibold mt-1">{summary.paymentsRemaining}</p>
         </div>

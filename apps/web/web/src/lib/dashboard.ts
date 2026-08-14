@@ -1,6 +1,7 @@
 import {
   effectiveAmountDue,
   generalCategoryForBill,
+  isPaidForCurrentCycle,
   isPastDue,
   monthlyEquivalent,
   nextDueDateMillis,
@@ -8,6 +9,11 @@ import {
   type BillGeneralCategory,
   type BillWithSource,
 } from "./bill";
+import {
+  effectiveAmountDue as accountAmountDue,
+  effectiveMonthlyPayment,
+  type CreditAccount,
+} from "./creditAccount";
 import type { FinancialGoal } from "./goal";
 import {
   calculateAnnual,
@@ -62,8 +68,41 @@ function isCreditOrLoan(bill: Bill): boolean {
   return generalCategoryForBill(bill) === "CREDIT_LOANS";
 }
 
-function linkedCreditBalance(bill: Bill): number {
+function linkedAccount(
+  bill: Bill,
+  creditAccounts: CreditAccount[],
+): CreditAccount | undefined {
+  if (bill.linkedCreditAccountId) {
+    return creditAccounts.find((a) => a.id === bill.linkedCreditAccountId);
+  }
+  return creditAccounts.find(
+    (a) =>
+      a.linkedBillId === bill.id ||
+      a.name.toLowerCase() === bill.name.toLowerCase(),
+  );
+}
+
+function linkedCreditBalance(
+  bill: Bill,
+  creditAccounts: CreditAccount[],
+): number {
+  const account = linkedAccount(bill, creditAccounts);
+  if (account) return account.currentBalance;
   return bill.creditCardDetails?.currentBalance ?? 0;
+}
+
+function billUnpaid(bill: Bill, now: number): boolean {
+  if (isCreditOrLoan(bill)) return !isPaidForCurrentCycle(bill, now);
+  return !bill.isPaid;
+}
+
+function billMonthlyAmount(
+  bill: Bill,
+  creditAccounts: CreditAccount[],
+): number {
+  const account = linkedAccount(bill, creditAccounts);
+  if (account) return effectiveMonthlyPayment(account);
+  return monthlyEquivalent(bill);
 }
 
 function isVisibleOnDashboard(bill: Bill): boolean {
@@ -73,20 +112,18 @@ function isVisibleOnDashboard(bill: Bill): boolean {
   return true;
 }
 
-function isUnpaid(bill: Bill): boolean {
-  return !bill.isPaid;
-}
-
 export function computeDashboardState(input: {
   salary: SalaryConfig | null;
   calculation: PaycheckCalculation | null;
   bills: BillWithSource[];
   goals: FinancialGoal[];
+  creditAccounts?: CreditAccount[];
   monthAnchorMillis?: number;
   now?: number;
 }): DashboardState {
   const now = input.now ?? Date.now();
   const monthAnchor = input.monthAnchorMillis ?? now;
+  const creditAccounts = input.creditAccounts ?? [];
   const calc =
     input.calculation ??
     (input.salary ? calculatePaycheck(input.salary) : null);
@@ -98,7 +135,7 @@ export function computeDashboardState(input: {
   const visibleBills = allBills.filter(isVisibleOnDashboard);
 
   const monthlyBills = allBills.reduce(
-    (sum, b) => sum + monthlyEquivalent(b),
+    (sum, b) => sum + billMonthlyAmount(b, creditAccounts),
     0,
   );
 
@@ -106,7 +143,7 @@ export function computeDashboardState(input: {
   for (const bill of allBills) {
     const cat = generalCategoryForBill(bill);
     billCategoryTotals[cat] =
-      (billCategoryTotals[cat] ?? 0) + monthlyEquivalent(bill);
+      (billCategoryTotals[cat] ?? 0) + billMonthlyAmount(bill, creditAccounts);
   }
 
   const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
@@ -116,7 +153,7 @@ export function computeDashboardState(input: {
   const overdueBillCount = visibleBills.filter(
     (bill) =>
       !isCreditOrLoan(bill) &&
-      isUnpaid(bill) &&
+      billUnpaid(bill, now) &&
       isPastDue(bill, now),
   ).length;
 
@@ -124,10 +161,10 @@ export function computeDashboardState(input: {
     const nextDue = nextDueDateMillis(bill, now);
     if (nextDue == null) return false;
     if (isPastDue(bill, now)) return false;
-    if (!isUnpaid(bill)) return false;
+    if (!billUnpaid(bill, now)) return false;
     if (nextDue > now + sevenDaysMs) return false;
     if (isCreditOrLoan(bill)) {
-      return linkedCreditBalance(bill) > 0;
+      return linkedCreditBalance(bill, creditAccounts) > 0;
     }
     return true;
   }).length;
@@ -161,9 +198,9 @@ export function computeDashboardState(input: {
         isPastDue(bill, now) ||
         (nextDue != null && nextDue <= threeMonthsFromNow.getTime());
       if (!withinWindow) return false;
-      if (!isUnpaid(bill)) return false;
+      if (!billUnpaid(bill, now)) return false;
       if (isCreditOrLoan(bill)) {
-        return linkedCreditBalance(bill) > 0;
+        return linkedCreditBalance(bill, creditAccounts) > 0;
       }
       return true;
     })
@@ -247,6 +284,11 @@ export function billDueLabel(bill: Bill, now = Date.now()): string {
   return isPastDue(bill, now) ? `${text} (Overdue)` : text;
 }
 
-export function billDisplayAmount(bill: Bill): number {
+export function billDisplayAmount(
+  bill: Bill,
+  creditAccounts: CreditAccount[] = [],
+): number {
+  const account = linkedAccount(bill, creditAccounts);
+  if (account) return accountAmountDue(account);
   return effectiveAmountDue(bill);
 }

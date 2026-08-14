@@ -6,6 +6,7 @@ import {
   type BillWithSource,
 } from "./bill";
 import {
+  effectiveAmountDue as effectiveAccountAmountDue,
   effectiveMonthlyPayment,
   isAmortizingType,
   isRevolvingType,
@@ -66,6 +67,23 @@ async function ensurePrimaryBillForAccount(
 ): Promise<CreditAccount> {
   const subcategory = billSubcategoryForAccount(account);
   const allBills = ops.getAllBills();
+  const updateLinkedBill = async (item: BillWithSource): Promise<void> => {
+    await ops.saveBill(
+      {
+        ...item.bill,
+        name: account.name,
+        amount: account.currentBalance > 0 ? effectiveMonthlyPayment(account) : 0,
+        dueDay: account.dueDay,
+        subcategory,
+        isRecurring: true,
+        isCancelled: false,
+        linkedCreditAccountId: account.id,
+        updatedAt: Date.now(),
+      },
+      item.source,
+      item.dTag,
+    );
+  };
 
   if (account.currentBalance > 0) {
     const existingByLinkedAccount = allBills.find(
@@ -80,21 +98,16 @@ async function ensurePrimaryBillForAccount(
 
     if (account.linkedBillId) {
       const existing = ops.getBillById(account.linkedBillId);
-      if (existing) return account;
+      if (existing) {
+        await updateLinkedBill(existing);
+        return account;
+      }
     }
 
     const existingCandidate = existingByLinkedAccount ?? existingLegacyByName;
     if (existingCandidate) {
-      if (existingCandidate.linkedCreditAccountId !== account.id) {
-        await ops.saveBill(
-          {
-            ...existingCandidate,
-            linkedCreditAccountId: account.id,
-            updatedAt: Date.now(),
-          },
-          "NATIVE",
-        );
-      }
+      const item = ops.getBillById(existingCandidate.id);
+      if (item) await updateLinkedBill(item);
       if (account.linkedBillId !== existingCandidate.id) {
         return { ...account, linkedBillId: existingCandidate.id };
       }
@@ -104,19 +117,19 @@ async function ensurePrimaryBillForAccount(
     return createAndLinkBill(account, subcategory, ops);
   }
 
-  const linkedIds = new Set<string>();
-  if (account.linkedBillId) linkedIds.add(account.linkedBillId);
-  for (const bill of allBills) {
-    if (bill.linkedCreditAccountId === account.id) linkedIds.add(bill.id);
-  }
-
-  for (const id of linkedIds) {
-    const item = ops.getBillById(id);
-    if (item) await ops.deleteBill(item);
-  }
-
-  if (account.linkedBillId) {
-    return { ...account, linkedBillId: null };
+  // A paid-off account keeps its linked Bill and payment history. Reusing the
+  // same reminder when the balance rises again avoids orphaned histories.
+  const existingPaidOff =
+    (account.linkedBillId && ops.getBillById(account.linkedBillId)) ||
+    allBills
+      .filter((bill) => bill.linkedCreditAccountId === account.id)
+      .map((bill) => ops.getBillById(bill.id))
+      .find((item): item is BillWithSource => item != null);
+  if (existingPaidOff) {
+    await updateLinkedBill(existingPaidOff);
+    return account.linkedBillId === existingPaidOff.bill.id
+      ? account
+      : { ...account, linkedBillId: existingPaidOff.bill.id };
   }
   return account;
 }
@@ -268,4 +281,8 @@ export function findLinkedBill(
 
 export function paymentAmountForBill(bill: Bill): number {
   return effectiveAmountDue(bill);
+}
+
+export function paymentAmountForLinkedAccount(account: CreditAccount): number {
+  return effectiveAccountAmountDue(account);
 }

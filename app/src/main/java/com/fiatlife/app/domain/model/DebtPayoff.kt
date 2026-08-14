@@ -23,8 +23,9 @@ data class PayoffProjection(
 
 /** Interest that accrues this month at the current balance. */
 fun CreditAccount.monthlyInterest(): Double {
-    if (currentBalance <= 0 || apr <= 0) return 0.0
-    return currentBalance * (apr / 12.0)
+    val rate = effectiveApr()
+    if (currentBalance <= 0 || rate <= 0) return 0.0
+    return currentBalance * (rate / 12.0)
 }
 
 /**
@@ -96,12 +97,62 @@ fun projectPayoff(
 fun CreditAccount.projectPayoff(
     extraPayment: Double = 0.0,
     nowMillis: Long = System.currentTimeMillis()
-): PayoffProjection = projectPayoff(
-    balance = currentBalance,
-    annualRate = apr,
-    monthlyPayment = effectiveMonthlyPayment() + extraPayment.coerceAtLeast(0.0),
-    nowMillis = nowMillis
-)
+): PayoffProjection {
+    val balance0 = currentBalance.coerceAtLeast(0.0)
+    val payment = effectiveMonthlyPayment() + extraPayment.coerceAtLeast(0.0)
+    val initialRate = effectiveApr(nowMillis) / 12.0
+    val startInterest = balance0 * initialRate
+    if (balance0 <= 0.0) {
+        return PayoffProjection(true, 0, 0.0, null, 0.0)
+    }
+    if (payment <= 0.0) {
+        return PayoffProjection(
+            false,
+            Int.MAX_VALUE,
+            Double.POSITIVE_INFINITY,
+            null,
+            startInterest
+        )
+    }
+
+    var remaining = balance0
+    var totalInterest = 0.0
+    var months = 0
+    val cursor = Calendar.getInstance().apply { timeInMillis = nowMillis }
+    while (remaining > 0.005 && months < MAX_MONTHS) {
+        val monthlyRate = effectiveApr(cursor.timeInMillis) / 12.0
+        val interest = remaining * monthlyRate
+        if (monthlyRate > 0.0 && payment <= interest + 1e-9) {
+            return PayoffProjection(
+                false,
+                Int.MAX_VALUE,
+                Double.POSITIVE_INFINITY,
+                null,
+                startInterest
+            )
+        }
+        remaining += interest - minOf(payment, remaining + interest)
+        totalInterest += interest
+        months += 1
+        cursor.add(Calendar.MONTH, 1)
+    }
+    if (remaining > 0.005) {
+        return PayoffProjection(
+            false,
+            Int.MAX_VALUE,
+            Double.POSITIVE_INFINITY,
+            null,
+            startInterest
+        )
+    }
+    return PayoffProjection(
+        true,
+        months,
+        totalInterest,
+        cursor.timeInMillis,
+        startInterest
+    )
+}
 
 /**
  * Whether a revolving account is at risk of the "minimum payment trap":
@@ -109,7 +160,7 @@ fun CreditAccount.projectPayoff(
  */
 fun CreditAccount.isMinimumPaymentTrap(): Boolean {
     if (!type.isRevolving) return false
-    if (currentBalance <= 0 || apr <= 0) return false
+    if (currentBalance <= 0 || effectiveApr() <= 0) return false
     val proj = projectPayoff()
     return !proj.feasible || proj.months > 360 // > 30 years
 }

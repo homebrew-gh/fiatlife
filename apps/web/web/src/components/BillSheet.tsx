@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { CollapsibleSection } from "./ui";
 import {
   ALL_GENERAL_CATEGORIES,
   GENERAL_CATEGORY_LABELS,
@@ -310,7 +311,8 @@ export function BillSheet({
         </h2>
         {linkedToDebt ? (
           <p className="text-sm text-muted mt-1">
-            Linked to a debt account — changes sync to your relay.
+            Linked to a debt account — amount, due day, and APR are managed
+            there.
           </p>
         ) : null}
         {editing?.source === "CYPHERLOG" ? (
@@ -389,7 +391,7 @@ export function BillSheet({
               </select>
             </div>
           </div>
-          {isCreditCard ? (
+          {isCreditCard && !linkedToDebt ? (
             <div className="card-quiet p-3 space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -461,6 +463,7 @@ export function BillSheet({
                 inputMode="decimal"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
+                disabled={linkedToDebt}
               />
             </div>
           )}
@@ -507,6 +510,7 @@ export function BillSheet({
                     onChange={(e) =>
                       setFrequency(e.target.value as BillFrequency)
                     }
+                    disabled={linkedToDebt}
                   >
                     {FREQUENCIES.map((f) => (
                       <option key={f} value={f}>
@@ -525,6 +529,7 @@ export function BillSheet({
                     inputMode="numeric"
                     value={dueDay}
                     onChange={(e) => setDueDay(e.target.value)}
+                    disabled={linkedToDebt}
                   />
                 </div>
               </div>
@@ -571,90 +576,101 @@ export function BillSheet({
               />
             </div>
           )}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label" htmlFor="bill-rate-valid">
-                Rate valid until
-              </label>
-              <input
-                id="bill-rate-valid"
-                type="date"
-                className="input"
-                value={rateValidUntil}
-                onChange={(e) => setRateValidUntil(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="label" htmlFor="bill-account-name">
-                Account label
-              </label>
-              <input
-                id="bill-account-name"
-                className="input"
-                value={accountName}
-                onChange={(e) => setAccountName(e.target.value)}
-                placeholder="Optional"
-              />
-            </div>
-          </div>
-          {bankAccounts.length > 0 || creditAccounts.length > 0 ? (
+          <CollapsibleSection
+            title="More options"
+            summary="Pay-from accounts, labels, and notes"
+            bare
+          >
             <div className="grid grid-cols-2 gap-3">
-              {bankAccounts.length > 0 ? (
-                <div>
-                  <label className="label" htmlFor="pay-bank">
-                    Pay from bank
-                  </label>
-                  <select
-                    id="pay-bank"
-                    className="input"
-                    value={payFromBankId}
-                    onChange={(e) => setPayFromBankId(e.target.value)}
-                  >
-                    <option value="">—</option>
-                    {bankAccounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : null}
-              {creditAccounts.length > 0 ? (
-                <div>
-                  <label className="label" htmlFor="pay-credit">
-                    Pay from credit
-                  </label>
-                  <select
-                    id="pay-credit"
-                    className="input"
-                    value={payFromCreditId}
-                    onChange={(e) => setPayFromCreditId(e.target.value)}
-                  >
-                    <option value="">—</option>
-                    {creditAccounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : null}
+              <div>
+                <label className="label" htmlFor="bill-rate-valid">
+                  Rate valid until
+                </label>
+                <input
+                  id="bill-rate-valid"
+                  type="date"
+                  className="input"
+                  value={rateValidUntil}
+                  onChange={(e) => setRateValidUntil(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="label" htmlFor="bill-account-name">
+                  Account label
+                </label>
+                <input
+                  id="bill-account-name"
+                  className="input"
+                  value={accountName}
+                  onChange={(e) => setAccountName(e.target.value)}
+                  placeholder="Optional"
+                />
+              </div>
             </div>
-          ) : null}
-          <div>
-            <label className="label" htmlFor="bill-notes">
-              Notes
-            </label>
-            <textarea
-              id="bill-notes"
-              className="input min-h-[4rem]"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-            />
-          </div>
+            {bankAccounts.length > 0 || creditAccounts.length > 0 ? (
+              <div className="grid grid-cols-2 gap-3">
+                {bankAccounts.length > 0 ? (
+                  <div>
+                    <label className="label" htmlFor="pay-bank">
+                      Pay from bank
+                    </label>
+                    <select
+                      id="pay-bank"
+                      className="input"
+                      value={payFromBankId}
+                      onChange={(e) => setPayFromBankId(e.target.value)}
+                    >
+                      <option value="">—</option>
+                      {bankAccounts.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+                {creditAccounts.length > 0 ? (
+                  <div>
+                    <label className="label" htmlFor="pay-credit">
+                      Pay from credit
+                    </label>
+                    <select
+                      id="pay-credit"
+                      className="input"
+                      value={payFromCreditId}
+                      onChange={(e) => setPayFromCreditId(e.target.value)}
+                    >
+                      <option value="">—</option>
+                      {creditAccounts.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            <div>
+              <label className="label" htmlFor="bill-notes">
+                Notes
+              </label>
+              <textarea
+                id="bill-notes"
+                className="input min-h-[4rem]"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+            </div>
+          </CollapsibleSection>
           {error ? (
             <p className="text-sm text-error" role="alert">
               {error}
+            </p>
+          ) : linkedToDebt ? (
+            <p className="notice-panel p-3 text-sm">
+              Balance, APR, and statement amount are managed by the linked Debt
+              account. This Bill stores the due-date reminder and payments.
             </p>
           ) : null}
           <div className="flex gap-2 pt-2">

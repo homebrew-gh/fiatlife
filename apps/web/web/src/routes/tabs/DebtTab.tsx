@@ -3,9 +3,23 @@ import { Link, useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { CreditAccountSheet } from "../../components/debt/CreditAccountSheet";
 import {
+  UpdateBalanceSheet,
+  type StatementUpdateInput,
+} from "../../components/debt/UpdateBalanceSheet";
+import {
+  EmptyState,
+  ErrorBanner,
+  HeroCard,
+  PageHeader,
+} from "../../components/ui";
+import {
   CREDIT_ACCOUNT_TYPE_LABELS,
+  dueUrgency,
   effectiveMonthlyPayment,
+  isPromotionActive,
   isRevolvingType,
+  monthsUntilPromotionEnds,
+  sortAccountsByUrgency,
   summarizeDebt,
   utilizationPercent,
   type CreditAccount,
@@ -16,21 +30,31 @@ import {
   monthlyInterest,
   summarizeDebtPayoff,
 } from "../../lib/debtPayoff";
+import { findLinkedBill } from "../../lib/creditBillLink";
+import { isPaidForCurrentCycle } from "../../lib/bill";
+import { useBillsData } from "../../lib/billsData";
 import { useDebtData } from "../../lib/debtData";
 import { formatUsd } from "../../lib/format";
 
-function DebtAccountCard({ account }: { account: CreditAccount }) {
+function DebtAccountCard({
+  account,
+  paidThisCycle,
+  onUpdateStatement,
+}: {
+  account: CreditAccount;
+  paidThisCycle: boolean;
+  onUpdateStatement: () => void;
+}) {
   const util = utilizationPercent(account);
   const monthly = effectiveMonthlyPayment(account);
   const interest = monthlyInterest(account);
   const trap = isMinimumPaymentTrap(account);
+  const urgency = dueUrgency(account, paidThisCycle);
 
   return (
-    <Link
-      to={`/app/debt/${account.id}`}
-      className="card block p-4 hover:ring-1 hover:ring-outline transition-shadow"
-    >
-      <div className="flex items-center gap-3">
+    <article className="card p-4">
+      <div className="flex items-start gap-3">
+        <Link to={`/app/debt/${account.id}`} className="min-w-0 flex-1">
         <div className="min-w-0 flex-1">
           <h3 className="font-semibold text-body truncate">{account.name}</h3>
           <p className="text-sm text-muted">
@@ -45,16 +69,44 @@ function DebtAccountCard({ account }: { account: CreditAccount }) {
               ≈ {formatUsd(interest)}/mo interest
             </p>
           ) : null}
+          <p
+            className={clsx(
+              "text-xs mt-1",
+              urgency.overdue
+                ? "text-error"
+                : urgency.days <= 7
+                  ? "text-warn"
+                  : "text-muted",
+            )}
+          >
+            {urgency.overdue
+              ? `${formatUsd(monthly)} overdue · ${urgency.days} day${
+                  urgency.days === 1 ? "" : "s"
+                }`
+              : `${formatUsd(monthly)} due in ${urgency.days} day${
+                  urgency.days === 1 ? "" : "s"
+                } · day ${account.dueDay}`}
+          </p>
+          {isPromotionActive(account) ? (
+            <span className="badge-success inline-block rounded-pill px-2 py-0.5 text-xs mt-2">
+              {((account.promotionalApr ?? 0) * 100).toFixed(2)}% promo ·{" "}
+              {monthsUntilPromotionEnds(account)} mo left
+            </span>
+          ) : null}
         </div>
+        </Link>
         <div className="text-right shrink-0">
-          <p className="font-mono font-semibold text-money">
+          <p className="money font-semibold">
             {formatUsd(account.currentBalance)}
           </p>
-          <p className="text-xs text-muted">{formatUsd(monthly)}/mo</p>
+          <button
+            type="button"
+            className="btn-ghost text-xs py-1 px-2 mt-2"
+            onClick={onUpdateStatement}
+          >
+            Update
+          </button>
         </div>
-        <span className="text-muted text-sm shrink-0" aria-hidden>
-          ▸
-        </span>
       </div>
 
       {trap ? (
@@ -65,7 +117,7 @@ function DebtAccountCard({ account }: { account: CreditAccount }) {
 
       {util != null ? (
         <div className="mt-3">
-          <div className="h-1.5 rounded-full bg-surface-variant overflow-hidden">
+          <div className="h-1.5 rounded-full bg-surfaceVariant overflow-hidden">
             <div
               className={clsx(
                 "h-full rounded-full transition-all",
@@ -79,19 +131,44 @@ function DebtAccountCard({ account }: { account: CreditAccount }) {
           </p>
         </div>
       ) : null}
-    </Link>
+    </article>
   );
 }
 
 export function DebtTab() {
   const navigate = useNavigate();
-  const { accounts, loading, error, saving, reload, addAccount } = useDebtData();
+  const {
+    accounts,
+    loading,
+    error,
+    saving,
+    reload,
+    addAccount,
+    updateStatement,
+  } = useDebtData();
+  const { bills } = useBillsData();
   const [showSheet, setShowSheet] = useState(false);
+  const [statementAccount, setStatementAccount] =
+    useState<CreditAccount | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const summary = useMemo(() => summarizeDebt(accounts), [accounts]);
   const payoff = useMemo(() => summarizeDebtPayoff(accounts), [accounts]);
   const hasRevolving = accounts.some((a) => isRevolvingType(a.type));
+  const paidThisCycleById = useMemo(() => {
+    const paid: Record<string, boolean> = {};
+    for (const account of accounts) {
+      const linked = findLinkedBill(account, bills);
+      paid[account.id] = linked
+        ? isPaidForCurrentCycle(linked.bill)
+        : false;
+    }
+    return paid;
+  }, [accounts, bills]);
+  const urgencySortedAccounts = useMemo(
+    () => sortAccountsByUrgency(accounts, paidThisCycleById),
+    [accounts, paidThisCycleById],
+  );
 
   const onRefresh = async () => {
     if (refreshing) return;
@@ -113,22 +190,13 @@ export function DebtTab() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="page-title">Debt</h1>
-          <p className="text-sm text-muted mt-1">
-            Credit cards and loans synced with Android via your Nostr relay.
-          </p>
-        </div>
-        <div className="flex gap-2 shrink-0">
-          <button
-            type="button"
-            className="btn-ghost text-sm"
-            onClick={() => void onRefresh()}
-            disabled={refreshing || loading}
-          >
-            {refreshing ? "Refreshing…" : "Refresh"}
-          </button>
+      <PageHeader
+        title="Debt"
+        description="Credit cards and loans synced with Android via your Nostr relay."
+        refreshing={refreshing}
+        onRefresh={() => void onRefresh()}
+        refreshDisabled={loading}
+        actions={
           <button
             type="button"
             className="btn-primary text-sm"
@@ -137,14 +205,10 @@ export function DebtTab() {
           >
             Add account
           </button>
-        </div>
-      </div>
+        }
+      />
 
-      {error ? (
-        <p className="notice-error text-sm" role="alert">
-          {error}
-        </p>
-      ) : null}
+      {error ? <ErrorBanner message={error} /> : null}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <Link
@@ -186,20 +250,20 @@ export function DebtTab() {
         <p className="text-sm text-muted">Loading accounts…</p>
       ) : (
         <>
-          <section className="card p-6 bg-primary-container text-on-primary-container">
+          <HeroCard className="p-6">
             <h2 className="text-center text-sm font-medium opacity-80">
               Debt Summary
             </h2>
             <div className="mt-4 grid grid-cols-2 gap-4 text-center">
               <div>
                 <p className="text-sm opacity-70">Total debt</p>
-                <p className="font-mono text-xl font-semibold mt-1">
+                <p className="money text-xl mt-1">
                   {formatUsd(summary.totalDebt)}
                 </p>
               </div>
               <div>
                 <p className="text-sm opacity-70">Monthly payment</p>
-                <p className="font-mono text-xl font-semibold mt-1">
+                <p className="money text-xl mt-1">
                   {formatUsd(summary.totalMonthlyPayment)}
                 </p>
               </div>
@@ -208,7 +272,7 @@ export function DebtTab() {
               <div className="mt-4 grid grid-cols-2 gap-4 text-center text-sm">
                 <div>
                   <p className="opacity-70">Credit available</p>
-                  <p className="font-mono font-semibold mt-1">
+                  <p className="money mt-1">
                     {formatUsd(
                       summary.totalCreditAvailable - summary.totalCreditUtilized,
                     )}
@@ -234,7 +298,7 @@ export function DebtTab() {
                 </div>
                 <div>
                   <p className="opacity-70">Projected interest</p>
-                  <p className="font-mono font-semibold mt-1">
+                  <p className="money mt-1">
                     {payoff.allFeasible
                       ? formatUsd(payoff.totalInterest)
                       : `${formatUsd(payoff.monthlyInterest)}/mo`}
@@ -243,7 +307,7 @@ export function DebtTab() {
               </div>
             ) : null}
             {!payoff.allFeasible && payoff.infeasibleCount > 0 ? (
-              <p className="text-center text-xs mt-3 text-on-primary-container/90">
+              <p className="text-center text-xs mt-3 text-error">
                 ⚠ {payoff.infeasibleCount} account
                 {payoff.infeasibleCount === 1 ? "" : "s"} won&apos;t pay off at
                 the current payment.
@@ -253,26 +317,31 @@ export function DebtTab() {
               {summary.accountCount} account
               {summary.accountCount === 1 ? "" : "s"}
             </p>
-          </section>
+          </HeroCard>
 
           {accounts.length === 0 ? (
-            <div className="card p-8 text-center">
-              <p className="font-medium text-body">No debt accounts yet</p>
-              <p className="text-sm text-muted mt-1">
-                Add a credit card or loan to start tracking.
-              </p>
-              <button
-                type="button"
-                className="btn-primary mt-4"
-                onClick={() => setShowSheet(true)}
-              >
-                Add your first account
-              </button>
-            </div>
+            <EmptyState
+              title="No debt accounts yet"
+              description="Add credit cards and loans here. FiatLife creates a Bills reminder for each due date so you can pay without re-entering the balance."
+              action={
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => setShowSheet(true)}
+                >
+                  Add your first account
+                </button>
+              }
+            />
           ) : (
             <div className="space-y-3">
-              {accounts.map((account) => (
-                <DebtAccountCard key={account.id} account={account} />
+              {urgencySortedAccounts.map((account) => (
+                <DebtAccountCard
+                  key={account.id}
+                  account={account}
+                  paidThisCycle={paidThisCycleById[account.id] === true}
+                  onUpdateStatement={() => setStatementAccount(account)}
+                />
               ))}
             </div>
           )}
@@ -284,6 +353,16 @@ export function DebtTab() {
         account={null}
         onClose={() => setShowSheet(false)}
         onSave={onSaveAccount}
+        saving={saving}
+      />
+      <UpdateBalanceSheet
+        open={statementAccount != null}
+        account={statementAccount}
+        onClose={() => setStatementAccount(null)}
+        onUpdate={async (accountId: string, input: StatementUpdateInput) => {
+          await updateStatement(accountId, input);
+          setStatementAccount(null);
+        }}
         saving={saving}
       />
     </div>

@@ -5,6 +5,10 @@ import { BillSheet, type BillSheetInput } from "../../components/BillSheet";
 import { PastDueAutopayDialog } from "../../components/bills/PastDueAutopayDialog";
 import { PayBillDialog } from "../../components/bills/PayBillDialog";
 import {
+  UpdateBalanceSheet,
+  type StatementUpdateInput,
+} from "../../components/debt/UpdateBalanceSheet";
+import {
   ALL_GENERAL_CATEGORIES,
   GENERAL_CATEGORY_LABELS,
   dueAmountInMonth,
@@ -34,11 +38,13 @@ import { useBankAccountsData } from "../../lib/bankAccountsData";
 import { useBillersData } from "../../lib/billersData";
 import { useBillsData } from "../../lib/billsData";
 import type { CreditAccount } from "../../lib/creditAccount";
+import { effectiveAmountDue as accountAmountDue } from "../../lib/creditAccount";
 import { useDebtData } from "../../lib/debtData";
 import { formatUsd } from "../../lib/format";
 import { useRecordBillPayment } from "../../lib/useBillPayment";
 import { useSaveBill } from "../../lib/useSaveBill";
 import { useNow } from "../../lib/useNow";
+import { ErrorBanner, HeroCard, PageHeader } from "../../components/ui";
 
 export function BillsTab() {
   const navigate = useNavigate();
@@ -54,7 +60,8 @@ export function BillsTab() {
   const saveBillWithBiller = useSaveBill();
   const { billers } = useBillersData();
   const { accounts: bankAccounts } = useBankAccountsData();
-  const { accounts: creditAccounts } = useDebtData();
+  const { accounts: creditAccounts, updateStatement, saving: debtSaving } =
+    useDebtData();
 
   const [annualView, setAnnualView] = useState(false);
   const [filter, setFilter] = useState<BillGeneralCategory | null>(null);
@@ -67,6 +74,8 @@ export function BillsTab() {
   const [autopayDismissed, setAutopayDismissed] = useState(false);
   const [collapsedSubs, setCollapsedSubs] = useState<Set<string>>(new Set());
   const [showCatBreakdown, setShowCatBreakdown] = useState(false);
+  const [statementAccount, setStatementAccount] =
+    useState<CreditAccount | null>(null);
 
   const now = useNow();
   const monthAnchor = now;
@@ -185,22 +194,12 @@ export function BillsTab() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="page-title">Bills</h1>
-          <p className="text-sm text-muted mt-1">
-            Synced from your Nostr relay — changes publish to Android too.
-          </p>
-        </div>
-        <div className="flex gap-2 shrink-0">
-          <button
-            type="button"
-            className="btn-ghost text-sm"
-            onClick={() => void onRefresh()}
-            disabled={refreshing}
-          >
-            {refreshing ? "…" : "Sync"}
-          </button>
+      <PageHeader
+        title="Bills"
+        description="Synced from your Nostr relay — changes publish to Android too."
+        refreshing={refreshing}
+        onRefresh={() => void onRefresh()}
+        actions={
           <button
             type="button"
             className="btn-primary text-sm"
@@ -211,8 +210,8 @@ export function BillsTab() {
           >
             + Add
           </button>
-        </div>
-      </div>
+        }
+      />
 
       <div className="flex gap-2">
         <Link to="/app/bills/companies" className="btn-ghost text-sm">
@@ -220,7 +219,7 @@ export function BillsTab() {
         </Link>
       </div>
 
-      <section className="card p-5 bg-dollar-gradient">
+      <HeroCard>
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs tracking-wider text-muted font-medium">
             {annualView ? "Annual Total" : "Monthly Total"}
@@ -244,7 +243,7 @@ export function BillsTab() {
           </button>
         ) : null}
         {showCatBreakdown ? (
-          <div className="mt-3 border-t border-border/50 pt-3 space-y-1">
+          <div className="mt-3 border-t border-outline/50 pt-3 space-y-1">
             <p className="text-xs tracking-wider text-muted font-medium">
               By Category
             </p>
@@ -263,7 +262,7 @@ export function BillsTab() {
           </div>
         ) : null}
         {paymentBreakdown.rows.length > 0 ? (
-          <div className="mt-4 border-t border-border/50 pt-3 space-y-1">
+          <div className="mt-4 border-t border-outline/50 pt-3 space-y-1">
             <p className="text-xs tracking-wider text-muted font-medium">
               By Payment Account
             </p>
@@ -290,7 +289,7 @@ export function BillsTab() {
             )}
           </div>
         ) : null}
-      </section>
+      </HeroCard>
 
       <div className="flex gap-2 overflow-x-auto pb-1">
         <FilterChip
@@ -313,11 +312,7 @@ export function BillsTab() {
       </div>
 
       {loading ? <p className="text-muted text-sm">Loading bills…</p> : null}
-      {error ? (
-        <div className="card-quiet p-4 text-sm text-error" role="alert">
-          {error}
-        </div>
-      ) : null}
+      {error ? <ErrorBanner message={error} /> : null}
 
       {dueIn7.length > 0 ? (
         <section className="space-y-3">
@@ -340,6 +335,16 @@ export function BillsTab() {
                 onDelete={() => void onDeleteBill(item)}
                 creditAccounts={creditAccounts}
                 onMarkPaid={() => void onMarkPaid(item)}
+                onUpdateStatement={
+                  item.bill.linkedCreditAccountId
+                    ? () => {
+                        const linked = creditAccounts.find(
+                          (a) => a.id === item.bill.linkedCreditAccountId,
+                        );
+                        if (linked) setStatementAccount(linked);
+                      }
+                    : undefined
+                }
               />
             ))}
           </ul>
@@ -417,6 +422,17 @@ export function BillsTab() {
                           onDelete={() => void onDeleteBill(item)}
                           creditAccounts={creditAccounts}
                           onMarkPaid={() => void onMarkPaid(item)}
+                          onUpdateStatement={
+                            item.bill.linkedCreditAccountId
+                              ? () => {
+                                  const linked = creditAccounts.find(
+                                    (a) =>
+                                      a.id === item.bill.linkedCreditAccountId,
+                                  );
+                                  if (linked) setStatementAccount(linked);
+                                }
+                              : undefined
+                          }
                         />
                       ))}
                     </ul>
@@ -434,8 +450,9 @@ export function BillsTab() {
             $
           </p>
           <p className="text-muted text-sm">
-            No bills on your relay yet. Add one or create bills in the Android
-            app.
+            No bills on your relay yet. Add one here, or start credit cards and
+            loans on the Debt tab — FiatLife creates a due-date reminder for
+            each.
           </p>
         </div>
       ) : null}
@@ -481,6 +498,16 @@ export function BillsTab() {
         }}
         saving={saving}
       />
+
+      <UpdateBalanceSheet
+        open={statementAccount != null}
+        account={statementAccount}
+        onClose={() => setStatementAccount(null)}
+        onUpdate={async (accountId, input: StatementUpdateInput) => {
+          await updateStatement(accountId, input);
+        }}
+        saving={debtSaving}
+      />
     </div>
   );
 }
@@ -519,6 +546,7 @@ function BillCard({
   onEdit,
   onDelete,
   onMarkPaid,
+  onUpdateStatement,
 }: {
   item: BillWithSource;
   now: number;
@@ -529,12 +557,19 @@ function BillCard({
   onEdit: () => void;
   onDelete: () => void;
   onMarkPaid: () => void;
+  onUpdateStatement?: () => void;
 }) {
   const { bill } = item;
   const pastDue = isPastDue(bill, now);
   const paidCycle = isPaidForCurrentCycle(bill, now);
   const cat = generalCategoryForBill(bill);
   const creditBalance = creditBalanceForBill(bill, creditAccounts);
+  const linkedAccount = bill.linkedCreditAccountId
+    ? creditAccounts.find((a) => a.id === bill.linkedCreditAccountId)
+    : undefined;
+  const amountDue = linkedAccount
+    ? accountAmountDue(linkedAccount)
+    : effectiveAmountDue(bill);
   const showPayButton = isCreditOrLoan(bill)
     ? creditBalance > 0
     : !paidCycle;
@@ -581,7 +616,7 @@ function BillCard({
               </span>
             ) : null}
             {bill.linkedCreditAccountId ? (
-              <span className="text-xs px-2 py-0.5 rounded-pill bg-surface-variant text-muted">
+              <span className="text-xs px-2 py-0.5 rounded-pill bg-surfaceVariant text-muted">
                 Debt-linked
               </span>
             ) : null}
@@ -594,9 +629,20 @@ function BillCard({
         </button>
         <div className="flex items-center gap-3 shrink-0">
           <p className="money text-lg whitespace-nowrap">
-            {formatUsd(effectiveAmountDue(bill))}
+            {formatUsd(amountDue)}
           </p>
           <div className="flex items-center gap-0.5">
+            {onUpdateStatement ? (
+              <button
+                type="button"
+                className="btn-ghost text-sm px-2 py-1"
+                onClick={onUpdateStatement}
+                disabled={saving}
+                aria-label={`Update statement for ${bill.name}`}
+              >
+                Update
+              </button>
+            ) : null}
             <button
               type="button"
               className="btn-ghost text-sm px-2 py-1"

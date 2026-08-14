@@ -7,6 +7,7 @@ import com.fiatlife.app.data.repository.BillRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.domain.model.CreditAccount
+import com.fiatlife.app.domain.model.CreditStatementUpdate
 import com.fiatlife.app.domain.model.StatementEntry
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
@@ -51,6 +52,12 @@ class DebtDetailViewModel @Inject constructor(
     fun saveAccount(account: CreditAccount) {
         viewModelScope.launch {
             repository.saveCreditAccount(account)
+        }
+    }
+
+    fun updateStatement(account: CreditAccount, update: CreditStatementUpdate) {
+        viewModelScope.launch {
+            repository.updateStatement(account, update)
         }
     }
 

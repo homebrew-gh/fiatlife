@@ -53,8 +53,19 @@ val VARIABLE_BUDGET_CATEGORIES: List<VariableBudgetCategory> = listOf(
     VariableBudgetCategory("ENTERTAINMENT", "Entertainment"),
     VariableBudgetCategory("SHOPPING", "Shopping"),
     VariableBudgetCategory("PERSONAL_CARE", "Personal Care"),
+    VariableBudgetCategory("SAVINGS", "Saving / Investment"),
     VariableBudgetCategory("MISC", "Miscellaneous")
 )
+
+/** Manual-entry category key for money set aside as savings/investments. */
+const val SAVINGS_CATEGORY_KEY = "SAVINGS"
+
+/**
+ * Bill-kind categories that always show a budget row even with no bills and no
+ * target yet, so users can plan for them. Utilities often vary month to month
+ * and users want to budget for them up front.
+ */
+private val ALWAYS_SHOWN_BILL_CATEGORIES: Set<String> = setOf("UTILITIES")
 
 private val VARIABLE_KEYS: Set<String> = VARIABLE_BUDGET_CATEGORIES.map { it.key }.toSet()
 private val BILL_KEYS: Set<String> = BillGeneralCategory.entries.map { it.name }.toSet()
@@ -165,7 +176,9 @@ fun computeBudgetSummary(
     val billRows = BillGeneralCategory.entries.mapNotNull { cat ->
         val billActual = billCategoryTotals[cat] ?: 0.0
         val target = getCategoryBudget(config, cat.name)?.target ?: 0.0
-        if (billActual <= 0.0 && target <= 0.0) return@mapNotNull null
+        if (billActual <= 0.0 && target <= 0.0 && cat.name !in ALWAYS_SHOWN_BILL_CATEGORIES) {
+            return@mapNotNull null
+        }
         BudgetRow(
             key = cat.name,
             label = cat.displayName,
@@ -199,4 +212,41 @@ fun computeBudgetSummary(
         totalVariableActual = totalVariableActual,
         takeHome = takeHome
     )
+}
+
+/** A single category slice for the budget breakdown chart. */
+data class BudgetBreakdownSlice(
+    val key: String,
+    val label: String,
+    val kind: BudgetCategoryKind,
+    val value: Double
+)
+
+enum class BudgetMetric { ACTUAL, TARGET }
+
+/**
+ * Flatten the summary into one list of per-category slices for a chart,
+ * filtered to positive values and sorted largest-first.
+ */
+fun budgetBreakdown(summary: BudgetSummary, metric: BudgetMetric): List<BudgetBreakdownSlice> =
+    (summary.billRows + summary.variableRows)
+        .map { row ->
+            BudgetBreakdownSlice(
+                key = row.key,
+                label = row.label,
+                kind = row.kind,
+                value = if (metric == BudgetMetric.ACTUAL) row.actual else row.target
+            )
+        }
+        .filter { it.value > 0.0 }
+        .sortedByDescending { it.value }
+
+/** Money put toward the Saving/Investment category this month. */
+fun savingsAmount(summary: BudgetSummary): Double =
+    summary.variableRows.firstOrNull { it.key == SAVINGS_CATEGORY_KEY }?.actual ?: 0.0
+
+/** Savings as a share of take-home pay, 0–1 (0 when take-home is unknown). */
+fun savingsRate(summary: BudgetSummary): Double {
+    if (summary.takeHome <= 0.0) return 0.0
+    return savingsAmount(summary) / summary.takeHome
 }

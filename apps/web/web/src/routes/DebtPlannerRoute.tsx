@@ -9,10 +9,12 @@ import {
 import { useDebtData } from "../lib/debtData";
 import { formatUsd } from "../lib/format";
 import { formatMonths, formatPayoffDate } from "../lib/debtPayoff";
+import { HeroCard } from "../components/ui";
 import {
   STRATEGY_DESCRIPTIONS,
   STRATEGY_LABELS,
   buildDebtPlan,
+  promoExpiryWarnings,
   type PayoffStrategy,
 } from "../lib/debtPlanner";
 
@@ -34,6 +36,10 @@ export function DebtPlannerRoute() {
   const plan = useMemo(
     () => buildDebtPlan(accounts, strategy, extra, perAccountExtra),
     [accounts, strategy, extra, perAccountExtra],
+  );
+  const promoWarnings = useMemo(
+    () => promoExpiryWarnings(accounts, plan),
+    [accounts, plan],
   );
 
   const setAccountExtra = (id: string, value: number) =>
@@ -84,8 +90,8 @@ export function DebtPlannerRoute() {
                     className={clsx(
                       "rounded-xl border px-3 py-2 text-left transition-colors",
                       strategy === s
-                        ? "border-accent bg-accent/10"
-                        : "border-outline hover:bg-surface-variant/50",
+                        ? "border-primary bg-primary/10"
+                        : "border-outline hover:bg-surfaceVariant/50",
                     )}
                   >
                     <span className="font-medium text-body block">
@@ -102,7 +108,7 @@ export function DebtPlannerRoute() {
             <div>
               <div className="flex items-center justify-between">
                 <h2 className="section-title">Extra Per Month</h2>
-                <span className="font-mono font-semibold text-money">
+                <span className="font-mono font-semibold text-moneyColor">
                   {formatUsd(extra)}
                 </span>
               </div>
@@ -124,8 +130,8 @@ export function DebtPlannerRoute() {
                     className={clsx(
                       "rounded-full px-3 py-1 text-xs border transition-colors",
                       extra === amount
-                        ? "border-accent bg-accent/10 text-body"
-                        : "border-outline text-muted hover:bg-surface-variant/50",
+                        ? "border-primary bg-primary/10 text-body"
+                        : "border-outline text-muted hover:bg-surfaceVariant/50",
                     )}
                   >
                     {amount === 0 ? "Minimums" : `+${formatUsd(amount)}`}
@@ -138,7 +144,7 @@ export function DebtPlannerRoute() {
             </div>
           </section>
 
-          <section className="card p-6 bg-primary-container text-on-primary-container">
+          <HeroCard className="p-6">
             <h2 className="text-center text-sm font-medium opacity-80">
               Plan Result
             </h2>
@@ -202,7 +208,26 @@ export function DebtPlannerRoute() {
                 current budget. Increase the extra monthly payment.
               </p>
             )}
-          </section>
+          </HeroCard>
+
+          {promoWarnings.length > 0 ? (
+            <section className="card p-4 space-y-2">
+              <h2 className="section-title">Promotional APR</h2>
+              <ul className="space-y-2">
+                {promoWarnings.map((warning) => (
+                  <li key={warning.accountId} className="text-sm text-body">
+                    <span className="font-medium">{warning.name}</span> won&apos;t
+                    be paid off before the promo ends in{" "}
+                    {warning.monthsUntilExpiry} month
+                    {warning.monthsUntilExpiry === 1 ? "" : "s"}.
+                    {warning.deferredInterest
+                      ? " Deferred interest may be charged if the balance is not cleared."
+                      : ""}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
 
           <section className="card p-4 space-y-3">
             <h2 className="section-title">Extra Per Account</h2>
@@ -215,7 +240,7 @@ export function DebtPlannerRoute() {
               {payable.map((account) => (
                 <li
                   key={account.id}
-                  className="flex items-center gap-3 rounded-lg bg-surface-variant/40 p-3"
+                  className="flex items-center gap-3 rounded-lg bg-surfaceVariant/40 p-3"
                 >
                   <div className="min-w-0 flex-1">
                     <p className="font-medium text-body truncate">
@@ -256,9 +281,9 @@ export function DebtPlannerRoute() {
               {plan.accounts.map((a) => (
                 <li
                   key={a.accountId}
-                  className="flex items-center gap-3 rounded-lg bg-surface-variant/40 p-3"
+                  className="flex items-center gap-3 rounded-lg bg-surfaceVariant/40 p-3"
                 >
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent/15 text-sm font-semibold text-accent">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-sm font-semibold text-accent">
                     {a.order}
                   </span>
                   <div className="min-w-0 flex-1">

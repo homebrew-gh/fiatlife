@@ -28,6 +28,7 @@ import com.fiatlife.app.ui.components.CurrencyTextField
 import com.fiatlife.app.ui.components.MoneyText
 import com.fiatlife.app.ui.components.SectionCard
 import com.fiatlife.app.ui.components.formatCurrency
+import com.fiatlife.app.ui.screens.debt.UpdateStatementDialog
 import com.fiatlife.app.ui.theme.LossRed
 import com.fiatlife.app.ui.theme.ProfitGreen
 import com.fiatlife.app.ui.viewmodel.BillDetailViewModel
@@ -54,6 +55,7 @@ fun BillDetailScreen(
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
     var showCreditLoanPaymentDialog by remember { mutableStateOf(false) }
+    var showStatementDialog by remember { mutableStateOf(false) }
     var hasLoadedBill by remember { mutableStateOf(false) }
 
     LaunchedEffect(bill) {
@@ -120,7 +122,7 @@ fun BillDetailScreen(
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         MoneyText(
-                            amount = b.effectiveAmountDue(),
+                            amount = linkedCreditAccount?.effectiveAmountDue() ?: b.effectiveAmountDue(),
                             style = MaterialTheme.typography.headlineMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
@@ -274,6 +276,13 @@ fun BillDetailScreen(
                                 )
                                 Icon(Icons.Filled.ChevronRight, contentDescription = "View", modifier = Modifier.size(20.dp))
                             }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = { showStatementDialog = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Update linked statement")
                         }
                     }
                 }
@@ -535,9 +544,15 @@ fun BillDetailScreen(
     if (showCreditLoanPaymentDialog && bill != null) {
         val b = bill!!
         val currentBalance = linkedCreditAccount?.currentBalance ?: b.creditCardDetails?.currentBalance ?: 0.0
-        var amountStr by remember(b) { mutableStateOf("%.2f".format(b.effectiveAmountDue())) }
+        val minimumDue = linkedCreditAccount?.effectiveAmountDue() ?: b.effectiveAmountDue()
+        var paymentMode by remember(b.id) { mutableStateOf("MINIMUM") }
+        var amountStr by remember(b.id) { mutableStateOf("") }
         var newBalanceStr by remember { mutableStateOf("") }
-        val amount = amountStr.toDoubleOrNull() ?: 0.0
+        val amount = when (paymentMode) {
+            "FULL" -> currentBalance
+            "CUSTOM" -> amountStr.toDoubleOrNull() ?: 0.0
+            else -> minimumDue
+        }
         val newBalance = newBalanceStr.toDoubleOrNull()
         AlertDialog(
             onDismissRequest = { showCreditLoanPaymentDialog = false },
@@ -545,15 +560,35 @@ fun BillDetailScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        "Enter the amount paid. Optionally set the new balance (e.g. from a statement); otherwise the balance will be reduced by the amount paid.",
+                        "Choose the payment amount from the linked Debt account.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    CurrencyTextField(
-                        value = amountStr,
-                        onValueChange = { amountStr = it },
-                        label = "Amount paid"
-                    )
+                    listOf(
+                        "MINIMUM" to "Minimum due (${minimumDue.formatCurrency()})",
+                        "FULL" to "Pay in full (${currentBalance.formatCurrency()})",
+                        "CUSTOM" to "Custom amount"
+                    ).forEach { (mode, label) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { paymentMode = mode },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = paymentMode == mode,
+                                onClick = { paymentMode = mode }
+                            )
+                            Text(label)
+                        }
+                    }
+                    if (paymentMode == "CUSTOM") {
+                        CurrencyTextField(
+                            value = amountStr,
+                            onValueChange = { amountStr = it },
+                            label = "Amount paid"
+                        )
+                    }
                     OutlinedTextField(
                         value = newBalanceStr,
                         onValueChange = { newBalanceStr = it.filter { c -> c.isDigit() || c == '.' } },
@@ -579,6 +614,19 @@ fun BillDetailScreen(
                 TextButton(onClick = { showCreditLoanPaymentDialog = false }) { Text("Cancel") }
             }
         )
+    }
+
+    if (showStatementDialog) {
+        linkedCreditAccount?.let { account ->
+            UpdateStatementDialog(
+                account = account,
+                onDismiss = { showStatementDialog = false },
+                onSave = { update ->
+                    viewModel.updateStatement(account, update)
+                    showStatementDialog = false
+                }
+            )
+        }
     }
 }
 

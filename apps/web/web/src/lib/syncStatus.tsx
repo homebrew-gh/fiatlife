@@ -35,6 +35,8 @@ type SyncStatusValue = {
   dismissToast: (id: number) => void;
   /** Re-attempt all failed background sends. */
   retry: () => Promise<void>;
+  /** Discard all failed background sends (dismiss a stuck "not synced" badge). */
+  clearFailed: () => Promise<void>;
   /** Poll the outbox now (call right after a mutation). */
   refresh: (opts?: RefreshOptions) => void;
 };
@@ -112,6 +114,19 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     }
   }, [failed, notify, poll]);
 
+  const clearFailed = useCallback(async () => {
+    try {
+      const status = await api.outboxClear();
+      setPending(status.pending);
+      setFailed(status.failed);
+      setFailedItems(status.failed_items ?? []);
+      awaitingDeliveryRef.current = false;
+      notify("Dismissed unsynced changes.", "info");
+    } catch {
+      notify("Could not dismiss unsynced changes.", "error");
+    }
+  }, [notify]);
+
   useEffect(() => {
     void poll();
     const handle = window.setInterval(() => void poll(), POLL_INTERVAL_MS);
@@ -127,9 +142,20 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       toasts,
       dismissToast,
       retry,
+      clearFailed,
       refresh,
     }),
-    [notify, pending, failed, failedItems, toasts, dismissToast, retry, refresh],
+    [
+      notify,
+      pending,
+      failed,
+      failedItems,
+      toasts,
+      dismissToast,
+      retry,
+      clearFailed,
+      refresh,
+    ],
   );
 
   return (

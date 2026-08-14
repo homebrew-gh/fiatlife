@@ -52,7 +52,7 @@ export function DateInput({
         />
         <button
           type="button"
-          className="absolute right-2 inline-flex h-8 w-8 items-center justify-center rounded-full text-muted hover:bg-surface-variant hover:text-body disabled:opacity-50"
+          className="absolute right-2 inline-flex h-8 w-8 items-center justify-center rounded-full text-muted hover:bg-surfaceVariant hover:text-body disabled:opacity-50"
           onClick={openPicker}
           disabled={disabled}
           aria-label={`Choose ${label.toLowerCase()}`}

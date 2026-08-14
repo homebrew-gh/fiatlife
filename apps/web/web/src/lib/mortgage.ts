@@ -54,11 +54,52 @@ export type MortgageScenarioInput = {
   pmiRate?: number;
   /** Estimated closing costs as a percentage of the home price. */
   closingCostPercent?: number;
-  /** Gross monthly household income, used for affordability ratios. */
+  /** Gross monthly household income, used for lender affordability ratios. */
   monthlyIncome?: number;
   /** Other recurring monthly debt payments (cars, student loans, cards). */
   monthlyDebts?: number;
+  /** Estimated monthly utilities (electric, gas, water, internet). */
+  monthlyUtilities?: number;
+  /** Whether to qualify on gross income (lender) or take-home pay (budget). */
+  affordabilityMode?: AffordabilityMode;
+  /** Custom ratio thresholds; defaults depend on affordabilityMode. */
+  affordabilityThresholds?: AffordabilityThresholds;
 };
+
+export type AffordabilityMode = "lender" | "takehome";
+
+/** Percent-of-income limits used to rate comfortable / stretched / risky. */
+export type AffordabilityThresholds = {
+  /** Max housing cost as % of income (PITI; + utilities in take-home mode). */
+  comfortableHousingMax: number;
+  stretchedHousingMax: number;
+  /** Max housing (+ utilities) plus other debts as % of income. */
+  comfortableTotalMax: number;
+  stretchedTotalMax: number;
+};
+
+export const LENDER_AFFORDABILITY_THRESHOLDS: AffordabilityThresholds = {
+  comfortableHousingMax: 28,
+  stretchedHousingMax: 31,
+  comfortableTotalMax: 36,
+  stretchedTotalMax: 43,
+};
+
+/** Defaults for take-home budgeting (housing + utilities vs net pay). */
+export const TAKEHOME_AFFORDABILITY_THRESHOLDS: AffordabilityThresholds = {
+  comfortableHousingMax: 50,
+  stretchedHousingMax: 60,
+  comfortableTotalMax: 60,
+  stretchedTotalMax: 75,
+};
+
+export function defaultAffordabilityThresholds(
+  mode: AffordabilityMode,
+): AffordabilityThresholds {
+  return mode === "takehome"
+    ? { ...TAKEHOME_AFFORDABILITY_THRESHOLDS }
+    : { ...LENDER_AFFORDABILITY_THRESHOLDS };
+}
 
 /** Monthly breakdown of the non-principal-and-interest housing costs. */
 export type MortgageCostBreakdown = {
@@ -77,13 +118,20 @@ export type MortgageAffordability = {
   closingCosts: number;
   /** Down payment + closing costs = total cash needed at signing. */
   cashToClose: number;
+  mode: AffordabilityMode;
+  thresholds: AffordabilityThresholds;
   monthlyIncome: number;
   monthlyDebts: number;
-  /** Front-end ratio: housing payment (PITI) ÷ gross monthly income, as %. */
+  monthlyUtilities: number;
+  /** PITI (+ PMI); excludes utilities. */
+  monthlyHousingPayment: number;
+  /** PITI (+ PMI) plus utilities — the numerator for the housing ratio. */
+  monthlyHousingWithUtilities: number;
+  /** Front-end ratio: housing (+ utilities in take-home mode) ÷ income, as %. */
   housingDti: number | null;
-  /** Back-end ratio: (PITI + other debts) ÷ gross monthly income, as %. */
+  /** Back-end ratio: (housing + utilities + other debts) ÷ income, as %. */
   totalDti: number | null;
-  /** Income left after the full housing payment. */
+  /** Income left after housing, utilities, and other debts. */
   monthlyIncomeAfterHousing: number | null;
   rating: AffordabilityRating | null;
 };
@@ -323,18 +371,24 @@ export function computeMortgageCostBreakdown(
   };
 }
 
-/**
- * Rate affordability from the standard mortgage qualification ratios. The
- * front-end ratio (housing only) targets 28% and the back-end ratio (housing
- * plus other debts) targets 36%, with 43% as the conventional upper limit.
- */
 export function rateAffordability(
   housingDti: number | null,
   totalDti: number | null,
+  thresholds: AffordabilityThresholds,
 ): AffordabilityRating | null {
   if (housingDti == null || totalDti == null) return null;
-  if (totalDti > 43 || housingDti > 31) return "risky";
-  if (totalDti <= 36 && housingDti <= 28) return "comfortable";
+  if (
+    housingDti > thresholds.stretchedHousingMax ||
+    totalDti > thresholds.stretchedTotalMax
+  ) {
+    return "risky";
+  }
+  if (
+    housingDti <= thresholds.comfortableHousingMax &&
+    totalDti <= thresholds.comfortableTotalMax
+  ) {
+    return "comfortable";
+  }
   return "stretched";
 }
 
@@ -347,29 +401,40 @@ export function computeAffordability(
     input.homePrice * ((input.closingCostPercent ?? 0) / 100),
   );
   const cashToClose = Math.max(0, input.downPayment) + closingCosts;
+  const mode = input.affordabilityMode ?? "lender";
+  const thresholds =
+    input.affordabilityThresholds ?? defaultAffordabilityThresholds(mode);
   const monthlyIncome = Math.max(0, input.monthlyIncome ?? 0);
   const monthlyDebts = Math.max(0, input.monthlyDebts ?? 0);
+  const monthlyUtilities =
+    mode === "takehome" ? Math.max(0, input.monthlyUtilities ?? 0) : 0;
+  const monthlyHousingWithUtilities = monthlyHousingPayment + monthlyUtilities;
 
   const hasIncome = monthlyIncome > 0;
   const housingDti = hasIncome
-    ? (monthlyHousingPayment / monthlyIncome) * 100
+    ? (monthlyHousingWithUtilities / monthlyIncome) * 100
     : null;
   const totalDti = hasIncome
-    ? ((monthlyHousingPayment + monthlyDebts) / monthlyIncome) * 100
+    ? ((monthlyHousingWithUtilities + monthlyDebts) / monthlyIncome) * 100
     : null;
   const monthlyIncomeAfterHousing = hasIncome
-    ? monthlyIncome - monthlyHousingPayment
+    ? monthlyIncome - monthlyHousingWithUtilities - monthlyDebts
     : null;
 
   return {
     closingCosts,
     cashToClose,
+    mode,
+    thresholds,
     monthlyIncome,
     monthlyDebts,
+    monthlyUtilities,
+    monthlyHousingPayment,
+    monthlyHousingWithUtilities,
     housingDti,
     totalDti,
     monthlyIncomeAfterHousing,
-    rating: rateAffordability(housingDti, totalDti),
+    rating: rateAffordability(housingDti, totalDti, thresholds),
   };
 }
 

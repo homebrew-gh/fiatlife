@@ -238,12 +238,12 @@ export function SettingsTab() {
         {!bankLoading && bankAccounts.length === 0 ? (
           <p className="text-sm text-muted">No payment accounts yet.</p>
         ) : (
-          <ul className="divide-y divide-border rounded-lg border border-border">
+          <ul className="divide-y divide-outline rounded-lg border border-outline">
             {bankAccounts.map((account) => (
               <li key={account.id}>
                 <button
                   type="button"
-                  className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-surface-variant/50 transition-colors"
+                  className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-surfaceVariant/50 transition-colors"
                   onClick={() => {
                     setEditingBank(account);
                     setBankSheetOpen(true);

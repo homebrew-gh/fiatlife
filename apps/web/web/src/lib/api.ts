@@ -159,6 +159,8 @@ export const api = {
   outboxStatus: () => request<OutboxStatus>("/api/nostr/outbox"),
   outboxRetry: () =>
     request<OutboxStatus>("/api/nostr/outbox/retry", { method: "POST" }),
+  outboxClear: () =>
+    request<OutboxStatus>("/api/nostr/outbox/clear", { method: "POST" }),
   blossomStatus: () =>
     request<{ configured: boolean; url: string | null }>("/api/blossom/status"),
   blossomUpload: async (file: File) => {

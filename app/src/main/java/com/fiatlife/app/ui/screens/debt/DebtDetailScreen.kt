@@ -23,12 +23,14 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.fiatlife.app.domain.model.CreditAccount
+import com.fiatlife.app.domain.model.CreditStatementUpdate
 import com.fiatlife.app.domain.model.StatementEntry
 import com.fiatlife.app.domain.model.formatMonths
 import com.fiatlife.app.domain.model.formatPayoffDate
 import com.fiatlife.app.domain.model.monthlyInterest
 import com.fiatlife.app.domain.model.projectPayoff
 import com.fiatlife.app.ui.components.MoneyText
+import com.fiatlife.app.ui.components.CurrencyTextField
 import com.fiatlife.app.ui.navigation.Screen
 import com.fiatlife.app.ui.components.SectionCard
 import com.fiatlife.app.ui.components.formatCurrency
@@ -48,6 +50,7 @@ fun DebtDetailScreen(
     val linkedBill by viewModel.linkedBill.collectAsStateWithLifecycle()
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
+    var showStatementDialog by remember { mutableStateOf(false) }
     var hasLoadedAccount by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -132,6 +135,40 @@ fun DebtDetailScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                         )
+                        if (acc.isPromotionActive()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            AssistChip(
+                                onClick = {},
+                                label = {
+                                    Text(
+                                        "${"%.2f".format((acc.promotionalApr ?: 0.0) * 100)}% promo · " +
+                                            "${acc.monthsUntilPromotionEnds()} mo left"
+                                    )
+                                }
+                            )
+                            acc.paymentToClearPromotion()?.let { required ->
+                                Text(
+                                    text = "${required.formatCurrency()}/mo clears this balance " +
+                                        "before expiry" +
+                                        if (acc.deferredInterest) {
+                                            " · deferred interest may apply"
+                                        } else "",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (
+                                        required > acc.effectiveMonthlyPayment() ||
+                                        acc.deferredInterest
+                                    ) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                    }
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(onClick = { showStatementDialog = true }) {
+                            Text("Update statement")
+                        }
                     }
                 }
 
@@ -203,14 +240,14 @@ fun DebtDetailScreen(
                                 )
                             }
                         }
-                        if (acc.apr > 0) {
+                        if (acc.effectiveApr() > 0 || acc.isPromotionActive()) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Text("APR", style = MaterialTheme.typography.bodyMedium)
+                                Text("Current APR", style = MaterialTheme.typography.bodyMedium)
                                 Text(
-                                    "%.2f%%".format(acc.apr * 100),
+                                    "%.2f%%".format(acc.effectiveApr() * 100),
                                     style = MaterialTheme.typography.bodyMedium
                                 )
                             }
@@ -382,11 +419,175 @@ fun DebtDetailScreen(
             onSave = { acc ->
                 viewModel.saveAccount(acc)
                 showEditDialog = false
-                navController.popBackStack()
             },
             isSaving = false
         )
     }
+
+    if (showStatementDialog && accountForDialog != null) {
+        UpdateStatementDialog(
+            account = accountForDialog,
+            onDismiss = { showStatementDialog = false },
+            onSave = { update ->
+                viewModel.updateStatement(accountForDialog, update)
+                showStatementDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+internal fun UpdateStatementDialog(
+    account: CreditAccount,
+    onDismiss: () -> Unit,
+    onSave: (CreditStatementUpdate) -> Unit
+) {
+    val today = remember {
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+    }
+    var statementBalance by remember(account.id) {
+        mutableStateOf(account.currentBalance.toString())
+    }
+    var statementDate by remember(account.id) {
+        mutableStateOf(
+            account.statementBalanceAsOfMillis?.let {
+                SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(it))
+            } ?: today
+        )
+    }
+    var amountDue by remember(account.id) {
+        mutableStateOf(account.effectiveAmountDue().toString())
+    }
+    var useFormula by remember(account.id) {
+        mutableStateOf(account.statementAmountDue == null)
+    }
+    var dueDay by remember(account.id) { mutableStateOf(account.dueDay.toString()) }
+    var paymentAmount by remember(account.id) { mutableStateOf("") }
+    var balanceAfter by remember(account.id) {
+        mutableStateOf(account.currentBalance.toString())
+    }
+    var error by remember(account.id) { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Update statement") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    "Debt owns the balance; the linked Bill tracks this amount due and its payments.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                CurrencyTextField(
+                    value = statementBalance,
+                    onValueChange = {
+                        statementBalance = it
+                        if (paymentAmount.isBlank()) balanceAfter = it
+                    },
+                    label = "Statement balance"
+                )
+                OutlinedTextField(
+                    value = statementDate,
+                    onValueChange = { statementDate = it.take(10) },
+                    label = { Text("Statement date (YYYY-MM-DD)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                CurrencyTextField(
+                    value = if (useFormula) account.minimumDue().toString() else amountDue,
+                    onValueChange = {
+                        useFormula = false
+                        amountDue = it
+                    },
+                    label = "Amount due this cycle"
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = useFormula,
+                        onCheckedChange = {
+                            useFormula = it
+                            if (it) amountDue = account.minimumDue().toString()
+                        }
+                    )
+                    Text("Use minimum-payment formula (${account.minimumDue().formatCurrency()})")
+                }
+                OutlinedTextField(
+                    value = dueDay,
+                    onValueChange = { dueDay = it.filter(Char::isDigit).take(2) },
+                    label = { Text("Due day (1–31)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                CurrencyTextField(
+                    value = paymentAmount,
+                    onValueChange = {
+                        paymentAmount = it
+                        val balance = statementBalance.toDoubleOrNull() ?: 0.0
+                        val payment = it.toDoubleOrNull() ?: 0.0
+                        balanceAfter = (balance - payment).coerceAtLeast(0.0).toString()
+                    },
+                    label = "Payment made now (optional)"
+                )
+                CurrencyTextField(
+                    value = balanceAfter,
+                    onValueChange = { balanceAfter = it },
+                    label = "Balance after payment"
+                )
+                if (paymentAmount.isNotBlank()) {
+                    Text(
+                        "Records ${(paymentAmount.toDoubleOrNull() ?: 0.0).formatCurrency()} " +
+                            "and sets the balance to " +
+                            (balanceAfter.toDoubleOrNull() ?: 0.0).formatCurrency(),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val balance = statementBalance.toDoubleOrNull()
+                    val asOf = runCatching {
+                        SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+                            isLenient = false
+                        }.parse(statementDate)?.time
+                    }.getOrNull()
+                    val due = if (useFormula) null else amountDue.toDoubleOrNull()
+                    val day = dueDay.toIntOrNull()
+                    val after = balanceAfter.toDoubleOrNull()
+                    if (balance == null || balance < 0 || asOf == null ||
+                        (!useFormula && (due == null || due < 0)) ||
+                        day == null || day !in 1..31 ||
+                        after == null || after < 0
+                    ) {
+                        error = "Check the balance, dates, amount due, and due day."
+                    } else {
+                        onSave(
+                            CreditStatementUpdate(
+                                statementBalance = balance,
+                                statementBalanceAsOfMillis = asOf,
+                                statementAmountDue = due,
+                                dueDay = day,
+                                paymentAmount =
+                                    (paymentAmount.toDoubleOrNull() ?: 0.0)
+                                        .coerceAtLeast(0.0),
+                                balanceAfterPayment = after
+                            )
+                        )
+                    }
+                }
+            ) { Text("Save statement") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable

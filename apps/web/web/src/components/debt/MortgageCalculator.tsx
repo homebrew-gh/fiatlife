@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
+import { CollapsibleSection } from "../ui";
 import { formatUsd } from "../../lib/format";
+import type { ConservativeMonthlyTakeHome } from "../../lib/salary";
 import {
   computeMortgageCostBreakdown,
+  defaultAffordabilityThresholds,
   evaluateMortgageScenario,
   formatMortgageDate,
   loanAmountFromScenario,
+  type AffordabilityMode,
   type AffordabilityRating,
+  type AffordabilityThresholds,
   type MortgageScenarioInput,
   type MortgageScenarioResult,
 } from "../../lib/mortgage";
@@ -41,9 +46,16 @@ type ScenarioDraft = {
   monthlyHoa: string;
   pmiRate: string;
   closingCostPercent: string;
+  affordabilityMode: AffordabilityMode;
   monthlyIncome: string;
+  monthlyUtilities: string;
   /** Extra monthly debt the user adds on top of debts tracked in their accounts. */
   additionalDebts: string;
+  customizeThresholds: boolean;
+  comfortableHousingMax: string;
+  stretchedHousingMax: string;
+  comfortableTotalMax: string;
+  stretchedTotalMax: string;
 };
 
 function num(value: string): number {
@@ -52,6 +64,7 @@ function num(value: string): number {
 }
 
 function defaultDraft(label: string): ScenarioDraft {
+  const thresholds = defaultAffordabilityThresholds("takehome");
   return {
     label,
     homePrice: "400000",
@@ -66,8 +79,26 @@ function defaultDraft(label: string): ScenarioDraft {
     monthlyHoa: "",
     pmiRate: "0.6",
     closingCostPercent: "3",
+    affordabilityMode: "takehome",
     monthlyIncome: "",
+    monthlyUtilities: "250",
     additionalDebts: "",
+    customizeThresholds: false,
+    comfortableHousingMax: String(thresholds.comfortableHousingMax),
+    stretchedHousingMax: String(thresholds.stretchedHousingMax),
+    comfortableTotalMax: String(thresholds.comfortableTotalMax),
+    stretchedTotalMax: String(thresholds.stretchedTotalMax),
+  };
+}
+
+function thresholdsFromDraft(draft: ScenarioDraft): AffordabilityThresholds {
+  const defaults = defaultAffordabilityThresholds(draft.affordabilityMode);
+  if (!draft.customizeThresholds) return defaults;
+  return {
+    comfortableHousingMax: num(draft.comfortableHousingMax) || defaults.comfortableHousingMax,
+    stretchedHousingMax: num(draft.stretchedHousingMax) || defaults.stretchedHousingMax,
+    comfortableTotalMax: num(draft.comfortableTotalMax) || defaults.comfortableTotalMax,
+    stretchedTotalMax: num(draft.stretchedTotalMax) || defaults.stretchedTotalMax,
   };
 }
 
@@ -93,6 +124,9 @@ function draftToInput(
     closingCostPercent: num(draft.closingCostPercent),
     monthlyIncome: num(draft.monthlyIncome),
     monthlyDebts: Math.max(0, trackedMonthlyDebts) + num(draft.additionalDebts),
+    monthlyUtilities: num(draft.monthlyUtilities),
+    affordabilityMode: draft.affordabilityMode,
+    affordabilityThresholds: thresholdsFromDraft(draft),
   };
 }
 
@@ -100,13 +134,17 @@ function ScenarioForm({
   draft,
   onChange,
   onEvaluate,
-  suggestedMonthlyIncome,
+  suggestedGrossMonthlyIncome,
+  suggestedTakeHomeMonthlyIncome,
+  conservativeTakeHome,
   trackedMonthlyDebts = 0,
 }: {
   draft: ScenarioDraft;
   onChange: (next: ScenarioDraft) => void;
   onEvaluate: () => void;
-  suggestedMonthlyIncome?: number;
+  suggestedGrossMonthlyIncome?: number;
+  suggestedTakeHomeMonthlyIncome?: number;
+  conservativeTakeHome?: ConservativeMonthlyTakeHome;
   trackedMonthlyDebts?: number;
 }) {
   const input = draftToInput(draft, trackedMonthlyDebts);
@@ -121,6 +159,24 @@ function ScenarioForm({
   );
   const cashToClose = input.downPayment + closingCosts;
   const additionalDebtsValue = num(draft.additionalDebts);
+  const isTakeHome = draft.affordabilityMode === "takehome";
+  const suggestedIncome = isTakeHome
+    ? suggestedTakeHomeMonthlyIncome
+    : suggestedGrossMonthlyIncome;
+  const defaultThresholds = defaultAffordabilityThresholds(draft.affordabilityMode);
+
+  const setAffordabilityMode = (mode: AffordabilityMode) => {
+    const thresholds = defaultAffordabilityThresholds(mode);
+    onChange({
+      ...draft,
+      affordabilityMode: mode,
+      customizeThresholds: false,
+      comfortableHousingMax: String(thresholds.comfortableHousingMax),
+      stretchedHousingMax: String(thresholds.stretchedHousingMax),
+      comfortableTotalMax: String(thresholds.comfortableTotalMax),
+      stretchedTotalMax: String(thresholds.stretchedTotalMax),
+    });
+  };
 
   return (
     <div className="space-y-4">
@@ -235,22 +291,28 @@ function ScenarioForm({
           </select>
         </div>
       </div>
+      <div>
+        <label className="label" htmlFor="mc-extra">
+          Extra monthly (principal)
+        </label>
+        <input
+          id="mc-extra"
+          className="input money"
+          inputMode="decimal"
+          value={draft.extraMonthlyPayment}
+          onChange={(e) =>
+            onChange({ ...draft, extraMonthlyPayment: e.target.value })
+          }
+          placeholder="0"
+        />
+      </div>
+
+      <CollapsibleSection
+        title="Taxes, escrow & affordability"
+        summary="Property tax, insurance, HOA, PMI, closing costs, DTI"
+        bare
+      >
       <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="label" htmlFor="mc-extra">
-            Extra monthly (principal)
-          </label>
-          <input
-            id="mc-extra"
-            className="input money"
-            inputMode="decimal"
-            value={draft.extraMonthlyPayment}
-            onChange={(e) =>
-              onChange({ ...draft, extraMonthlyPayment: e.target.value })
-            }
-            placeholder="0"
-          />
-        </div>
         <div>
           <label className="label" htmlFor="mc-tax-rate">
             Property tax rate %/yr
@@ -266,8 +328,6 @@ function ScenarioForm({
             placeholder="1.1"
           />
         </div>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="label" htmlFor="mc-insurance">
             Home insurance $/yr
@@ -319,7 +379,7 @@ function ScenarioForm({
             : "Not applied — down payment is 20% or more."}
         </p>
       </div>
-      <div className="rounded-lg bg-surface-variant p-3 text-sm space-y-1">
+      <div className="rounded-lg bg-surfaceVariant p-3 text-sm space-y-1">
         <p className="text-muted font-medium">Estimated escrow / month</p>
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-xs">
           <span className="text-muted">Property tax</span>
@@ -369,7 +429,7 @@ function ScenarioForm({
             Typically 2–5% of the home price (lender fees, title, escrow).
           </p>
         </div>
-        <div className="rounded-lg bg-surface-variant p-3 text-sm grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-xs">
+        <div className="rounded-lg bg-surfaceVariant p-3 text-sm grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-xs">
           <span className="text-muted">Down payment</span>
           <span className="text-right">{formatUsd(input.downPayment)}</span>
           <span className="text-muted">Closing costs</span>
@@ -383,10 +443,35 @@ function ScenarioForm({
 
       <div className="border-t border-outline/60 pt-4 space-y-4">
         <p className="text-sm font-medium text-body">Affordability check</p>
+        <div>
+          <label className="label">Income basis</label>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              className={clsx(
+                "btn-ghost text-sm flex-1",
+                isTakeHome && "ring-1 ring-outline",
+              )}
+              onClick={() => setAffordabilityMode("takehome")}
+            >
+              Take-home budget
+            </button>
+            <button
+              type="button"
+              className={clsx(
+                "btn-ghost text-sm flex-1",
+                !isTakeHome && "ring-1 ring-outline",
+              )}
+              onClick={() => setAffordabilityMode("lender")}
+            >
+              Lender (gross)
+            </button>
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="label" htmlFor="mc-income">
-              Gross income $/mo
+              {isTakeHome ? "Take-home pay $/mo" : "Gross income $/mo"}
             </label>
             <input
               id="mc-income"
@@ -415,8 +500,29 @@ function ScenarioForm({
             />
           </div>
         </div>
+        {isTakeHome ? (
+          <div>
+            <label className="label" htmlFor="mc-utilities">
+              Utilities $/mo
+            </label>
+            <input
+              id="mc-utilities"
+              className="input money"
+              inputMode="decimal"
+              value={draft.monthlyUtilities}
+              onChange={(e) =>
+                onChange({ ...draft, monthlyUtilities: e.target.value })
+              }
+              placeholder="250"
+            />
+            <p className="text-xs text-muted mt-1">
+              Electric, gas, water, trash, internet — typical home costs not in
+              your mortgage escrow.
+            </p>
+          </div>
+        ) : null}
         {trackedMonthlyDebts > 0 ? (
-          <div className="rounded-lg bg-surface-variant p-3 text-xs grid grid-cols-2 gap-x-4 gap-y-1 font-mono">
+          <div className="rounded-lg bg-surfaceVariant p-3 text-xs grid grid-cols-2 gap-x-4 gap-y-1 font-mono">
             <span className="text-muted">Tracked debts (your accounts)</span>
             <span className="text-right">{formatUsd(trackedMonthlyDebts)}</span>
             {additionalDebtsValue > 0 ? (
@@ -433,30 +539,179 @@ function ScenarioForm({
             </span>
           </div>
         ) : null}
-        {(suggestedMonthlyIncome ?? 0) > 0 ? (
+        {(suggestedIncome ?? 0) > 0 ? (
           <button
             type="button"
             className="btn-ghost text-sm w-full"
             onClick={() =>
               onChange({
                 ...draft,
-                monthlyIncome: String(Math.round(suggestedMonthlyIncome ?? 0)),
+                monthlyIncome: String(Math.round(suggestedIncome ?? 0)),
               })
             }
           >
-            Use my paycheck income ({formatUsd(suggestedMonthlyIncome ?? 0)}/mo)
+            {isTakeHome
+              ? `Use my base take-home (${formatUsd(suggestedIncome ?? 0)}/mo)`
+              : `Use my gross income (${formatUsd(suggestedIncome ?? 0)}/mo)`}
           </button>
         ) : null}
+        {isTakeHome &&
+        conservativeTakeHome &&
+        conservativeTakeHome.monthlyTakeHome > 0 ? (
+          <p className="text-xs text-muted">
+            Base take-home uses {conservativeTakeHome.paychecksPerMonth} paycheck
+            {conservativeTakeHome.paychecksPerMonth === 1 ? "" : "s"} at{" "}
+            {formatUsd(conservativeTakeHome.perPaycheckNet)} each (regular pay
+            only — no overtime or bonuses).
+          </p>
+        ) : null}
+        <div className="space-y-2">
+          <button
+            type="button"
+            className="btn-ghost text-sm w-full"
+            onClick={() =>
+              onChange({
+                ...draft,
+                customizeThresholds: !draft.customizeThresholds,
+              })
+            }
+          >
+            {draft.customizeThresholds
+              ? "Hide threshold settings"
+              : "Customize comfort thresholds"}
+          </button>
+          {draft.customizeThresholds ? (
+            <div className="rounded-lg bg-surfaceVariant p-3 space-y-3 text-sm">
+              <p className="text-xs text-muted">
+                {isTakeHome
+                  ? "Ratios compare housing (PITI + utilities) and total costs to your take-home pay."
+                  : "Standard lender debt-to-income limits (gross income)."}
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label" htmlFor="mc-comfort-housing">
+                    Comfortable housing ≤ %
+                  </label>
+                  <input
+                    id="mc-comfort-housing"
+                    className="input"
+                    inputMode="decimal"
+                    value={draft.comfortableHousingMax}
+                    onChange={(e) =>
+                      onChange({
+                        ...draft,
+                        customizeThresholds: true,
+                        comfortableHousingMax: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="mc-stretch-housing">
+                    Stretched housing ≤ %
+                  </label>
+                  <input
+                    id="mc-stretch-housing"
+                    className="input"
+                    inputMode="decimal"
+                    value={draft.stretchedHousingMax}
+                    onChange={(e) =>
+                      onChange({
+                        ...draft,
+                        customizeThresholds: true,
+                        stretchedHousingMax: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="mc-comfort-total">
+                    Comfortable total ≤ %
+                  </label>
+                  <input
+                    id="mc-comfort-total"
+                    className="input"
+                    inputMode="decimal"
+                    value={draft.comfortableTotalMax}
+                    onChange={(e) =>
+                      onChange({
+                        ...draft,
+                        customizeThresholds: true,
+                        comfortableTotalMax: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="mc-stretch-total">
+                    Stretched total ≤ %
+                  </label>
+                  <input
+                    id="mc-stretch-total"
+                    className="input"
+                    inputMode="decimal"
+                    value={draft.stretchedTotalMax}
+                    onChange={(e) =>
+                      onChange({
+                        ...draft,
+                        customizeThresholds: true,
+                        stretchedTotalMax: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn-ghost text-xs"
+                onClick={() => {
+                  const thresholds = defaultAffordabilityThresholds(
+                    draft.affordabilityMode,
+                  );
+                  onChange({
+                    ...draft,
+                    customizeThresholds: false,
+                    comfortableHousingMax: String(thresholds.comfortableHousingMax),
+                    stretchedHousingMax: String(thresholds.stretchedHousingMax),
+                    comfortableTotalMax: String(thresholds.comfortableTotalMax),
+                    stretchedTotalMax: String(thresholds.stretchedTotalMax),
+                  });
+                }}
+              >
+                Reset to defaults (
+                {defaultThresholds.comfortableHousingMax}/
+                {defaultThresholds.comfortableTotalMax}%)
+              </button>
+            </div>
+          ) : null}
+        </div>
         <p className="text-xs text-muted">
-          Use <span className="font-medium">gross (pre-tax)</span> monthly income
-          — that's what lenders qualify you on.{" "}
-          {trackedMonthlyDebts > 0
-            ? "Your tracked debt payments are included automatically; add more above if you think that undershoots."
-            : "Add any car, student, or card payments above."}{" "}
-          Lenders generally want housing under 28% and total debts under 36% of
-          gross income.
+          {isTakeHome ? (
+            <>
+              Uses a conservative{" "}
+              <span className="font-medium">base take-home</span>: your modeled
+              net pay after taxes and deductions on regular pay only (no
+              overtime or bonuses), times paychecks in a typical month. Extra
+              income is treated as savings, not housing budget. Many guides
+              suggest keeping housing under{" "}
+              {defaultThresholds.comfortableHousingMax}% of take-home to stay
+              comfortable.
+            </>
+          ) : (
+            <>
+              Uses <span className="font-medium">gross (pre-tax)</span> monthly
+              income — that&apos;s what lenders qualify you on.{" "}
+              {trackedMonthlyDebts > 0
+                ? "Your tracked debt payments are included automatically; add more above if you think that undershoots."
+                : "Add any car, student, or card payments above."}{" "}
+              Lenders generally want housing under{" "}
+              {defaultThresholds.comfortableHousingMax}% and total debts under{" "}
+              {defaultThresholds.comfortableTotalMax}% of gross income.
+            </>
+          )}
         </p>
       </div>
+      </CollapsibleSection>
 
       <button type="button" className="btn-primary w-full" onClick={onEvaluate}>
         Calculate
@@ -495,7 +750,7 @@ function ScenarioResultCard({ result }: { result: MortgageScenarioResult }) {
         </div>
         <div>
           <p className="text-muted">Monthly P&amp;I</p>
-          <p className="font-mono font-semibold text-money">
+          <p className="font-mono font-semibold text-moneyColor">
             {formatUsd(result.summary.monthlyPayment)}
           </p>
         </div>
@@ -575,7 +830,13 @@ function ScenarioResultCard({ result }: { result: MortgageScenarioResult }) {
       {aff.housingDti != null ? (
         <div className="border-t border-outline/50 pt-2 text-xs space-y-1">
           <div className="flex items-center justify-between">
-            <p className="text-muted">Affordability</p>
+            <p className="text-muted">
+              Affordability
+              <span className="text-muted/80">
+                {" "}
+                ({aff.mode === "takehome" ? "take-home" : "lender"})
+              </span>
+            </p>
             {ratingStyle ? (
               <span className={clsx("font-semibold", ratingStyle.cls)}>
                 {ratingStyle.label}
@@ -583,15 +844,34 @@ function ScenarioResultCard({ result }: { result: MortgageScenarioResult }) {
             ) : null}
           </div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono">
-            <span className="text-muted">Housing ratio (front-end)</span>
+            <span className="text-muted">
+              {aff.mode === "takehome"
+                ? "Housing + utilities"
+                : "Housing ratio (front-end)"}
+            </span>
             <span className="text-right">{aff.housingDti.toFixed(0)}%</span>
-            <span className="text-muted">Total debt (back-end)</span>
+            <span className="text-muted">
+              {aff.mode === "takehome" ? "Total w/ debts" : "Total debt (back-end)"}
+            </span>
             <span className="text-right">{aff.totalDti?.toFixed(0)}%</span>
-            <span className="text-muted">Left after housing</span>
+            {aff.monthlyUtilities > 0 ? (
+              <>
+                <span className="text-muted">Utilities</span>
+                <span className="text-right">
+                  {formatUsd(aff.monthlyUtilities)}/mo
+                </span>
+              </>
+            ) : null}
+            <span className="text-muted">Left after costs</span>
             <span className="text-right">
               {formatUsd(aff.monthlyIncomeAfterHousing ?? 0)}/mo
             </span>
           </div>
+          <p className="text-muted pt-1">
+            Comfortable when housing ≤ {aff.thresholds.comfortableHousingMax}% and
+            total ≤ {aff.thresholds.comfortableTotalMax}%
+            {aff.mode === "takehome" ? " of take-home pay" : " of gross income"}.
+          </p>
         </div>
       ) : null}
       <button
@@ -737,10 +1017,14 @@ function CompareTable({ results }: { results: MortgageScenarioResult[] }) {
 }
 
 export function MortgageCalculator({
-  suggestedMonthlyIncome,
+  suggestedGrossMonthlyIncome,
+  suggestedTakeHomeMonthlyIncome,
+  conservativeTakeHome,
   trackedMonthlyDebts = 0,
 }: {
-  suggestedMonthlyIncome?: number;
+  suggestedGrossMonthlyIncome?: number;
+  suggestedTakeHomeMonthlyIncome?: number;
+  conservativeTakeHome?: ConservativeMonthlyTakeHome;
   trackedMonthlyDebts?: number;
 } = {}) {
   const [draft, setDraft] = useState(() => defaultDraft("Scenario A"));
@@ -749,14 +1033,22 @@ export function MortgageCalculator({
 
   useEffect(() => {
     if (incomePrefilled.current) return;
-    if (!suggestedMonthlyIncome || suggestedMonthlyIncome <= 0) return;
+    const suggested =
+      draft.affordabilityMode === "takehome"
+        ? suggestedTakeHomeMonthlyIncome
+        : suggestedGrossMonthlyIncome;
+    if (!suggested || suggested <= 0) return;
     incomePrefilled.current = true;
     setDraft((prev) =>
       num(prev.monthlyIncome) > 0
         ? prev
-        : { ...prev, monthlyIncome: String(Math.round(suggestedMonthlyIncome)) },
+        : { ...prev, monthlyIncome: String(Math.round(suggested)) },
     );
-  }, [suggestedMonthlyIncome]);
+  }, [
+    suggestedGrossMonthlyIncome,
+    suggestedTakeHomeMonthlyIncome,
+    draft.affordabilityMode,
+  ]);
 
   const preview = useMemo(
     () =>
@@ -794,7 +1086,9 @@ export function MortgageCalculator({
             draft={draft}
             onChange={setDraft}
             onEvaluate={addScenario}
-            suggestedMonthlyIncome={suggestedMonthlyIncome}
+            suggestedGrossMonthlyIncome={suggestedGrossMonthlyIncome}
+            suggestedTakeHomeMonthlyIncome={suggestedTakeHomeMonthlyIncome}
+            conservativeTakeHome={conservativeTakeHome}
             trackedMonthlyDebts={trackedMonthlyDebts}
           />
         </section>

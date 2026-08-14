@@ -10,6 +10,7 @@ import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
 import com.fiatlife.app.domain.model.BankAccount
 import com.fiatlife.app.domain.model.Bill
 import com.fiatlife.app.domain.model.CreditAccount
+import com.fiatlife.app.domain.model.CreditStatementUpdate
 import com.fiatlife.app.domain.model.Biller
 import com.fiatlife.app.domain.model.BillGeneralCategory
 import com.fiatlife.app.domain.model.BillSubcategory
@@ -280,6 +281,20 @@ class BillsViewModel @Inject constructor(
         uiOverlay.update { it.copy(showCreditLoanPaymentDialog = null) }
     }
 
+    fun updateStatement(account: CreditAccount, update: CreditStatementUpdate) {
+        viewModelScope.launch {
+            uiOverlay.update { it.copy(isSaving = true) }
+            try {
+                creditAccountRepository.updateStatement(account, update)
+                uiOverlay.update { it.copy(isSaving = false) }
+            } catch (e: Exception) {
+                uiOverlay.update {
+                    it.copy(isSaving = false, message = "Statement update failed: ${e.message}")
+                }
+            }
+        }
+    }
+
     private suspend fun recordPaymentInternal(item: BillWithSource, amount: Double, newBalance: Double?) {
         val bill = item.bill
         val payment = BillPayment(date = System.currentTimeMillis(), amount = amount)
@@ -303,7 +318,10 @@ class BillsViewModel @Inject constructor(
             bill.linkedCreditAccountId?.let { accountId ->
                 creditAccountRepository.getCreditAccountById(accountId).first()?.let { acc ->
                     val balance = newBalance ?: (acc.currentBalance - amount).coerceAtLeast(0.0)
-                    creditAccountRepository.saveCreditAccount(acc.copy(currentBalance = balance))
+                    creditAccountRepository.saveCreditAccount(
+                        acc.copy(currentBalance = balance),
+                        inferPayment = false
+                    )
                 }
             }
         }

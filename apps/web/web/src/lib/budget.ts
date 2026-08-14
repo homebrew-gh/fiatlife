@@ -50,8 +50,21 @@ export const VARIABLE_CATEGORIES: { key: string; label: string }[] = [
   { key: "ENTERTAINMENT", label: "Entertainment" },
   { key: "SHOPPING", label: "Shopping" },
   { key: "PERSONAL_CARE", label: "Personal Care" },
+  { key: "SAVINGS", label: "Saving / Investment" },
   { key: "MISC", label: "Miscellaneous" },
 ];
+
+/** Manual-entry category key for money set aside as savings/investments. */
+export const SAVINGS_CATEGORY_KEY = "SAVINGS";
+
+/**
+ * Bill-kind categories that should always show a budget row even with no bills
+ * and no target yet, so users can plan for them. Utilities often vary month to
+ * month and users want to budget for them up front.
+ */
+export const ALWAYS_SHOWN_BILL_CATEGORIES: ReadonlySet<string> = new Set([
+  "UTILITIES",
+]);
 
 const VARIABLE_LABELS: Record<string, string> = Object.fromEntries(
   VARIABLE_CATEGORIES.map((c) => [c.key, c.label]),
@@ -253,7 +266,12 @@ export function computeBudgetSummary(input: {
   for (const cat of ALL_GENERAL_CATEGORIES) {
     const billActual = billCategoryTotals[cat] ?? 0;
     const target = getCategoryBudget(config, cat)?.target ?? 0;
-    if (billActual <= 0 && target <= 0) continue;
+    if (
+      billActual <= 0 &&
+      target <= 0 &&
+      !ALWAYS_SHOWN_BILL_CATEGORIES.has(cat)
+    )
+      continue;
     billRows.push(
       makeRow(cat, GENERAL_CATEGORY_LABELS[cat], "bill", target, billActual),
     );
@@ -282,4 +300,44 @@ export function computeBudgetSummary(input: {
     unbudgeted: takeHome - totalTarget,
     remaining: takeHome - totalActual,
   };
+}
+
+export type BudgetBreakdownSlice = {
+  key: string;
+  label: string;
+  kind: BudgetCategoryKind;
+  value: number;
+};
+
+/**
+ * Flatten the summary into one list of per-category slices for a chart,
+ * filtered to positive values and sorted largest-first. `metric` picks whether
+ * to show actual spending ("actual") or planned targets ("target").
+ */
+export function budgetBreakdown(
+  summary: BudgetSummary,
+  metric: "actual" | "target",
+): BudgetBreakdownSlice[] {
+  return [...summary.billRows, ...summary.variableRows]
+    .map((row) => ({
+      key: row.key,
+      label: row.label,
+      kind: row.kind,
+      value: metric === "actual" ? row.actual : row.target,
+    }))
+    .filter((slice) => slice.value > 0)
+    .sort((a, b) => b.value - a.value);
+}
+
+/** Money put toward the Saving/Investment category this month. */
+export function savingsAmount(summary: BudgetSummary): number {
+  return (
+    summary.variableRows.find((r) => r.key === SAVINGS_CATEGORY_KEY)?.actual ?? 0
+  );
+}
+
+/** Savings as a share of take-home pay, 0–1 (0 when take-home is unknown). */
+export function savingsRate(summary: BudgetSummary): number {
+  if (summary.takeHome <= 0) return 0;
+  return savingsAmount(summary) / summary.takeHome;
 }

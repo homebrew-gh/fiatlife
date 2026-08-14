@@ -21,6 +21,7 @@ import com.fiatlife.app.domain.model.BillFrequency
 import com.fiatlife.app.domain.model.CreditAccount
 import com.fiatlife.app.domain.model.CreditAccountType
 import com.fiatlife.app.domain.model.CreditCardMinPaymentType
+import com.fiatlife.app.domain.model.PromotionAppliesTo
 import com.fiatlife.app.domain.model.formatPayoffDate
 import com.fiatlife.app.ui.components.CurrencyTextField
 import com.fiatlife.app.ui.components.EmptyState
@@ -40,6 +41,7 @@ fun DebtScreen(
     viewModel: DebtViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    var statementAccount by remember { mutableStateOf<CreditAccount?>(null) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
@@ -192,12 +194,46 @@ fun DebtScreen(
                 }
             }
 
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Filled.Home,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Mortgage Calculator",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Compare down payments, rates, and affordability on the FiatLife web app (Debt → Mortgage Calculator).",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
             if (state.accounts.isEmpty()) {
                 item {
                     EmptyState(
                         icon = Icons.Filled.AccountBalance,
                         title = "No debt accounts yet",
-                        subtitle = "Tap + to add a credit card or loan"
+                        subtitle = "Add credit cards and loans here. FiatLife creates a Bills reminder for each due date so you can pay without re-entering the balance."
                     )
                 }
             } else {
@@ -244,7 +280,8 @@ fun DebtScreen(
                     DebtAccountCard(
                         account = account,
                         card = state.accountCardById[account.id],
-                        onClick = { navController.navigate(Screen.DebtDetail.routeWithId(account.id)) }
+                        onClick = { navController.navigate(Screen.DebtDetail.routeWithId(account.id)) },
+                        onUpdateStatement = { statementAccount = account }
                     )
                 }
             }
@@ -270,6 +307,17 @@ fun DebtScreen(
         )
     }
 
+    statementAccount?.let { account ->
+        UpdateStatementDialog(
+            account = account,
+            onDismiss = { statementAccount = null },
+            onSave = { update ->
+                viewModel.updateStatement(account, update)
+                statementAccount = null
+            }
+        )
+    }
+
     LaunchedEffect(state.navigateToAccountId) {
         state.navigateToAccountId?.let { id ->
             navController.navigate(Screen.DebtDetail.routeWithId(id))
@@ -282,7 +330,8 @@ fun DebtScreen(
 private fun DebtAccountCard(
     account: CreditAccount,
     card: DebtAccountCardUiModel?,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onUpdateStatement: () -> Unit
 ) {
     val interest = card?.monthlyInterest ?: 0.0
     val trap = card?.isMinimumPaymentTrap == true
@@ -324,6 +373,27 @@ private fun DebtAccountCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    Text(
+                        text = if (card?.overdue == true) {
+                            "${monthlyPayment.formatCurrency()} overdue · ${card.dueDays}d"
+                        } else {
+                            "${monthlyPayment.formatCurrency()} due in ${card?.dueDays ?: 0}d · day ${account.dueDay}"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (card?.overdue == true) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                    if (account.isPromotionActive()) {
+                        Text(
+                            text = "${"%.2f".format((account.promotionalApr ?: 0.0) * 100)}% promo · " +
+                                "${account.monthsUntilPromotionEnds()} mo left",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     MoneyText(
@@ -335,6 +405,9 @@ private fun DebtAccountCard(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    TextButton(onClick = onUpdateStatement) {
+                        Text("Update")
+                    }
                 }
                 Icon(
                     Icons.Filled.ChevronRight,
@@ -367,7 +440,29 @@ internal fun CreditAccountDialog(
     var type by remember { mutableStateOf(account?.type ?: CreditAccountType.CREDIT_CARD) }
     var institution by remember { mutableStateOf(account?.institution ?: "") }
     var accountNumberLast4 by remember { mutableStateOf(account?.accountNumberLast4 ?: "") }
-    var aprPercent by remember { mutableStateOf(if (account != null) "%.2f".format(account!!.apr * 100.0) else "") }
+    var aprPercent by remember {
+        mutableStateOf(
+            account?.let { "%.2f".format((it.standardApr ?: it.apr) * 100.0) }
+                ?: ""
+        )
+    }
+    var promotionalAprPercent by remember {
+        mutableStateOf(
+            account?.promotionalApr?.let { "%.2f".format(it * 100.0) } ?: ""
+        )
+    }
+    var promotionalAprEndDate by remember {
+        mutableStateOf(
+            account?.promotionalAprEndDate?.let { formatIsoDate(it) } ?: ""
+        )
+    }
+    var promotionAppliesTo by remember {
+        mutableStateOf(account?.promotionAppliesTo ?: PromotionAppliesTo.PURCHASES)
+    }
+    var promotionAppliesExpanded by remember { mutableStateOf(false) }
+    var deferredInterest by remember {
+        mutableStateOf(account?.deferredInterest ?: false)
+    }
     var currentBalance by remember { mutableStateOf(account?.currentBalance?.toString()?.takeIf { it != "0.0" } ?: "") }
     var dueDay by remember { mutableStateOf(account?.dueDay?.toString() ?: "") }
     var notes by remember { mutableStateOf(account?.notes ?: "") }
@@ -559,6 +654,78 @@ internal fun CreditAccountDialog(
                         shape = MaterialTheme.shapes.medium,
                         enabled = minimumPaymentType != CreditCardMinPaymentType.FULL_BALANCE
                     )
+                    HorizontalDivider()
+                    Text(
+                        text = "Promotional APR (optional)",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    PercentageTextField(
+                        value = promotionalAprPercent,
+                        onValueChange = { promotionalAprPercent = it },
+                        label = "Promotional APR %",
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = "0"
+                    )
+                    OutlinedTextField(
+                        value = promotionalAprEndDate,
+                        onValueChange = { promotionalAprEndDate = it.take(10) },
+                        label = { Text("Promotion ends (YYYY-MM-DD)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    if (promotionalAprPercent.isNotBlank()) {
+                        ExposedDropdownMenuBox(
+                            expanded = promotionAppliesExpanded,
+                            onExpandedChange = { promotionAppliesExpanded = it }
+                        ) {
+                            OutlinedTextField(
+                                value = when (promotionAppliesTo) {
+                                    PromotionAppliesTo.PURCHASES -> "Purchases"
+                                    PromotionAppliesTo.BALANCE_TRANSFER -> "Balance transfers"
+                                    PromotionAppliesTo.BOTH -> "Purchases and balance transfers"
+                                },
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Applies to") },
+                                trailingIcon = {
+                                    ExposedDropdownMenuDefaults.TrailingIcon(
+                                        promotionAppliesExpanded
+                                    )
+                                },
+                                modifier = Modifier.fillMaxWidth().menuAnchor()
+                            )
+                            ExposedDropdownMenu(
+                                expanded = promotionAppliesExpanded,
+                                onDismissRequest = { promotionAppliesExpanded = false }
+                            ) {
+                                PromotionAppliesTo.entries.forEach { value ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                when (value) {
+                                                    PromotionAppliesTo.PURCHASES -> "Purchases"
+                                                    PromotionAppliesTo.BALANCE_TRANSFER -> "Balance transfers"
+                                                    PromotionAppliesTo.BOTH -> "Both"
+                                                }
+                                            )
+                                        },
+                                        onClick = {
+                                            promotionAppliesTo = value
+                                            promotionAppliesExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = deferredInterest,
+                                onCheckedChange = { deferredInterest = it }
+                            )
+                            Text("Deferred interest may apply at expiry")
+                        }
+                    }
                 }
                 if (type == CreditAccountType.CREDIT_CARD) {
                     HorizontalDivider()
@@ -650,6 +817,11 @@ internal fun CreditAccountDialog(
                     val id = account?.id?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
                     val now = System.currentTimeMillis()
                     val apr = (aprPercent.toDoubleOrNull() ?: 0.0) / 100.0
+                    val promotionalApr = promotionalAprPercent
+                        .toDoubleOrNull()
+                        ?.div(100.0)
+                        ?.coerceAtLeast(0.0)
+                    val promotionalEnd = parseIsoDate(promotionalAprEndDate)
                     val balance = currentBalance.toDoubleOrNull() ?: 0.0
                     val minVal = minimumPaymentValue.toDoubleOrNull() ?: when (minimumPaymentType) {
                         CreditCardMinPaymentType.FIXED -> 25.0
@@ -665,12 +837,34 @@ internal fun CreditAccountDialog(
                             type = type,
                             institution = institution.trim(),
                             accountNumberLast4 = accountNumberLast4.trim(),
-                            apr = apr.coerceAtLeast(0.0),
+                            apr = if (
+                                isRevolving &&
+                                promotionalApr != null &&
+                                promotionalEnd != null &&
+                                promotionalEnd >= System.currentTimeMillis()
+                            ) promotionalApr else apr.coerceAtLeast(0.0),
+                            standardApr = apr.coerceAtLeast(0.0),
+                            promotionalApr =
+                                if (isRevolving) promotionalApr else null,
+                            promotionalAprEndDate =
+                                if (isRevolving) promotionalEnd else null,
+                            promotionAppliesTo =
+                                if (isRevolving && promotionalApr != null) {
+                                    promotionAppliesTo
+                                } else null,
+                            deferredInterest =
+                                isRevolving && promotionalApr != null && deferredInterest,
                             currentBalance = balance.coerceAtLeast(0.0),
+                            statementBalanceAsOfMillis =
+                                account?.statementBalanceAsOfMillis,
+                            statementAmountDue = account?.statementAmountDue,
                             dueDay = dueDay.toIntOrNull()?.coerceIn(1, 31) ?: 1,
                             notes = notes.trim(),
                             createdAt = account?.createdAt ?: now,
                             updatedAt = now,
+                            linkedBillId = account?.linkedBillId,
+                            statementEntries = account?.statementEntries ?: emptyList(),
+                            attachmentHashes = account?.attachmentHashes ?: emptyList(),
                             creditLimit = if (isRevolving) (creditLimit.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0) else 0.0,
                             minimumPaymentType = minimumPaymentType,
                             minimumPaymentValue = minVal.coerceAtLeast(0.0),
@@ -686,7 +880,10 @@ internal fun CreditAccountDialog(
                         )
                     )
                 },
-                enabled = name.isNotBlank() && !isSaving
+                enabled = name.isNotBlank() &&
+                    !isSaving &&
+                    (promotionalAprPercent.isBlank() ||
+                        parseIsoDate(promotionalAprEndDate) != null)
             ) {
                 Text("Save")
             }

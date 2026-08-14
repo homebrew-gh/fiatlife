@@ -13,6 +13,7 @@ import com.fiatlife.app.domain.model.BillGeneralCategory
 import com.fiatlife.app.domain.model.BillSubcategory
 import com.fiatlife.app.domain.model.CreditAccount
 import com.fiatlife.app.domain.model.CreditAccountType
+import com.fiatlife.app.domain.model.CreditStatementUpdate
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -51,7 +52,10 @@ class CreditAccountRepository @Inject constructor(
         }.decodeOnBackground()
     }
 
-    suspend fun saveCreditAccount(account: CreditAccount): CreditAccount {
+    suspend fun saveCreditAccount(
+        account: CreditAccount,
+        inferPayment: Boolean = true
+    ): CreditAccount {
         val previous = account.id.takeIf { it.isNotBlank() }?.let { id ->
             creditAccountDao.getById(id)?.let { entity ->
                 runCatching { json.decodeFromString<CreditAccount>(entity.jsonData) }.getOrNull()
@@ -84,8 +88,38 @@ class CreditAccountRepository @Inject constructor(
             }
         }
         val ensured = ensureBillForAccount(withId)
-        inferCreditPaymentFromBalanceDrop(previous, ensured)
+        if (inferPayment) inferCreditPaymentFromBalanceDrop(previous, ensured)
         return ensured
+    }
+
+    suspend fun updateStatement(
+        account: CreditAccount,
+        update: CreditStatementUpdate
+    ): CreditAccount {
+        val updated = account.copy(
+            currentBalance = update.balanceAfterPayment.coerceAtLeast(0.0),
+            statementBalanceAsOfMillis = update.statementBalanceAsOfMillis,
+            statementAmountDue = update.statementAmountDue?.coerceAtLeast(0.0),
+            dueDay = update.dueDay.coerceIn(1, 31)
+        )
+        val saved = saveCreditAccount(updated, inferPayment = false)
+        if (update.paymentAmount > 0.0) {
+            val billId = saved.linkedBillId
+            val bill = billId?.let { billRepository.getBillById(it).first() }
+            if (bill != null) {
+                val now = System.currentTimeMillis()
+                billRepository.saveBill(
+                    bill.copy(
+                        paymentHistory = bill.paymentHistory +
+                            BillPayment(now, update.paymentAmount),
+                        isPaid = true,
+                        lastPaidDate = now,
+                        updatedAt = now
+                    )
+                )
+            }
+        }
+        return saved
     }
 
     /** Ensure account-linked bills are in sync (monthly payment + optional annual fee bill). */
@@ -94,7 +128,7 @@ class CreditAccountRepository @Inject constructor(
         return ensureAnnualFeeBill(primaryUpdated)
     }
 
-    /** When balance > 0, ensure a linked monthly payment bill exists. When balance == 0, remove linked bill(s). */
+    /** Keep the account-linked payment reminder synchronized without deleting its history at zero balance. */
     private suspend fun ensurePrimaryBillForAccount(account: CreditAccount): CreditAccount {
         val subcategory = when (account.type) {
             CreditAccountType.CREDIT_CARD -> BillSubcategory.CREDIT_CARD
@@ -102,6 +136,24 @@ class CreditAccountRepository @Inject constructor(
             else -> BillSubcategory.OTHER_LOAN
         }
         val allBills = billRepository.getAllBills().first()
+        suspend fun updateLinkedBill(existing: Bill) {
+            billRepository.saveBill(
+                existing.copy(
+                    name = account.name,
+                    amount = if (account.currentBalance > 0.0) {
+                        account.effectiveMonthlyPayment()
+                    } else {
+                        0.0
+                    },
+                    dueDay = account.dueDay,
+                    subcategory = subcategory,
+                    isRecurring = true,
+                    isCancelled = false,
+                    linkedCreditAccountId = account.id,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+        }
         if (account.currentBalance > 0) {
             val existingByLinkedAccount = allBills.firstOrNull { it.linkedCreditAccountId == account.id }
             val existingLegacyByName = allBills.firstOrNull { bill ->
@@ -114,21 +166,13 @@ class CreditAccountRepository @Inject constructor(
             if (billId != null) {
                 val existing = billRepository.getBillById(billId).first()
                 if (existing != null) {
-                    // Existing linked bill is already present; do not mutate it on balance updates.
+                    updateLinkedBill(existing)
                     return account
                 }
             }
             val existingCandidate = existingByLinkedAccount ?: existingLegacyByName
             if (existingCandidate != null) {
-                // Reuse found bill; only enforce linkage if missing.
-                if (existingCandidate.linkedCreditAccountId != account.id) {
-                    billRepository.saveBill(
-                        existingCandidate.copy(
-                            linkedCreditAccountId = account.id,
-                            updatedAt = System.currentTimeMillis()
-                        )
-                    )
-                }
+                updateLinkedBill(existingCandidate)
                 if (account.linkedBillId != existingCandidate.id) {
                     val relinked = account.copy(linkedBillId = existingCandidate.id)
                     persistAccountWithoutEnsure(relinked)
@@ -138,18 +182,17 @@ class CreditAccountRepository @Inject constructor(
             }
             return createAndLinkBill(account, subcategory)
         }
-        // No balance -> no bill needed.
-        val linkedIdsToDelete = buildSet {
-            account.linkedBillId?.let { add(it) }
-            allBills.filter { it.linkedCreditAccountId == account.id }.forEach { add(it.id) }
-        }
-        linkedIdsToDelete.forEach { id ->
-            billRepository.getBillById(id).first()?.let { existing -> billRepository.deleteBill(existing) }
-        }
-        if (account.linkedBillId != null) {
-            val cleared = account.copy(linkedBillId = null)
-            persistAccountWithoutEnsure(cleared)
-            return cleared
+
+        val existingPaidOff = account.linkedBillId
+            ?.let { billRepository.getBillById(it).first() }
+            ?: allBills.firstOrNull { it.linkedCreditAccountId == account.id }
+        if (existingPaidOff != null) {
+            updateLinkedBill(existingPaidOff)
+            if (account.linkedBillId != existingPaidOff.id) {
+                val relinked = account.copy(linkedBillId = existingPaidOff.id)
+                persistAccountWithoutEnsure(relinked)
+                return relinked
+            }
         }
         return account
     }
@@ -299,6 +342,7 @@ class CreditAccountRepository @Inject constructor(
         if (!nostrClient.hasSigner) return
         try {
             withTimeout(30_000) {
+                val localBefore = creditAccountDao.getAllSnapshot().associateBy { it.id }
                 val deleteIds = mutableListOf<String>()
                 val upsertsById = mutableMapOf<String, CreditAccountEntity>()
                 nostrClient.subscribeToAppData(dTagPrefix = NOSTR_D_TAG_PREFIX).collect { (dTag, decrypted) ->
@@ -325,6 +369,7 @@ class CreditAccountRepository @Inject constructor(
                 }
                 creditAccountDao.applySyncBatch(upsertsById.values.toList(), deleteIds)
                 Log.d(TAG, "Synced ${upsertsById.size} credit account(s) from relay; deleted ${deleteIds.size}")
+                republishStrandedAccounts(localBefore, upsertsById, deleteIds)
                 val backfilled = backfillMissingLinkedBills()
                 if (backfilled > 0) {
                     Log.d(TAG, "Backfilled $backfilled missing linked bill(s) for credit accounts")
@@ -340,10 +385,37 @@ class CreditAccountRepository @Inject constructor(
     }
 
     /**
+     * Self-heal: push local credit accounts the relay doesn't reflect back up so
+     * other clients (e.g. the web app) can see them. Covers accounts whose
+     * original publish was never delivered (the outbox is in-memory only) and
+     * accounts whose local copy is newer than the relay's.
+     */
+    private suspend fun republishStrandedAccounts(
+        localBefore: Map<String, CreditAccountEntity>,
+        relayById: Map<String, CreditAccountEntity>,
+        deleteIds: List<String>
+    ) {
+        val deleted = deleteIds.toSet()
+        var pushed = 0
+        for ((id, local) in localBefore) {
+            if (id in deleted) continue
+            val relay = relayById[id]
+            if (relay != null && local.updatedAt <= relay.updatedAt) continue
+            if (relay != null) creditAccountDao.upsert(local)
+            runCatching {
+                nostrClient.publishEncryptedAppData("$NOSTR_D_TAG_PREFIX$id", local.jsonData)
+            }.onSuccess { pushed++ }
+                .onFailure { Log.w(TAG, "Self-heal republish failed for credit account ${id.take(8)}…: ${it.message}") }
+        }
+        if (pushed > 0) Log.d(TAG, "Self-heal re-published $pushed credit account(s) the relay was missing")
+    }
+
+    /**
      * One-time-safe backfill: create/link a bill for any positive-balance account that has no valid linked bill.
      * Idempotent for already-linked accounts.
      */
     suspend fun backfillMissingLinkedBills(): Int {
+        migrateLegacyCreditCardBills()
         val accounts = creditAccountDao.getAllSnapshot().mapNotNull { entity ->
             runCatching { json.decodeFromString<CreditAccount>(entity.jsonData) }
                 .onFailure { Log.w(TAG, "Skipping malformed credit account ${entity.id}: ${it.message}") }
@@ -377,6 +449,61 @@ class CreditAccountRepository @Inject constructor(
             ensureAnnualFeeBill(account)
         }
         return created
+    }
+
+    /**
+     * Convert the old Bill-owned credit-card payload into a Debt account.
+     * The existing Bill id and all payment/statement history are retained.
+     */
+    private suspend fun migrateLegacyCreditCardBills(): Int {
+        val existingAccounts = creditAccountDao.getAllSnapshot().mapNotNull { entity ->
+            runCatching {
+                json.decodeFromString<CreditAccount>(entity.jsonData)
+            }.getOrNull()
+        }
+        val bills = billRepository.getAllBills().first()
+        var migrated = 0
+        for (bill in bills) {
+            val legacy = bill.creditCardDetails ?: continue
+            if (bill.linkedCreditAccountId != null) continue
+            if (existingAccounts.any {
+                    it.linkedBillId == bill.id ||
+                        it.name.equals(bill.name, ignoreCase = true)
+                }
+            ) continue
+
+            val now = System.currentTimeMillis()
+            val account = CreditAccount(
+                id = UUID.randomUUID().toString(),
+                name = bill.name,
+                type = CreditAccountType.CREDIT_CARD,
+                institution = bill.accountName,
+                apr = legacy.apr,
+                standardApr = legacy.apr,
+                currentBalance = legacy.currentBalance.coerceAtLeast(0.0),
+                statementAmountDue = bill.amount.coerceAtLeast(0.0),
+                dueDay = bill.dueDay,
+                linkedBillId = bill.id,
+                notes = bill.notes,
+                createdAt = bill.createdAt.takeIf { it > 0 } ?: now,
+                updatedAt = now,
+                statementEntries = bill.statementEntries,
+                attachmentHashes = bill.attachmentHashes,
+                minimumPaymentType = legacy.minimumPaymentType,
+                minimumPaymentValue = legacy.minimumPaymentValue
+            )
+            val saved = saveCreditAccount(account, inferPayment = false)
+            billRepository.saveBill(
+                bill.copy(
+                    amount = saved.effectiveAmountDue(),
+                    linkedCreditAccountId = saved.id,
+                    creditCardDetails = null,
+                    updatedAt = now
+                )
+            )
+            migrated++
+        }
+        return migrated
     }
 
     /**

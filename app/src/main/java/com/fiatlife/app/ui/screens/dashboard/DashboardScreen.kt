@@ -19,6 +19,7 @@ import androidx.navigation.NavController
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import com.fiatlife.app.domain.model.BillGeneralCategory
 import com.fiatlife.app.domain.model.MonthlyTakeHomeSource
+import com.fiatlife.app.domain.model.formatPayoffDate
 import com.fiatlife.app.ui.components.*
 import com.fiatlife.app.ui.navigation.Screen
 import com.fiatlife.app.ui.theme.*
@@ -76,6 +77,79 @@ fun DashboardScreen(
                     color = WarningAmber,
                     modifier = Modifier.weight(1f)
                 )
+            }
+        }
+
+        if (state.hasBudgetTargets || state.debtAccountCount > 0) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (state.hasBudgetTargets || state.takeHomePay > 0) {
+                        AssistChip(
+                            onClick = {
+                                navController.navigate(Screen.Budget.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            label = {
+                                Text(
+                                    if (state.hasBudgetTargets) {
+                                        "Unbudgeted ${state.budgetUnbudgeted.formatCurrency()}"
+                                    } else {
+                                        "Set budget targets"
+                                    }
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.PieChart,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        )
+                    }
+                    if (state.debtAccountCount > 0) {
+                        AssistChip(
+                            onClick = {
+                                navController.navigate(Screen.Debt.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            label = {
+                                val debtLabel = buildString {
+                                    append(state.totalDebt.formatCurrency())
+                                    append(" debt")
+                                    val free = state.debtFreeDateMs
+                                    if (state.debtPayoffFeasible && free != null) {
+                                        append(" · free ")
+                                        append(formatPayoffDate(free))
+                                    }
+                                }
+                                Text(debtLabel, maxLines = 2)
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.AccountBalance,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        )
+                    }
+                }
             }
         }
 

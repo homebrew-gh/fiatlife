@@ -69,7 +69,7 @@ internal fun buildBillCardUiModel(
         dueDateText = dueDateText,
         countdownLabel = countdownLabel,
         showPastDue = showPastDue,
-        amountDue = bill.effectiveAmountDue()
+        amountDue = linkedAccount?.effectiveAmountDue() ?: bill.effectiveAmountDue()
     )
 }
 

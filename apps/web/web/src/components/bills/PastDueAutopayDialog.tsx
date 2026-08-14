@@ -55,7 +55,7 @@ export function PastDueAutopayDialog({
         <ul className="mt-4 space-y-1">
           {bills.map((item) => (
             <li key={item.bill.id}>
-              <label className="flex items-center gap-3 cursor-pointer border-b border-border py-2 last:border-0">
+              <label className="flex items-center gap-3 cursor-pointer border-b border-outline py-2 last:border-0">
                 <input
                   type="checkbox"
                   checked={selected.has(item.bill.id)}

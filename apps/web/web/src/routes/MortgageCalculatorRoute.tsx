@@ -3,16 +3,18 @@ import { MortgageCalculator } from "../components/debt/MortgageCalculator";
 import { useSalaryData } from "../lib/salaryData";
 import { useDebtData } from "../lib/debtData";
 import { effectiveMonthlyPayment } from "../lib/creditAccount";
+import { computeConservativeMonthlyTakeHome } from "../lib/salary";
 
 export function MortgageCalculatorRoute() {
-  // Use baseline (no projected overtime) for a conservative qualifying income —
-  // lenders only count overtime with a multi-year history.
-  const { annualBaseline } = useSalaryData();
+  // Baseline (no projected overtime) for conservative lender qualifying income.
+  const { annualBaseline, config } = useSalaryData();
   const { accounts } = useDebtData();
   const grossMonthlyIncome =
     annualBaseline.annualGrossPay > 0
       ? annualBaseline.annualGrossPay / 12
       : 0;
+  const conservativeTakeHome = computeConservativeMonthlyTakeHome(config);
+  const takeHomeMonthlyIncome = conservativeTakeHome.monthlyTakeHome;
 
   // Existing non-mortgage debt payments feed the back-end DTI. The mortgage
   // being modeled is the new housing payment, so existing mortgages are excluded.
@@ -35,7 +37,9 @@ export function MortgageCalculatorRoute() {
         </div>
       </div>
       <MortgageCalculator
-        suggestedMonthlyIncome={grossMonthlyIncome}
+        suggestedGrossMonthlyIncome={grossMonthlyIncome}
+        suggestedTakeHomeMonthlyIncome={takeHomeMonthlyIncome}
+        conservativeTakeHome={conservativeTakeHome}
         trackedMonthlyDebts={trackedMonthlyDebts}
       />
     </div>

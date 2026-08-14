@@ -26,6 +26,7 @@ import com.fiatlife.app.domain.model.PayoffStrategy
 import com.fiatlife.app.domain.model.buildDebtPlan
 import com.fiatlife.app.domain.model.formatMonths
 import com.fiatlife.app.domain.model.formatPayoffDate
+import com.fiatlife.app.domain.model.promoExpiryWarnings
 import com.fiatlife.app.ui.components.MoneyText
 import com.fiatlife.app.ui.components.SectionCard
 import com.fiatlife.app.ui.components.formatCurrency
@@ -52,6 +53,9 @@ fun DebtPlannerScreen(
         .toMap()
     val plan = remember(state.accounts, strategy, extra, perAccountExtra) {
         buildDebtPlan(state.accounts, strategy, extra, perAccountExtra)
+    }
+    val promoWarnings = remember(state.accounts, plan) {
+        promoExpiryWarnings(state.accounts, plan)
     }
 
     Scaffold(
@@ -326,6 +330,27 @@ fun DebtPlannerScreen(
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 modifier = Modifier.width(120.dp),
                                 shape = MaterialTheme.shapes.medium
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (promoWarnings.isNotEmpty()) {
+                SectionCard(title = "Promotional APR") {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        promoWarnings.forEach { warning ->
+                            Text(
+                                buildString {
+                                    append(warning.name)
+                                    append(" won't be paid off before the promo ends in ")
+                                    append(warning.monthsUntilExpiry)
+                                    append(if (warning.monthsUntilExpiry == 1) " month." else " months.")
+                                    if (warning.deferredInterest) {
+                                        append(" Deferred interest may be charged if the balance is not cleared.")
+                                    }
+                                },
+                                style = MaterialTheme.typography.bodySmall
                             )
                         }
                     }
