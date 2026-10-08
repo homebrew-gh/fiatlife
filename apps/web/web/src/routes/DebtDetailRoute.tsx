@@ -32,6 +32,7 @@ import {
 import { useBillsData } from "../lib/billsData";
 import { useDebtData } from "../lib/debtData";
 import { formatUsd } from "../lib/format";
+import { formatBalanceAsOf } from "../lib/simplefin";
 import { ErrorBanner, HeroCard } from "../components/ui";
 
 export function DebtDetailRoute() {
@@ -147,6 +148,14 @@ export function DebtDetailRoute() {
         <p className="text-sm opacity-80 mt-2">
           {formatUsd(monthly)}/mo · Due day {account.dueDay}
         </p>
+        {account.simplefinAccountKey ? (
+          <p className="text-xs opacity-70 mt-1">
+            Synced from SimpleFIN
+            {account.simplefinBalanceAsOf
+              ? ` · ${formatBalanceAsOf(account.simplefinBalanceAsOf)}`
+              : ""}
+          </p>
+        ) : null}
         {util != null ? (
           <div className="mt-4 max-w-xs mx-auto">
             <div className="h-2 rounded-full bg-on-primary-container/20 overflow-hidden">

@@ -115,7 +115,12 @@ data class CreditAccount(
     val linkedPropertyTaxBillId: String? = null,
     val linkedHomeInsuranceBillId: String? = null,
     val linkedHoaBillId: String? = null,
-    val linkedPmiBillId: String? = null
+    val linkedPmiBillId: String? = null,
+    /** SimpleFIN `conn_id:account_id` (set by the web app) whose balance feeds [currentBalance]. */
+    val simplefinAccountKey: String? = null,
+    /** Amount owed at the last SimpleFIN sync; a new sync only applies when this changes. */
+    val simplefinBalance: Double? = null,
+    val simplefinBalanceAsOf: Long? = null
 ) {
     /** Minimum payment due (revolving). */
     fun minimumDue(): Double = when (minimumPaymentType) {

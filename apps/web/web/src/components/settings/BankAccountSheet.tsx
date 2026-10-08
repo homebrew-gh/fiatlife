@@ -1,5 +1,20 @@
 import { useEffect, useState } from "react";
-import type { BankAccount } from "../../lib/bankAccount";
+import {
+  ALL_BANK_ACCOUNT_TYPES,
+  BANK_ACCOUNT_TYPE_LABELS,
+  bankAccountType,
+  type BankAccount,
+  type BankAccountType,
+} from "../../lib/bankAccount";
+import { formatUsd } from "../../lib/format";
+import { formatBalanceAsOf } from "../../lib/simplefin";
+
+export type BankAccountSheetValues = {
+  name: string;
+  type: BankAccountType;
+  /** Manual balance; ignored for SimpleFIN-linked accounts. */
+  balance: number | null;
+};
 
 export function BankAccountSheet({
   open,
@@ -12,17 +27,21 @@ export function BankAccountSheet({
   open: boolean;
   account: BankAccount | null;
   onClose: () => void;
-  onSave: (name: string) => Promise<void>;
+  onSave: (values: BankAccountSheetValues) => Promise<void>;
   onDelete?: () => Promise<void>;
   saving: boolean;
 }) {
   const [name, setName] = useState("");
+  const [type, setType] = useState<BankAccountType>("CHECKING");
+  const [balance, setBalance] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setName(account?.name ?? "");
+    setType(account ? bankAccountType(account) : "CHECKING");
+    setBalance(account?.balance != null ? String(account.balance) : "");
     setError(null);
     setConfirmDelete(false);
   }, [open, account]);
@@ -30,6 +49,7 @@ export function BankAccountSheet({
   if (!open) return null;
 
   const isEdit = Boolean(account?.id);
+  const isLinked = Boolean(account?.simplefinAccountKey);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,8 +59,14 @@ export function BankAccountSheet({
       setError("Account name is required.");
       return;
     }
+    const balanceText = balance.trim().replace(/[$,]/g, "");
+    const parsedBalance = balanceText === "" ? null : Number(balanceText);
+    if (parsedBalance != null && !Number.isFinite(parsedBalance)) {
+      setError("Balance must be a number.");
+      return;
+    }
     try {
-      await onSave(trimmed);
+      await onSave({ name: trimmed, type, balance: parsedBalance });
       onClose();
     } catch {
       setError("Could not save account.");
@@ -67,11 +93,11 @@ export function BankAccountSheet({
     >
       <div className="card w-full max-w-md p-5">
         <h2 id="bank-account-sheet-title" className="page-title text-xl">
-          {isEdit ? "Edit Bank Account" : "Add Bank Account"}
+          {isEdit ? "Edit Account" : "Add Account"}
         </h2>
         <p className="text-sm text-muted mt-1">
-          Named account to tag which bills are paid from which account. No
-          credentials stored.
+          Checking and savings accounts can be picked as a bill&apos;s pay-from
+          account. No credentials stored.
         </p>
         <form className="mt-4 space-y-4" onSubmit={onSubmit}>
           <div>
@@ -87,6 +113,53 @@ export function BankAccountSheet({
               autoFocus
             />
           </div>
+          <div>
+            <label className="label" htmlFor="bank-account-type">
+              Type
+            </label>
+            <select
+              id="bank-account-type"
+              className="input"
+              value={type}
+              onChange={(e) => setType(e.target.value as BankAccountType)}
+            >
+              {ALL_BANK_ACCOUNT_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {BANK_ACCOUNT_TYPE_LABELS[t]}
+                </option>
+              ))}
+            </select>
+          </div>
+          {isLinked ? (
+            <div className="card-quiet p-3 text-sm">
+              <p>
+                Balance{" "}
+                <span className="money">
+                  {account?.balance != null ? formatUsd(account.balance) : "—"}
+                </span>
+              </p>
+              <p className="text-xs text-muted mt-0.5">
+                Synced from SimpleFIN
+                {account?.balanceAsOf
+                  ? ` · as of ${formatBalanceAsOf(account.balanceAsOf)}`
+                  : ""}
+              </p>
+            </div>
+          ) : (
+            <div>
+              <label className="label" htmlFor="bank-account-balance">
+                Balance
+              </label>
+              <input
+                id="bank-account-balance"
+                className="input"
+                inputMode="decimal"
+                value={balance}
+                onChange={(e) => setBalance(e.target.value)}
+                placeholder="Optional"
+              />
+            </div>
+          )}
           {error ? (
             <p className="text-sm text-error" role="alert">
               {error}

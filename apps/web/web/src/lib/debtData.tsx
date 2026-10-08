@@ -57,6 +57,7 @@ type DebtDataContextValue = {
     accountId: string,
     newBalance: number,
   ) => Promise<void>;
+  saveSyncedAccount: (account: CreditAccount) => Promise<void>;
   deleteAccount: (account: CreditAccount) => Promise<void>;
   attachStatement: (
     account: CreditAccount,
@@ -386,6 +387,17 @@ function DebtDataProviderInner({ children }: { children: ReactNode }) {
     [accounts, publishAccount],
   );
 
+  // SimpleFIN link and balance updates. Like setBalanceFromPayment, skips
+  // payment inference: a synced drop may already be logged on the linked bill.
+  const saveSyncedAccount = useCallback(
+    async (account: CreditAccount) => {
+      await publishAccount(
+        defaultCreditAccount({ ...account, updatedAt: Date.now() }),
+      );
+    },
+    [publishAccount],
+  );
+
   const deleteAccount = useCallback(
     async (account: CreditAccount) => {
       const prev = accountsRef.current.find((a) => a.id === account.id);
@@ -461,10 +473,12 @@ function DebtDataProviderInner({ children }: { children: ReactNode }) {
       updateBalance,
       updateStatement,
       setBalanceFromPayment,
+      saveSyncedAccount,
       deleteAccount,
       attachStatement,
     }),
     [
+      saveSyncedAccount,
       accounts,
       loading,
       error,

@@ -17,7 +17,7 @@ import {
   subcategoriesForGeneral,
   subcategoryLabel,
 } from "../lib/billSubcategory";
-import type { BankAccount } from "../lib/bankAccount";
+import { isCashAccount, type BankAccount } from "../lib/bankAccount";
 import type { Biller } from "../lib/biller";
 import type { CreditAccount } from "../lib/creditAccount";
 
@@ -621,11 +621,13 @@ export function BillSheet({
                       onChange={(e) => setPayFromBankId(e.target.value)}
                     >
                       <option value="">—</option>
-                      {bankAccounts.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.name}
-                        </option>
-                      ))}
+                      {bankAccounts
+                        .filter((a) => isCashAccount(a) || a.id === payFromBankId)
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name}
+                          </option>
+                        ))}
                     </select>
                   </div>
                 ) : null}

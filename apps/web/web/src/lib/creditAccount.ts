@@ -106,6 +106,11 @@ export type CreditAccount = {
   linkedHomeInsuranceBillId?: string | null;
   linkedHoaBillId?: string | null;
   linkedPmiBillId?: string | null;
+  /** SimpleFIN `conn_id:account_id` whose balance feeds `currentBalance`. */
+  simplefinAccountKey?: string | null;
+  /** Amount owed at the last SimpleFIN sync; a new sync only applies when this changes. */
+  simplefinBalance?: number | null;
+  simplefinBalanceAsOf?: number | null;
 };
 
 export function creditAccountDTag(id: string): string {
@@ -515,6 +520,9 @@ export function defaultCreditAccount(
     linkedHomeInsuranceBillId: partial?.linkedHomeInsuranceBillId ?? null,
     linkedHoaBillId: partial?.linkedHoaBillId ?? null,
     linkedPmiBillId: partial?.linkedPmiBillId ?? null,
+    simplefinAccountKey: partial?.simplefinAccountKey ?? null,
+    simplefinBalance: partial?.simplefinBalance ?? null,
+    simplefinBalanceAsOf: partial?.simplefinBalanceAsOf ?? null,
   };
 }
 
@@ -618,6 +626,16 @@ export function parseCreditAccountRecord(
         parsed.linkedHoaBillId != null ? String(parsed.linkedHoaBillId) : null,
       linkedPmiBillId:
         parsed.linkedPmiBillId != null ? String(parsed.linkedPmiBillId) : null,
+      simplefinAccountKey:
+        typeof parsed.simplefinAccountKey === "string"
+          ? parsed.simplefinAccountKey
+          : null,
+      simplefinBalance:
+        parsed.simplefinBalance != null ? Number(parsed.simplefinBalance) : null,
+      simplefinBalanceAsOf:
+        parsed.simplefinBalanceAsOf != null
+          ? Number(parsed.simplefinBalanceAsOf)
+          : null,
     });
   } catch {
     return null;

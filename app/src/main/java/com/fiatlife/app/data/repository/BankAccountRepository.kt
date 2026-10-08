@@ -31,9 +31,21 @@ class BankAccountRepository @Inject constructor(
         private const val NOSTR_D_TAG_PREFIX = "fiatlife/settings/bank/"
     }
 
+    private fun BankAccountEntity.toModel(): BankAccount =
+        jsonData.takeIf { it.isNotBlank() }
+            ?.let { runCatching { json.decodeFromString(BankAccount.serializer(), it) }.getOrNull() }
+            ?.copy(id = id, name = name)
+            ?: BankAccount(id = id, name = name)
+
+    private fun BankAccount.toEntity(): BankAccountEntity = BankAccountEntity(
+        id = id,
+        name = name,
+        jsonData = json.encodeToString(BankAccount.serializer(), this)
+    )
+
     fun getAllBankAccounts(): Flow<List<BankAccount>> {
         return dao.getAll().map { entities ->
-            entities.map { BankAccount(id = it.id, name = it.name) }
+            entities.map { it.toModel() }
         }.decodeOnBackground()
     }
 
@@ -41,8 +53,11 @@ class BankAccountRepository @Inject constructor(
         val withId = if (account.id.isEmpty()) {
             account.copy(id = UUID.randomUUID().toString())
         } else account
-        val normalized = withId.copy(name = withId.name.trim())
-        dao.upsert(BankAccountEntity(id = normalized.id, name = normalized.name))
+        val normalized = withId.copy(
+            name = withId.name.trim(),
+            updatedAt = System.currentTimeMillis()
+        )
+        dao.upsert(normalized.toEntity())
         if (nostrClient.hasSigner) {
             val dTag = "$NOSTR_D_TAG_PREFIX${normalized.id}"
             val payload = json.encodeToString(BankAccount.serializer(), normalized)
@@ -57,7 +72,7 @@ class BankAccountRepository @Inject constructor(
     }
 
     suspend fun deleteBankAccount(account: BankAccount) {
-        dao.delete(BankAccountEntity(id = account.id, name = account.name))
+        dao.delete(account.toEntity())
         if (nostrClient.hasSigner) {
             val dTag = "$NOSTR_D_TAG_PREFIX${account.id}"
             try {
@@ -73,7 +88,7 @@ class BankAccountRepository @Inject constructor(
     suspend fun syncFromNostr() {
         if (!nostrClient.hasSigner) return
         try {
-            withTimeout(30_000) {
+            withTimeout(90_000) {
                 val localBefore = dao.getAll().first().associateBy { it.id }
                 val deleteIds = mutableListOf<String>()
                 val upsertsById = mutableMapOf<String, BankAccountEntity>()
@@ -88,7 +103,7 @@ class BankAccountRepository @Inject constructor(
                         }
                         val account = json.decodeFromString<BankAccount>(decrypted)
                         if (account.id.isNotBlank()) {
-                            upsertsById[account.id] = BankAccountEntity(id = account.id, name = account.name)
+                            upsertsById[account.id] = account.toEntity()
                         }
                     } catch (e: Exception) {
                         Log.w(TAG, "Failed to parse bank account event: ${e.message}")
@@ -117,10 +132,7 @@ class BankAccountRepository @Inject constructor(
         var pushed = 0
         for ((id, local) in localBefore) {
             if (id in deleted || relayById.containsKey(id)) continue
-            val payload = json.encodeToString(
-                BankAccount.serializer(),
-                BankAccount(id = local.id, name = local.name)
-            )
+            val payload = json.encodeToString(BankAccount.serializer(), local.toModel())
             runCatching {
                 nostrClient.publishEncryptedAppData("$NOSTR_D_TAG_PREFIX$id", payload)
             }.onSuccess { pushed++ }

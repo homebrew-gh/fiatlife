@@ -7,5 +7,7 @@ import androidx.room.PrimaryKey
 data class BankAccountEntity(
     @PrimaryKey
     val id: String,
-    val name: String
+    val name: String,
+    /** Full serialized `BankAccount`; blank for rows cached before version 9. */
+    val jsonData: String = ""
 )

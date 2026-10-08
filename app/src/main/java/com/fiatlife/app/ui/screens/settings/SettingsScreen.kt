@@ -20,7 +20,11 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fiatlife.app.data.notification.NotifDetailLevel
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import com.fiatlife.app.domain.model.BankAccount
+import com.fiatlife.app.domain.model.BankAccountType
+import com.fiatlife.app.ui.components.MoneyText
 import com.fiatlife.app.ui.components.SectionCard
 import com.fiatlife.app.ui.screens.pin.SetPinSheet
 import com.fiatlife.app.ui.theme.ProfitGreen
@@ -434,11 +438,11 @@ fun SettingsScreen(
         // Payment accounts (banks)
         item {
             SectionCard(
-                title = "Payment accounts (banks)",
+                title = "Accounts",
                 icon = Icons.Filled.AccountBalance
             ) {
                 Text(
-                    text = "Named accounts to tag which bills are paid from which account. No credentials stored.",
+                    text = "Checking, savings, retirement, and investment accounts. Checking and savings can be a bill's pay-from account. Connect SimpleFIN in the web app to sync balances.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -447,14 +451,30 @@ fun SettingsScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { viewModel.showEditBankAccount(account) },
+                            .clickable { viewModel.showEditBankAccount(account) }
+                            .padding(vertical = 4.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = account.name,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = account.name,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = account.accountType.displayName +
+                                    if (account.simplefinAccountKey != null) " · Synced" else "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        account.balance?.let { balance ->
+                            MoneyText(
+                                amount = balance,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
                         Icon(
                             Icons.Filled.ChevronRight,
                             contentDescription = "Edit",
@@ -471,7 +491,7 @@ fun SettingsScreen(
                 ) {
                     Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Add bank account")
+                    Text("Add account")
                 }
             }
         }
@@ -579,10 +599,18 @@ fun SettingsScreen(
 
     state.editingBankAccount?.let { account ->
         var name by remember(account) { mutableStateOf(account.name) }
+        var type by remember(account) { mutableStateOf(account.accountType) }
+        var balanceText by remember(account) {
+            mutableStateOf(account.balance?.let { "%.2f".format(it) } ?: "")
+        }
+        val isLinked = account.simplefinAccountKey != null
+        val parsedBalance = balanceText.replace(",", "").replace("$", "").trim()
+            .takeIf { it.isNotEmpty() }?.toDoubleOrNull()
+        val balanceValid = balanceText.isBlank() || parsedBalance != null
         var showDeleteConfirm by remember { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { viewModel.dismissBankAccountDialog() },
-            title = { Text(if (account.id.isEmpty()) "Add bank account" else "Edit bank account") },
+            title = { Text(if (account.id.isEmpty()) "Add account" else "Edit account") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
@@ -594,6 +622,36 @@ fun SettingsScreen(
                         shape = MaterialTheme.shapes.medium,
                         placeholder = { Text("e.g. Chase Checking") }
                     )
+                    BankAccountType.entries.chunked(2).forEach { rowTypes ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            rowTypes.forEach { option ->
+                                FilterChip(
+                                    selected = type == option,
+                                    onClick = { type = option },
+                                    label = { Text(option.displayName) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+                    if (isLinked) {
+                        Text(
+                            text = "Balance syncs from SimpleFIN in the web app.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        OutlinedTextField(
+                            value = balanceText,
+                            onValueChange = { balanceText = it },
+                            label = { Text("Balance (optional)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            isError = !balanceValid,
+                            shape = MaterialTheme.shapes.medium,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                        )
+                    }
                     if (account.id.isNotEmpty()) {
                         TextButton(
                             onClick = { showDeleteConfirm = true },
@@ -605,9 +663,20 @@ fun SettingsScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.saveBankAccount(account.copy(name = name.trim()))
+                        val balanceChanged = !isLinked && parsedBalance != account.balance
+                        viewModel.saveBankAccount(
+                            account.copy(
+                                name = name.trim(),
+                                type = type.name,
+                                balance = if (balanceChanged) parsedBalance else account.balance,
+                                availableBalance = if (balanceChanged) null else account.availableBalance,
+                                balanceAsOf = if (balanceChanged) {
+                                    parsedBalance?.let { System.currentTimeMillis() }
+                                } else account.balanceAsOf
+                            )
+                        )
                     },
-                    enabled = name.isNotBlank()
+                    enabled = name.isNotBlank() && balanceValid
                 ) { Text("Save") }
             },
             dismissButton = {

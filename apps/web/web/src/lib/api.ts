@@ -34,6 +34,40 @@ export type OutboxStatus = {
   failed_items: OutboxFailedItem[];
 };
 
+export type SimpleFinStatus = {
+  connected: boolean;
+  connected_at_ms?: number | null;
+  last_fetched_at_ms?: number | null;
+  create_token_url: string;
+};
+
+export type SimpleFinAccount = {
+  /** `conn_id:account_id` — stored on linked FiatLife accounts. */
+  key: string;
+  name: string;
+  institution: string;
+  currency: string;
+  balance: number | null;
+  available_balance: number | null;
+  balance_date_ms: number | null;
+};
+
+export type SimpleFinBalances = {
+  fetched_at_ms: number;
+  /** True when the server reused a fetch from the last hour. */
+  cached: boolean;
+  accounts: SimpleFinAccount[];
+  messages: { code: string; message: string }[];
+};
+
+export type BtcPrice = {
+  usd: number;
+  fetched_at_ms: number;
+  source: string;
+  /** True when the latest fetch failed and an older price was returned. */
+  stale: boolean;
+};
+
 export type SetupBody = {
   nsec: string;
   passphrase: string;
@@ -163,6 +197,20 @@ export const api = {
     request<OutboxStatus>("/api/nostr/outbox/clear", { method: "POST" }),
   blossomStatus: () =>
     request<{ configured: boolean; url: string | null }>("/api/blossom/status"),
+  btcPrice: () => request<BtcPrice>("/api/btc/price"),
+  simplefinStatus: () => request<SimpleFinStatus>("/api/simplefin/status"),
+  simplefinConnect: (token: string) =>
+    request<SimpleFinBalances>("/api/simplefin/connect", {
+      method: "POST",
+      json: { token },
+    }),
+  simplefinSync: () =>
+    request<SimpleFinBalances>("/api/simplefin/sync", { method: "POST" }),
+  /** Last saved fetch; never contacts SimpleFIN. */
+  simplefinBalances: () =>
+    request<SimpleFinBalances | null>("/api/simplefin/balances"),
+  simplefinDisconnect: () =>
+    request<{ ok: boolean }>("/api/simplefin/disconnect", { method: "POST" }),
   blossomUpload: async (file: File) => {
     const form = new FormData();
     form.append("file", file);

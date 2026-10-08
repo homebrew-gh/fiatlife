@@ -3,11 +3,17 @@ import { useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { SecretInput } from "../../components/SecretInput";
 import { BankAccountSheet } from "../../components/settings/BankAccountSheet";
+import { SimpleFinSection } from "../../components/settings/SimpleFinSection";
 import { ApiError, api } from "../../lib/api";
 import { useAppSettingsData } from "../../lib/appSettingsData";
 import { useAuth } from "../../lib/auth";
-import type { BankAccount } from "../../lib/bankAccount";
+import {
+  BANK_ACCOUNT_TYPE_LABELS,
+  bankAccountType,
+  type BankAccount,
+} from "../../lib/bankAccount";
 import { useBankAccountsData } from "../../lib/bankAccountsData";
+import { formatUsd } from "../../lib/format";
 import {
   hasRelayConfigured,
   isAllowedRelayUrl,
@@ -159,7 +165,7 @@ export function SettingsTab() {
       <div>
         <h1 className="page-title">Settings</h1>
         <p className="text-sm text-muted mt-1">
-          Relay, Blossom, payment accounts, and local key management.
+          Relay, Blossom, accounts, bank sync, and local key management.
         </p>
       </div>
 
@@ -221,9 +227,10 @@ export function SettingsTab() {
 
       <section className="card p-5 space-y-3">
         <div>
-          <h2 className="font-medium text-body">Payment Accounts (Banks)</h2>
+          <h2 className="font-medium text-body">Accounts</h2>
           <p className="text-sm text-muted mt-1">
-            Named accounts to tag which bills are paid from which account. No
+            Checking, savings, retirement, and investment accounts. Checking
+            and savings can be tagged as a bill&apos;s pay-from account. No
             credentials stored — syncs to your relay for Android too.
           </p>
         </div>
@@ -236,7 +243,7 @@ export function SettingsTab() {
           </p>
         ) : null}
         {!bankLoading && bankAccounts.length === 0 ? (
-          <p className="text-sm text-muted">No payment accounts yet.</p>
+          <p className="text-sm text-muted">No accounts yet.</p>
         ) : (
           <ul className="divide-y divide-outline rounded-lg border border-outline">
             {bankAccounts.map((account) => (
@@ -249,8 +256,18 @@ export function SettingsTab() {
                     setBankSheetOpen(true);
                   }}
                 >
-                  <span className="font-medium">{account.name}</span>
-                  <span className="text-muted text-sm">Edit</span>
+                  <span className="min-w-0">
+                    <span className="block font-medium truncate">
+                      {account.name}
+                    </span>
+                    <span className="block text-xs text-muted">
+                      {BANK_ACCOUNT_TYPE_LABELS[bankAccountType(account)]}
+                      {account.simplefinAccountKey ? " · Synced" : ""}
+                    </span>
+                  </span>
+                  <span className="money text-sm shrink-0">
+                    {account.balance != null ? formatUsd(account.balance) : "Edit"}
+                  </span>
                 </button>
               </li>
             ))}
@@ -265,9 +282,11 @@ export function SettingsTab() {
           }}
           disabled={bankSaving}
         >
-          + Add bank account
+          + Add account
         </button>
       </section>
+
+      <SimpleFinSection accounts={bankAccounts} />
 
       <section className="card p-5">
         <h2 className="font-medium text-body mb-3">Nostr Relay</h2>
@@ -405,10 +424,20 @@ export function SettingsTab() {
           setBankSheetOpen(false);
           setEditingBank(null);
         }}
-        onSave={async (name) => {
+        onSave={async ({ name, type, balance }) => {
+          const base: BankAccount =
+            bankAccounts.find((a) => a.id && a.id === editingBank?.id) ??
+            editingBank ?? { id: "", name: "" };
+          const manualBalance =
+            !base.simplefinAccountKey && balance !== (base.balance ?? null)
+              ? { balance, availableBalance: null, balanceAsOf: balance == null ? null : Date.now() }
+              : {};
           await saveAccount({
-            id: editingBank?.id ?? "",
+            ...base,
             name,
+            type,
+            ...manualBalance,
+            updatedAt: Date.now(),
           });
         }}
         onDelete={

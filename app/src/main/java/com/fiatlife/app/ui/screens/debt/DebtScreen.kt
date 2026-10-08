@@ -992,7 +992,10 @@ internal fun CreditAccountDialog(
                             linkedPropertyTaxBillId = account?.linkedPropertyTaxBillId,
                             linkedHomeInsuranceBillId = account?.linkedHomeInsuranceBillId,
                             linkedHoaBillId = account?.linkedHoaBillId,
-                            linkedPmiBillId = account?.linkedPmiBillId
+                            linkedPmiBillId = account?.linkedPmiBillId,
+                            simplefinAccountKey = account?.simplefinAccountKey,
+                            simplefinBalance = account?.simplefinBalance,
+                            simplefinBalanceAsOf = account?.simplefinBalanceAsOf
                         )
                     )
                 },
