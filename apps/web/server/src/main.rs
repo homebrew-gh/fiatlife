@@ -6,6 +6,7 @@
 //! the React SPA.
 
 mod blossom;
+mod btc_price;
 mod config;
 mod crypto;
 mod error;
@@ -16,6 +17,7 @@ mod relay_raw;
 mod routes;
 mod salary_merge;
 mod session;
+mod simplefin;
 mod state;
 
 use std::net::SocketAddr;

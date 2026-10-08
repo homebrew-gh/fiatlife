@@ -9,6 +9,7 @@ pub fn is_fiatlife_d_tag(d_tag: &str) -> bool {
         || d_tag.starts_with("fiatlife/goal/")
         || d_tag.starts_with("fiatlife/credit/")
         || d_tag.starts_with("fiatlife/biller/")
+        || d_tag.starts_with("fiatlife/btc/")
         || d_tag.starts_with("fiatlife/settings/")
         || d_tag.starts_with("fiatlife/cypherlog_deleted/")
         || d_tag.starts_with("subscription:")
@@ -35,6 +36,9 @@ pub fn category_for_d_tag(d_tag: &str) -> &'static str {
     if d_tag.starts_with("fiatlife/biller/") {
         return "billers";
     }
+    if d_tag.starts_with("fiatlife/btc/") {
+        return "bitcoin";
+    }
     if d_tag.starts_with("fiatlife/settings/bank/") {
         return "banks";
     }
@@ -59,6 +63,7 @@ mod tests {
         assert!(is_fiatlife_d_tag("fiatlife/salary"));
         assert!(is_fiatlife_d_tag("fiatlife/budget"));
         assert!(is_fiatlife_d_tag("fiatlife/bill/abc"));
+        assert!(is_fiatlife_d_tag("fiatlife/btc/abc"));
         assert!(is_fiatlife_d_tag("subscription:xyz"));
         assert!(!is_fiatlife_d_tag("io.nomoxcel.utxo.wallets"));
     }

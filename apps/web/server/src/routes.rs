@@ -1,4 +1,8 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+use futures_util::future::Shared;
+use futures_util::FutureExt;
 
 use axum::{
     extract::{Multipart, Path, State},
@@ -30,11 +34,76 @@ use crate::fiatlife_tags::is_fiatlife_d_tag;
 use crate::nostr_support::{
     build_addressable_deletion_event, build_app_data_event, build_cypherlog_subscription_event,
     decrypt_from_self, encrypt_to_self, fetch_cypherlog_subscription_records, parse_nsec,
-    CypherLogSubscriptionRecord, KIND_APP_DATA, KIND_CYPHERLOG_SUBSCRIPTION,
+    AppDataRecord, CypherLogSubscriptionRecord, KIND_APP_DATA, KIND_CYPHERLOG_SUBSCRIPTION,
 };
 use crate::outbox::{Outbox, OutboxStatus};
 use crate::session::{SessionStore, SESSION_COOKIE};
-use crate::state::{dedupe_relay_urls, PersistentState, SealedRecord};
+use crate::btc_price::{fetch_btc_price, BtcPrice};
+use crate::simplefin::{self, BalancesSnapshot, SimpleFinAccount, SimpleFinMessage};
+use crate::state::{dedupe_relay_urls, PersistentState, SealedRecord, SimpleFinRecord};
+
+/// SimpleFIN Bridge expects at most ~24 requests/day; reuse a recent fetch.
+const SIMPLEFIN_MIN_REFETCH_MS: i64 = 60 * 60 * 1000;
+const BTC_PRICE_TTL_MS: i64 = 5 * 60 * 1000;
+
+struct CachedBalances {
+    fetched_at_ms: i64,
+    snapshot: BalancesSnapshot,
+}
+
+type AppDataFlight = Shared<
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<AppDataRecord>, String>> + Send>>,
+>;
+
+struct InFlightAppData {
+    id: u64,
+    flight: AppDataFlight,
+}
+
+/// Joins overlapping `/api/nostr/app-data` reads so the tabs opened together
+/// share one relay scan instead of each timing out on its own copy.
+#[derive(Clone)]
+struct AppDataLoader {
+    seq: Arc<AtomicU64>,
+    slot: Arc<Mutex<Option<InFlightAppData>>>,
+}
+
+impl AppDataLoader {
+    fn new() -> Self {
+        Self {
+            seq: Arc::new(AtomicU64::new(1)),
+            slot: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    async fn load<F, Fut>(&self, fetch: F) -> Result<Vec<AppDataRecord>, String>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<Vec<AppDataRecord>, String>> + Send + 'static,
+    {
+        let mut guard = self.slot.lock().await;
+        if let Some(existing) = guard.as_ref() {
+            let flight = existing.flight.clone();
+            drop(guard);
+            return flight.await;
+        }
+
+        let id = self.seq.fetch_add(1, Ordering::Relaxed);
+        let flight = fetch().boxed().shared();
+        *guard = Some(InFlightAppData {
+            id,
+            flight: flight.clone(),
+        });
+        drop(guard);
+
+        let result = flight.await;
+        let mut guard = self.slot.lock().await;
+        if guard.as_ref().is_some_and(|slot| slot.id == id) {
+            *guard = None;
+        }
+        result
+    }
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -43,6 +112,9 @@ pub struct AppState {
     pub persistent: Arc<Mutex<PersistentState>>,
     pub cookie_key: Key,
     pub outbox: Outbox,
+    app_data_loader: AppDataLoader,
+    simplefin_cache: Arc<Mutex<Option<CachedBalances>>>,
+    btc_price_cache: Arc<Mutex<Option<BtcPrice>>>,
 }
 
 pub async fn build_router(cfg: Config) -> anyhow::Result<Router> {
@@ -56,6 +128,9 @@ pub async fn build_router(cfg: Config) -> anyhow::Result<Router> {
         persistent: Arc::new(Mutex::new(persistent)),
         cookie_key,
         outbox: Outbox::new(),
+        app_data_loader: AppDataLoader::new(),
+        simplefin_cache: Arc::new(Mutex::new(None)),
+        btc_price_cache: Arc::new(Mutex::new(None)),
     };
 
     let assets_service = ServeDir::new(cfg.static_dir.join("assets"));
@@ -86,7 +161,13 @@ pub async fn build_router(cfg: Config) -> anyhow::Result<Router> {
         .route("/nostr/outbox/clear", post(outbox_clear))
         .route("/blossom/status", get(blossom_status))
         .route("/blossom/upload", post(blossom_upload))
-        .route("/blossom/:sha256", get(blossom_download_handler));
+        .route("/blossom/:sha256", get(blossom_download_handler))
+        .route("/simplefin/status", get(simplefin_status))
+        .route("/simplefin/connect", post(simplefin_connect))
+        .route("/simplefin/sync", post(simplefin_sync))
+        .route("/simplefin/balances", get(simplefin_balances))
+        .route("/simplefin/disconnect", post(simplefin_disconnect))
+        .route("/btc/price", get(btc_price));
 
     let app = Router::new()
         .nest("/api", api)
@@ -243,6 +324,7 @@ async fn auth_lock(
     if let Some(c) = jar.get(SESSION_COOKIE) {
         s.sessions.close(c.value()).await;
     }
+    *s.simplefin_cache.lock().await = None;
     let jar = jar.remove(Cookie::from(SESSION_COOKIE));
     (jar, Json(OkBody { ok: true }))
 }
@@ -278,6 +360,7 @@ async fn auth_wipe(
         s.sessions.close(c.value()).await;
     }
     s.sessions.close_all().await;
+    *s.simplefin_cache.lock().await = None;
     let jar = jar.remove(Cookie::from(SESSION_COOKIE));
     Ok((jar, Json(OkBody { ok: true })))
 }
@@ -399,11 +482,17 @@ async fn list_app_data(
         "fetching FiatLife app-data from relays"
     );
     let cfg = s.cfg.clone();
-    let records = crate::nostr_support::fetch_decrypted_app_data(&keys, &relay_urls, |url| {
-        cfg.relay_connect_options(url)
-    })
-    .await
-    .map_err(|e| AppError::BadRequest(format!("relay fetch failed: {e}")))?;
+    let records = s
+        .app_data_loader
+        .load(move || async move {
+            crate::nostr_support::fetch_decrypted_app_data(&keys, &relay_urls, |url| {
+                cfg.relay_connect_options(url)
+            })
+            .await
+            .map_err(|e| format!("relay fetch failed: {e}"))
+        })
+        .await
+        .map_err(AppError::BadRequest)?;
 
     let records: Vec<_> = records
         .into_iter()
@@ -662,6 +751,240 @@ async fn blossom_download_handler(
             )
         })?;
     download_blob(&blossom_url, &keys, &sha256).await
+}
+
+#[derive(Serialize)]
+struct SimpleFinStatusResponse {
+    connected: bool,
+    connected_at_ms: Option<i64>,
+    last_fetched_at_ms: Option<i64>,
+    create_token_url: &'static str,
+}
+
+#[derive(Deserialize)]
+struct SimpleFinConnectBody {
+    token: String,
+}
+
+#[derive(Serialize)]
+struct SimpleFinBalancesResponse {
+    fetched_at_ms: i64,
+    cached: bool,
+    accounts: Vec<SimpleFinAccount>,
+    messages: Vec<SimpleFinMessage>,
+}
+
+fn balances_response(cached: &CachedBalances, from_cache: bool) -> SimpleFinBalancesResponse {
+    SimpleFinBalancesResponse {
+        fetched_at_ms: cached.fetched_at_ms,
+        cached: from_cache,
+        accounts: cached.snapshot.accounts.clone(),
+        messages: cached.snapshot.messages.clone(),
+    }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+async fn simplefin_status(
+    State(s): State<AppState>,
+    jar: SignedCookieJar,
+) -> AppResult<Json<SimpleFinStatusResponse>> {
+    require_unlocked(&s, &jar).await?;
+    let p = s.persistent.lock().await;
+    let record = p.simplefin.as_ref();
+    Ok(Json(SimpleFinStatusResponse {
+        connected: record.is_some(),
+        connected_at_ms: record.map(|r| r.connected_at_ms),
+        last_fetched_at_ms: record.and_then(|r| r.last_fetched_at_ms),
+        create_token_url: simplefin::CREATE_TOKEN_URL,
+    }))
+}
+
+async fn simplefin_connect(
+    State(s): State<AppState>,
+    jar: SignedCookieJar,
+    Json(body): Json<SimpleFinConnectBody>,
+) -> AppResult<Json<SimpleFinBalancesResponse>> {
+    let (keys, _) = require_keys(&s, &jar).await?;
+    let claim_url = simplefin::claim_url_from_token(&body.token)?;
+    let access_url = zeroize::Zeroizing::new(simplefin::claim_access_url(claim_url).await?);
+    let access_url_nip44 = encrypt_to_self(&keys, &access_url).map_err(AppError::Internal)?;
+    {
+        let mut p = s.persistent.lock().await;
+        p.simplefin = Some(SimpleFinRecord {
+            access_url_nip44,
+            connected_at_ms: now_ms(),
+            last_fetched_at_ms: None,
+            last_snapshot_nip44: None,
+        });
+        p.save(&s.cfg.state_path()).map_err(AppError::Internal)?;
+    }
+    let mut cache = s.simplefin_cache.lock().await;
+    *cache = None;
+    let fetched = fetch_simplefin_balances(&s, &keys, &access_url).await.map_err(|e| match e {
+        AppError::BadRequest(msg) => AppError::BadRequest(format!(
+            "Connected to SimpleFIN, but the first balance fetch failed: {msg}"
+        )),
+        other => other,
+    })?;
+    let response = balances_response(&fetched, false);
+    *cache = Some(fetched);
+    Ok(Json(response))
+}
+
+async fn simplefin_sync(
+    State(s): State<AppState>,
+    jar: SignedCookieJar,
+) -> AppResult<Json<SimpleFinBalancesResponse>> {
+    let (keys, _) = require_keys(&s, &jar).await?;
+    // Held across the fetch so overlapping syncs share one request.
+    let mut cache = s.simplefin_cache.lock().await;
+    restore_simplefin_cache(&s, &keys, &mut cache).await;
+    if let Some(cached) = cache.as_ref() {
+        if now_ms() - cached.fetched_at_ms < SIMPLEFIN_MIN_REFETCH_MS {
+            return Ok(Json(balances_response(cached, true)));
+        }
+    }
+    let record = s
+        .persistent
+        .lock()
+        .await
+        .simplefin
+        .clone()
+        .ok_or_else(|| AppError::BadRequest("SimpleFIN is not connected.".into()))?;
+    let access_url = zeroize::Zeroizing::new(
+        decrypt_from_self(&keys, &record.access_url_nip44).map_err(AppError::Internal)?,
+    );
+    let fetched = fetch_simplefin_balances(&s, &keys, &access_url).await?;
+    let response = balances_response(&fetched, false);
+    *cache = Some(fetched);
+    Ok(Json(response))
+}
+
+/// Last fetched balances without contacting SimpleFIN; null before the first fetch.
+async fn simplefin_balances(
+    State(s): State<AppState>,
+    jar: SignedCookieJar,
+) -> AppResult<Json<Option<SimpleFinBalancesResponse>>> {
+    let (keys, _) = require_keys(&s, &jar).await?;
+    let mut cache = s.simplefin_cache.lock().await;
+    restore_simplefin_cache(&s, &keys, &mut cache).await;
+    Ok(Json(cache.as_ref().map(|c| balances_response(c, true))))
+}
+
+/// Refill the in-memory cache from the encrypted snapshot in state.json.
+async fn restore_simplefin_cache(
+    s: &AppState,
+    keys: &nostr::Keys,
+    cache: &mut Option<CachedBalances>,
+) {
+    if cache.is_some() {
+        return;
+    }
+    let (ciphertext, fetched_at_ms) = {
+        let p = s.persistent.lock().await;
+        match p.simplefin.as_ref() {
+            Some(SimpleFinRecord {
+                last_snapshot_nip44: Some(c),
+                last_fetched_at_ms: Some(t),
+                ..
+            }) => (c.clone(), *t),
+            _ => return,
+        }
+    };
+    let snapshot = decrypt_from_self(keys, &ciphertext)
+        .ok()
+        .and_then(|json| serde_json::from_str::<BalancesSnapshot>(&json).ok());
+    match snapshot {
+        Some(snapshot) => {
+            *cache = Some(CachedBalances {
+                fetched_at_ms,
+                snapshot,
+            })
+        }
+        None => tracing::warn!("could not restore saved SimpleFIN snapshot; next sync will refetch"),
+    }
+}
+
+async fn fetch_simplefin_balances(
+    s: &AppState,
+    keys: &nostr::Keys,
+    access_url: &str,
+) -> AppResult<CachedBalances> {
+    let snapshot = simplefin::fetch_balances(access_url).await?;
+    let fetched_at_ms = now_ms();
+    let snapshot_json = serde_json::to_string(&snapshot)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
+    let snapshot_nip44 = encrypt_to_self(keys, &snapshot_json).map_err(AppError::Internal)?;
+    let mut p = s.persistent.lock().await;
+    if let Some(record) = p.simplefin.as_mut() {
+        record.last_fetched_at_ms = Some(fetched_at_ms);
+        record.last_snapshot_nip44 = Some(snapshot_nip44);
+        p.save(&s.cfg.state_path()).map_err(AppError::Internal)?;
+    }
+    Ok(CachedBalances {
+        fetched_at_ms,
+        snapshot,
+    })
+}
+
+#[derive(Serialize)]
+struct BtcPriceResponse {
+    #[serde(flatten)]
+    price: BtcPrice,
+    /// True when the latest fetch failed and an older price is returned.
+    stale: bool,
+}
+
+async fn btc_price(
+    State(s): State<AppState>,
+    jar: SignedCookieJar,
+) -> AppResult<Json<BtcPriceResponse>> {
+    require_unlocked(&s, &jar).await?;
+    let mut cache = s.btc_price_cache.lock().await;
+    let now = now_ms();
+    if let Some(cached) = cache.as_ref() {
+        if now - cached.fetched_at_ms < BTC_PRICE_TTL_MS {
+            return Ok(Json(BtcPriceResponse {
+                price: cached.clone(),
+                stale: false,
+            }));
+        }
+    }
+    match fetch_btc_price(now).await {
+        Ok(price) => {
+            *cache = Some(price.clone());
+            Ok(Json(BtcPriceResponse {
+                price,
+                stale: false,
+            }))
+        }
+        Err(err) => match cache.as_ref() {
+            Some(cached) => Ok(Json(BtcPriceResponse {
+                price: cached.clone(),
+                stale: true,
+            })),
+            None => Err(AppError::BadRequest(err.to_string())),
+        },
+    }
+}
+
+async fn simplefin_disconnect(
+    State(s): State<AppState>,
+    jar: SignedCookieJar,
+) -> AppResult<Json<OkBody>> {
+    require_unlocked(&s, &jar).await?;
+    let mut cache = s.simplefin_cache.lock().await;
+    let mut p = s.persistent.lock().await;
+    p.simplefin = None;
+    p.save(&s.cfg.state_path()).map_err(AppError::Internal)?;
+    *cache = None;
+    Ok(Json(OkBody { ok: true }))
 }
 
 async fn require_unlocked(s: &AppState, jar: &SignedCookieJar) -> AppResult<()> {

@@ -50,12 +50,17 @@ pub async fn send_event(
     Ok(())
 }
 
+pub struct RelayFetch {
+    pub events: Vec<Event>,
+    pub eose: bool,
+}
+
 pub async fn fetch_events(
     keys: &Keys,
     relay_url: &str,
     filter: Filter,
     opts: RelayConnectOptions,
-) -> anyhow::Result<Vec<Event>> {
+) -> anyhow::Result<RelayFetch> {
     if !opts.insecure_tls || !relay_url.starts_with("wss://") {
         return Err(anyhow!(
             "raw fetch requires wss:// with insecure relay TLS enabled"
@@ -70,6 +75,8 @@ pub async fn fetch_events(
     let mut events = Vec::new();
     let mut eose = false;
 
+    // Wait for a NIP-42 challenge, but do not sit out the full fallback once
+    // the relay has either authenticated or stayed silent (no auth required).
     let auth_deadline = Instant::now() + AUTH_WAIT_FALLBACK;
     while Instant::now() < auth_deadline {
         let remaining = auth_deadline.saturating_duration_since(Instant::now());
@@ -78,9 +85,8 @@ pub async fn fetch_events(
             break;
         };
         if handle_inbound_for_auth(&mut ws, keys, relay_url, &msg).await? {
-            continue;
+            break;
         }
-        let _ = msg;
     }
 
     ws.send(Message::Text(req.into()))
@@ -131,7 +137,7 @@ pub async fn fetch_events(
     }
 
     let _ = ws.close(None).await;
-    Ok(events)
+    Ok(RelayFetch { events, eose })
 }
 
 async fn read_ws_message(ws: &mut WsStream, wait: Duration) -> anyhow::Result<Option<Message>> {
@@ -298,7 +304,7 @@ mod tests {
             .author(author)
             .kind(Kind::Custom(30078))
             .limit(50);
-        let events = fetch_events(
+        let fetched = fetch_events(
             &keys,
             &relay,
             filter,
@@ -308,8 +314,12 @@ mod tests {
         )
         .await
         .expect("relay fetch");
-        eprintln!("found {} kind-30078 event(s) for {npub}", events.len());
-        for event in &events {
+        eprintln!(
+            "found {} kind-30078 event(s) for {npub} (eose={})",
+            fetched.events.len(),
+            fetched.eose
+        );
+        for event in &fetched.events {
             eprintln!("  d={:?}", event.tags.identifier());
         }
     }

@@ -29,6 +29,23 @@ pub struct PersistentState {
     /// without holding the secret key. The npub is public, so persisting
     /// it in plaintext is fine.
     pub npub: Option<String>,
+    #[serde(default)]
+    pub simplefin: Option<SimpleFinRecord>,
+}
+
+/// SimpleFIN Bridge connection. The access URL carries bank-data read
+/// credentials, so it is stored NIP-44 encrypted to self and is only readable
+/// while the server is unlocked.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimpleFinRecord {
+    pub access_url_nip44: String,
+    pub connected_at_ms: i64,
+    #[serde(default)]
+    pub last_fetched_at_ms: Option<i64>,
+    /// Last balances snapshot (JSON), NIP-44 encrypted to self, so the account
+    /// list and the refetch window survive locks and restarts.
+    #[serde(default)]
+    pub last_snapshot_nip44: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +63,7 @@ impl Default for PersistentState {
             relay_url: None,
             relay_urls: Vec::new(),
             npub: None,
+            simplefin: None,
         }
     }
 }

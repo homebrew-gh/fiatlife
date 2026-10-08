@@ -4,13 +4,13 @@
 //! patterns so the Start9 package speaks the same NIP-42/NIP-44/kind-30078
 //! dialect as the desktop client.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use anyhow::{anyhow, Context};
 use nostr::message::RelayMessage;
 use nostr::nips::nip44;
-use nostr::{Event, EventBuilder, Filter, Keys, Kind, Tag, ToBech32};
+use nostr::{Event, EventBuilder, EventId, Filter, Keys, Kind, Tag, Timestamp, ToBech32};
 use nostr_sdk::Client;
 use serde::Serialize;
 
@@ -23,6 +23,11 @@ const KIND_EVENT_DELETION: u16 = 5;
 
 const RELAY_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const RELAY_AUTH_SETTLE: Duration = Duration::from_secs(3);
+/// Page size for kind queries. Relays often cap a single REQ well below the
+/// number of FiatLife records a user has; a full page means we must continue.
+const RELAY_PAGE_LIMIT: usize = 500;
+const MAX_RELAY_PAGES: usize = 40;
+const RELAY_PAGE_TIMEOUT: Duration = Duration::from_secs(25);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct KeyIdentity {
@@ -111,6 +116,65 @@ fn decrypt_subscription_content(
     }
 }
 
+struct RelayPage {
+    events: Vec<Event>,
+    eose: bool,
+}
+
+fn kind_page_filter(keys: &Keys, kind: u16, until: Option<u64>) -> Filter {
+    let mut filter = Filter::new()
+        .author(keys.public_key())
+        .kind(Kind::Custom(kind))
+        .limit(RELAY_PAGE_LIMIT);
+    if let Some(until) = until {
+        filter = filter.until(Timestamp::from(until));
+    }
+    filter
+}
+
+/// Next `until` cursor for a newest-first relay page, or `None` when the page
+/// already contained the rest of the query.
+///
+/// `until` is inclusive, so a full page continues from its oldest `created_at`
+/// and the caller dedupes the overlap. A full page of already-seen events steps
+/// back one second so a relay that returns the same boundary events cannot loop.
+pub fn next_page_until(
+    page_len: usize,
+    page_limit: usize,
+    oldest_created_at: u64,
+    new_event_count: usize,
+    previous_until: Option<u64>,
+) -> Option<u64> {
+    if page_len == 0 || page_len < page_limit {
+        return None;
+    }
+    let candidate = if new_event_count == 0 {
+        oldest_created_at.saturating_sub(1)
+    } else {
+        oldest_created_at
+    };
+    if previous_until == Some(candidate) {
+        let stepped = oldest_created_at.saturating_sub(1);
+        if previous_until == Some(stepped) {
+            return None;
+        }
+        return Some(stepped);
+    }
+    Some(candidate)
+}
+
+fn merge_page(all: &mut Vec<Event>, seen: &mut HashSet<EventId>, page: Vec<Event>) -> (usize, Option<u64>) {
+    let oldest = page.iter().map(|event| event.created_at.as_secs()).min();
+    let mut added = 0usize;
+    for event in page {
+        if seen.insert(event.id) {
+            all.push(event);
+            added += 1;
+        }
+    }
+    (added, oldest)
+}
+
 pub async fn fetch_kind_events(
     keys: &Keys,
     relay_url: &str,
@@ -119,25 +183,109 @@ pub async fn fetch_kind_events(
 ) -> anyhow::Result<Vec<Event>> {
     let relay_url = resolve_relay_url(relay_url);
     if opts.insecure_tls && relay_url.starts_with("wss://") {
-        let filter = Filter::new()
-            .author(keys.public_key())
-            .kind(Kind::Custom(kind))
-            .limit(200);
-        return relay_raw::fetch_events(keys, &relay_url, filter, opts).await;
+        return fetch_kind_events_raw(keys, &relay_url, kind, opts).await;
     }
 
     let client = prepare_relay_client(keys, &relay_url).await?;
+    let mut all = Vec::new();
+    let mut seen = HashSet::new();
+    let mut until: Option<u64> = None;
 
-    let filter = Filter::new()
-        .author(keys.public_key())
-        .kind(Kind::Custom(kind))
-        .limit(200);
+    for page_index in 0..MAX_RELAY_PAGES {
+        let filter = kind_page_filter(keys, kind, until);
+        let page = fetch_sdk_page(&client, &relay_url, filter).await?;
+        let page_len = page.events.len();
+        let eose = page.eose;
+        let (added, oldest) = merge_page(&mut all, &mut seen, page.events);
+        tracing::debug!(
+            %relay_url,
+            kind,
+            page_index,
+            page_len,
+            added,
+            eose,
+            total = all.len(),
+            "fetched relay page"
+        );
+        if !eose {
+            tracing::warn!(
+                %relay_url,
+                kind,
+                page_len,
+                "relay page ended before EOSE; results may be incomplete"
+            );
+        }
+        let Some(oldest) = oldest else {
+            break;
+        };
+        match next_page_until(page_len, RELAY_PAGE_LIMIT, oldest, added, until) {
+            Some(next) => until = Some(next),
+            None => break,
+        }
+    }
 
-    let sub_output = client.subscribe_to([&relay_url], filter, None).await?;
-    let sub_id = sub_output.val;
+    client.shutdown().await;
+    Ok(all)
+}
+
+async fn fetch_kind_events_raw(
+    keys: &Keys,
+    relay_url: &str,
+    kind: u16,
+    opts: RelayConnectOptions,
+) -> anyhow::Result<Vec<Event>> {
+    let mut all = Vec::new();
+    let mut seen = HashSet::new();
+    let mut until: Option<u64> = None;
+
+    for page_index in 0..MAX_RELAY_PAGES {
+        let filter = kind_page_filter(keys, kind, until);
+        let page = relay_raw::fetch_events(keys, relay_url, filter, opts).await?;
+        let page_len = page.events.len();
+        let eose = page.eose;
+        let (added, oldest) = merge_page(&mut all, &mut seen, page.events);
+        tracing::debug!(
+            %relay_url,
+            kind,
+            page_index,
+            page_len,
+            added,
+            eose,
+            total = all.len(),
+            "fetched relay page"
+        );
+        if !eose {
+            tracing::warn!(
+                %relay_url,
+                kind,
+                page_len,
+                "relay page ended before EOSE; results may be incomplete"
+            );
+        }
+        let Some(oldest) = oldest else {
+            break;
+        };
+        match next_page_until(page_len, RELAY_PAGE_LIMIT, oldest, added, until) {
+            Some(next) => until = Some(next),
+            None => break,
+        }
+    }
+
+    Ok(all)
+}
+
+async fn fetch_sdk_page(
+    client: &Client,
+    relay_url: &str,
+    filter: Filter,
+) -> anyhow::Result<RelayPage> {
+    // Subscribe to the broadcast before REQ so events are not missed.
     let mut notifications = client.notifications();
+    let sub_output = client.subscribe_to([relay_url], filter, None).await?;
+    let sub_id = sub_output.val;
     let mut events = Vec::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(25);
+    let mut eose = false;
+    let deadline = tokio::time::Instant::now() + RELAY_PAGE_TIMEOUT;
 
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -153,6 +301,7 @@ pub async fn fetch_kind_events(
             Ok(nostr_sdk::RelayPoolNotification::Message { message, .. }) => {
                 if let RelayMessage::EndOfStoredEvents(eose_id) = &message {
                     if eose_id.as_ref() == &sub_id {
+                        eose = true;
                         break;
                     }
                 }
@@ -164,8 +313,7 @@ pub async fn fetch_kind_events(
     }
 
     client.unsubscribe(&sub_id).await;
-    client.shutdown().await;
-    Ok(events)
+    Ok(RelayPage { events, eose })
 }
 
 pub async fn fetch_app_data_events(
@@ -548,6 +696,22 @@ mod tests {
     fn parse_nsec_rejects_non_nsec_input() {
         let err = parse_nsec("not-a-secret").expect_err("invalid secret");
         assert!(err.to_string().contains("nsec1"));
+    }
+
+    #[test]
+    fn next_page_until_stops_on_short_page() {
+        assert_eq!(next_page_until(12, 500, 1000, 12, None), None);
+    }
+
+    #[test]
+    fn next_page_until_continues_from_oldest_on_a_full_page() {
+        assert_eq!(next_page_until(500, 500, 1000, 500, None), Some(1000));
+    }
+
+    #[test]
+    fn next_page_until_steps_back_when_a_full_page_is_all_duplicates() {
+        assert_eq!(next_page_until(500, 500, 1000, 0, Some(1000)), Some(999));
+        assert_eq!(next_page_until(500, 500, 1000, 0, Some(999)), None);
     }
 
     #[test]
