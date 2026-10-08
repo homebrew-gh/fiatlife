@@ -389,7 +389,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.whatIfContent(
             EditableTaxLine(
                 label = "Federal Income Tax",
                 amount = calc.federalTax,
-                defaultRate = calc.federalMarginalRate,
+                defaultRate = calc.federalEffectiveRate,
                 customRate = state.config.taxOverrides.customFederalTaxRate,
                 onRateChange = { viewModel.updateCustomFederalTaxRate(it) }
             )
@@ -903,11 +903,15 @@ private fun androidx.compose.foundation.lazy.LazyListScope.summaryContent(
                 )
                 Text(
                     text = if (annual.source == AnnualExtrapolation.Source.LOGGED) {
-                        "YTD actuals from ${annual.basedOnPaychecks} logged paycheck" +
-                                if (annual.basedOnPaychecks == 1) "" else "s" +
-                                ", plus latest pay rate × ${annual.remainingPaychecksProjected} " +
-                                "remaining pay period" +
-                                if (annual.remainingPaychecksProjected == 1) "" else "s" + "."
+                        val logged = annual.basedOnPaychecks
+                        val remaining = annual.remainingPaychecksProjected
+                        val unlogged = annual.unloggedPastPaychecks
+                        "YTD actuals from $logged logged paycheck${if (logged == 1) "" else "s"}, " +
+                            "plus $remaining more paycheck${if (remaining == 1) "" else "s"} at your " +
+                            "latest pay rate with the tax and deduction rates from your recent stubs." +
+                            if (unlogged > 0) {
+                                " Includes $unlogged past payday${if (unlogged == 1) "" else "s"} not logged yet."
+                            } else ""
                     } else {
                         "Log paychecks to project from actual stubs, or use Model settings until then."
                     },
@@ -988,7 +992,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.summaryContent(
                     )
                 }
                 if (showAnnualDetails) {
-                    FederalTaxReturnSection(config = state.config, annual = annual)
+                    FederalTaxReturnSection(config = state.config, annual = annual, year = state.summaryYear)
 
                     if (annual.earnings.isNotEmpty()) {
                         BreakdownCardCompose("Earnings", annual.earnings, annual.annualGrossPay, negative = false)
@@ -2514,11 +2518,13 @@ private fun DepositDialog(
 @Composable
 private fun FederalTaxReturnSection(
     config: SalaryConfig,
-    annual: AnnualExtrapolation
+    annual: AnnualExtrapolation,
+    year: Int
 ) {
-    val projection = remember(config, annual) {
-        SalarySummary.projectFederalTaxReturn(config, annual)
+    val projection = remember(config, annual, year) {
+        SalarySummary.projectFederalTaxReturn(config, annual, year)
     }
+    val tableYear = FederalTaxTables.tableYear(year)
     val filingLabel = when (config.filingStatus) {
         FilingStatus.SINGLE -> "Single"
         FilingStatus.MARRIED_FILING_JOINTLY -> "Married filing jointly"
@@ -2537,11 +2543,24 @@ private fun FederalTaxReturnSection(
         }
 
         Text(
-            text = "W-2 estimate for $filingLabel using the standard deduction. " +
-                    "Excludes credits, other income, and itemized deductions.",
+            text = "W-2 estimate for $filingLabel using $tableYear federal brackets and the " +
+                    "standard deduction" +
+                    (if (tableYear != year) " ($year figures aren't published yet)" else "") +
+                    ". Excludes credits (child tax credit, etc.), other income, and itemized deductions.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        val missingFederal = projection.paychecksMissingFederalLine
+        if (missingFederal > 0) {
+            Text(
+                text = "$missingFederal logged paycheck${if (missingFederal == 1) " has" else "s have"} " +
+                    "taxes but no line recognized as federal income tax, so withholding is " +
+                    "undercounted. Label it like \"Federal income tax\" or \"FITW\".",
+                style = MaterialTheme.typography.bodySmall,
+                color = LossRed,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
 
         val refund = projection.refundOrBalance
         val (outcomeLabel, outcomeAmount, outcomePositive) = when {
@@ -2596,6 +2615,9 @@ private fun FederalTaxReturnSection(
             projection.standardDeduction,
             negative = true
         )
+        if (projection.overtimeDeduction > 0.0) {
+            ReturnLine("Overtime premium deduction", projection.overtimeDeduction, negative = true)
+        }
         ReturnLine("Federal taxable income", projection.federalTaxableIncome, bold = true)
         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
         ReturnLine("Estimated federal tax owed", projection.estimatedFederalTaxOwed)

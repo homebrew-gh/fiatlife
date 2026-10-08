@@ -9,6 +9,8 @@ data class PaycheckCalculation(
     val federalTaxableIncome: Double = 0.0,
     val federalTax: Double = 0.0,
     val federalMarginalRate: Double = 0.0,
+    /** Bracket-based federal withholding ÷ taxable wages (what a custom rate replaces). */
+    val federalEffectiveRate: Double = 0.0,
     val stateTax: Double = 0.0,
     val stateTaxRate: Double = 0.0,
     val countyTax: Double = 0.0,
@@ -61,87 +63,116 @@ data class AnnualProjection(
     val perPaycheckNet: Double = 0.0
 )
 
+/** Mirrors web `calculatePaycheck` / `calculateAnnual` in `lib/salary.ts`. */
 object PaycheckCalculator {
+
+    private data class AnnualWithholding(
+        val federal: Double,
+        val state: Double,
+        val county: Double,
+        val socialSecurity: Double,
+        val medicare: Double,
+        val federalTaxable: Double,
+        val federalMarginalRate: Double,
+        val federalEffectiveRate: Double,
+        val stateRate: Double,
+        val countyRate: Double,
+        val socialSecurityRate: Double,
+        val medicareRate: Double
+    ) {
+        val total: Double get() = federal + state + county + socialSecurity + medicare
+    }
+
+    /**
+     * Annual withholding for a year of wages. Income taxes apply to gross minus all
+     * pre-tax deductions; Social Security and Medicare apply to gross minus only the
+     * FICA-exempt ones (a traditional 401(k) still owes FICA).
+     */
+    private fun annualWithholding(
+        config: SalaryConfig,
+        annualGross: Double,
+        annualPreTax: Double,
+        annualFicaExempt: Double,
+        periods: Int,
+        year: Int
+    ): AnnualWithholding {
+        val overrides = config.taxOverrides
+        val annualTaxable = (annualGross - annualPreTax).coerceAtLeast(0.0)
+        val federalTaxable =
+            (annualTaxable - FederalTaxTables.standardDeduction(config.filingStatus, year)).coerceAtLeast(0.0)
+        val customFederal = overrides.customFederalTaxRate
+        val bracketFederal = FederalTaxTables.calculateTax(federalTaxable, config.filingStatus, year)
+        val baseFederal = if (customFederal != null) annualTaxable * customFederal else bracketFederal
+        val federal = if (overrides.isExemptFromFederal) 0.0
+        else baseFederal + overrides.federalAdditionalWithholding * periods
+
+        val stateRate = if (overrides.isExemptFromState) 0.0
+        else overrides.customStateTaxRate ?: FederalTaxTables.estimateStateTaxRate(config.state)
+        val state = if (overrides.isExemptFromState) 0.0
+        else annualTaxable * stateRate + overrides.stateAdditionalWithholding * periods
+
+        val countyRate = if (overrides.isExemptFromLocal) 0.0 else overrides.customCountyTaxRate ?: 0.0
+        val county = annualTaxable * countyRate
+
+        val ficaWages = (annualGross - annualFicaExempt).coerceAtLeast(0.0)
+        val ssRate = overrides.customSocialSecurityRate ?: FicaTaxRates.SOCIAL_SECURITY_RATE
+        val socialSecurity = ficaWages.coerceAtMost(FederalTaxTables.socialSecurityWageBase(year)) * ssRate
+        val medRate = overrides.customMedicareRate ?: FicaTaxRates.MEDICARE_RATE
+        val threshold = FicaTaxRates.ADDITIONAL_MEDICARE_WITHHOLDING_THRESHOLD
+        val medicare = ficaWages * medRate +
+            if (overrides.customMedicareRate == null && ficaWages > threshold)
+                (ficaWages - threshold) * FicaTaxRates.ADDITIONAL_MEDICARE_RATE
+            else 0.0
+
+        return AnnualWithholding(
+            federal = federal,
+            state = state,
+            county = county,
+            socialSecurity = socialSecurity,
+            medicare = medicare,
+            federalTaxable = federalTaxable,
+            federalMarginalRate = customFederal
+                ?: FederalTaxTables.marginalRate(federalTaxable, config.filingStatus, year),
+            federalEffectiveRate = if (annualTaxable > 0) bracketFederal / annualTaxable else 0.0,
+            stateRate = stateRate,
+            countyRate = countyRate,
+            socialSecurityRate = ssRate,
+            medicareRate = medRate
+        )
+    }
+
+    private fun deductionAmount(d: Deduction, grossPay: Double): Double =
+        if (d.isPercentage) grossPay * (d.amount / 100.0) else d.amount
+
+    private fun deductionLines(deductions: List<Deduction>, grossPay: Double): List<DeductionLine> =
+        deductions.filter { it.isEnabled }.map { d ->
+            DeductionLine(name = d.name, amount = deductionAmount(d, grossPay), category = d.category)
+        }
+
+    private fun ficaExemptPreTax(deductions: List<Deduction>, grossPay: Double): Double =
+        deductions.filter { it.isEnabled && it.isFicaExempt }.sumOf { deductionAmount(it, grossPay) }
 
     fun calculate(config: SalaryConfig, asOf: Long = System.currentTimeMillis()): PaycheckCalculation {
         val rate = SalarySummary.effectiveRateAt(config, asOf)
         val regularPay = SalarySummary.periodRegularGross(rate, config.payFrequency)
         val overtimePay = rate.hourlyRate * config.overtimeMultiplier * config.overtimeHours
         val grossPay = regularPay + overtimePay
-
-        val enabledPreTax = config.preTaxDeductions.filter { it.isEnabled }
-        val enabledPostTax = config.postTaxDeductions.filter { it.isEnabled }
-
-        val preTaxBreakdown = enabledPreTax.map { d ->
-            DeductionLine(
-                name = d.name,
-                amount = if (d.isPercentage) grossPay * (d.amount / 100.0) else d.amount,
-                category = d.category
-            )
-        }
-        val totalPreTax = preTaxBreakdown.sumOf { it.amount }
-
-        val taxableGross = grossPay - totalPreTax
         val periodsPerYear = config.payFrequency.periodsPerYear
 
-        val annualTaxable = taxableGross * periodsPerYear
-        val standardDeduction = FederalTaxTables.standardDeduction(config.filingStatus)
-        val federalTaxableAnnual = (annualTaxable - standardDeduction).coerceAtLeast(0.0)
-
-        val federalMarginalRate = config.taxOverrides.customFederalTaxRate
-            ?: findMarginalRate(federalTaxableAnnual, config.filingStatus)
-        val federalTax = if (config.taxOverrides.isExemptFromFederal) 0.0
-        else {
-            val customRate = config.taxOverrides.customFederalTaxRate
-            val annualFederal = if (customRate != null) {
-                annualTaxable * customRate
-            } else {
-                calculateFederalTax(federalTaxableAnnual, config.filingStatus)
-            }
-            (annualFederal / periodsPerYear) + config.taxOverrides.federalAdditionalWithholding
-        }
-
-        val stateTaxRate = if (config.taxOverrides.isExemptFromState) 0.0
-        else config.taxOverrides.customStateTaxRate ?: estimateStateTaxRate(config.state)
-        val stateTax = if (config.taxOverrides.isExemptFromState) 0.0
-        else {
-            val annualState = annualTaxable * stateTaxRate
-            (annualState / periodsPerYear) + config.taxOverrides.stateAdditionalWithholding
-        }
-
-        val countyTaxRate = if (config.taxOverrides.isExemptFromLocal) 0.0
-        else config.taxOverrides.customCountyTaxRate ?: 0.0
-        val countyTax = if (config.taxOverrides.isExemptFromLocal) 0.0
-        else (annualTaxable * countyTaxRate) / periodsPerYear
-
+        val preTaxBreakdown = deductionLines(config.preTaxDeductions, grossPay)
+        val totalPreTax = preTaxBreakdown.sumOf { it.amount }
         val annualGross = grossPay * periodsPerYear
-        val ssRate = config.taxOverrides.customSocialSecurityRate ?: FicaTaxRates.SOCIAL_SECURITY_RATE
-        val socialSecurity = run {
-            val annualSS = annualGross.coerceAtMost(FicaTaxRates.SOCIAL_SECURITY_WAGE_BASE) * ssRate
-            annualSS / periodsPerYear
-        }
-        val medRate = config.taxOverrides.customMedicareRate ?: FicaTaxRates.MEDICARE_RATE
-        val medicare = run {
-            val threshold = when (config.filingStatus) {
-                FilingStatus.MARRIED_FILING_JOINTLY -> FicaTaxRates.ADDITIONAL_MEDICARE_THRESHOLD_JOINT
-                else -> FicaTaxRates.ADDITIONAL_MEDICARE_THRESHOLD_SINGLE
-            }
-            val baseMedicare = annualGross * medRate
-            val additionalMedicare = if (config.taxOverrides.customMedicareRate == null && annualGross > threshold) {
-                (annualGross - threshold) * FicaTaxRates.ADDITIONAL_MEDICARE_RATE
-            } else 0.0
-            (baseMedicare + additionalMedicare) / periodsPerYear
-        }
+        val taxes = annualWithholding(
+            config,
+            annualGross = annualGross,
+            annualPreTax = totalPreTax * periodsPerYear,
+            annualFicaExempt = ficaExemptPreTax(config.preTaxDeductions, grossPay) * periodsPerYear,
+            periods = periodsPerYear,
+            year = SalarySummary.yearOf(asOf)
+        )
+        val totalTaxes = taxes.total / periodsPerYear
 
-        val totalTaxes = federalTax + stateTax + countyTax + socialSecurity + medicare
-
-        val postTaxBreakdown = enabledPostTax.map { d ->
-            DeductionLine(
-                name = d.name,
-                amount = if (d.isPercentage) grossPay * (d.amount / 100.0) else d.amount,
-                category = d.category
-            )
-        }
+        val postTaxBreakdown = deductionLines(config.postTaxDeductions, grossPay)
         val totalPostTax = postTaxBreakdown.sumOf { it.amount }
 
         val netPay = grossPay - totalPreTax - totalTaxes - totalPostTax
@@ -155,17 +186,18 @@ object PaycheckCalculator {
             overtimePay = overtimePay,
             totalPreTaxDeductions = totalPreTax,
             preTaxDeductionBreakdown = preTaxBreakdown,
-            federalTaxableIncome = federalTaxableAnnual / periodsPerYear,
-            federalTax = federalTax,
-            federalMarginalRate = federalMarginalRate,
-            stateTax = stateTax,
-            stateTaxRate = stateTaxRate,
-            countyTax = countyTax,
-            countyTaxRate = countyTaxRate,
-            socialSecurity = socialSecurity,
-            socialSecurityRate = ssRate,
-            medicare = medicare,
-            medicareRate = medRate,
+            federalTaxableIncome = taxes.federalTaxable / periodsPerYear,
+            federalTax = taxes.federal / periodsPerYear,
+            federalMarginalRate = taxes.federalMarginalRate,
+            federalEffectiveRate = taxes.federalEffectiveRate,
+            stateTax = taxes.state / periodsPerYear,
+            stateTaxRate = taxes.stateRate,
+            countyTax = taxes.county / periodsPerYear,
+            countyTaxRate = taxes.countyRate,
+            socialSecurity = taxes.socialSecurity / periodsPerYear,
+            socialSecurityRate = taxes.socialSecurityRate,
+            medicare = taxes.medicare / periodsPerYear,
+            medicareRate = taxes.medicareRate,
             totalTaxes = totalTaxes,
             totalPostTaxDeductions = totalPostTax,
             postTaxDeductionBreakdown = postTaxBreakdown,
@@ -176,43 +208,6 @@ object PaycheckCalculator {
             depositAllocations = depositAllocations,
             unallocatedAmount = netPay - allocatedTotal
         )
-    }
-
-    private fun calculateFederalTax(taxableIncome: Double, status: FilingStatus): Double {
-        val brackets = FederalTaxTables.bracketsFor(status)
-        for (bracket in brackets.reversed()) {
-            if (taxableIncome > bracket.min) {
-                return bracket.baseTax + (taxableIncome - bracket.min) * bracket.rate
-            }
-        }
-        return 0.0
-    }
-
-    private fun calculateSocialSecurity(
-        periodTaxable: Double,
-        annualGross: Double,
-        periodsPerYear: Int
-    ): Double {
-        val annualSS = (annualGross.coerceAtMost(FicaTaxRates.SOCIAL_SECURITY_WAGE_BASE)) *
-                FicaTaxRates.SOCIAL_SECURITY_RATE
-        return annualSS / periodsPerYear
-    }
-
-    private fun calculateMedicare(
-        periodTaxable: Double,
-        annualGross: Double,
-        periodsPerYear: Int,
-        status: FilingStatus
-    ): Double {
-        val threshold = when (status) {
-            FilingStatus.MARRIED_FILING_JOINTLY -> FicaTaxRates.ADDITIONAL_MEDICARE_THRESHOLD_JOINT
-            else -> FicaTaxRates.ADDITIONAL_MEDICARE_THRESHOLD_SINGLE
-        }
-        val baseMedicare = annualGross * FicaTaxRates.MEDICARE_RATE
-        val additionalMedicare = if (annualGross > threshold) {
-            (annualGross - threshold) * FicaTaxRates.ADDITIONAL_MEDICARE_RATE
-        } else 0.0
-        return (baseMedicare + additionalMedicare) / periodsPerYear
     }
 
     fun calculateDepositAllocations(
@@ -246,22 +241,21 @@ object PaycheckCalculator {
         return allocations.sortedBy { it.deposit.sortOrder }
     }
 
+    /** Sum of base/regular gross across a year's paydays, honoring mid-year raises. */
     private fun annualRegularPayForYear(config: SalaryConfig, year: Int): Double {
-        val periodsPerYear = config.payFrequency.periodsPerYear
         val anchor = config.firstPaydayOfYearMillis
-        if (config.payRateHistory.isEmpty() || anchor == null) {
-            val rate = SalarySummary.effectiveRateAt(config, anchor ?: System.currentTimeMillis())
-            return SalarySummary.periodRegularGross(rate, config.payFrequency) * periodsPerYear
-        }
-        val cal = java.util.Calendar.getInstance()
-        cal.clear(); cal.set(year, java.util.Calendar.JANUARY, 1, 0, 0, 0)
-        val start = cal.timeInMillis
-        cal.clear(); cal.set(year, java.util.Calendar.DECEMBER, 31, 23, 59, 59)
-        val end = cal.timeInMillis
-        val paydays = SalarySummary.enumeratePaydays(anchor, config.payFrequency, start, end)
+        val paydays = if (anchor != null) {
+            SalarySummary.enumeratePaydays(
+                anchor,
+                config.payFrequency,
+                SalarySummary.yearStart(year),
+                SalarySummary.yearEnd(year)
+            )
+        } else emptyList()
         if (paydays.isEmpty()) {
             val rate = SalarySummary.effectiveRateAt(config, System.currentTimeMillis())
-            return SalarySummary.periodRegularGross(rate, config.payFrequency) * periodsPerYear
+            return SalarySummary.periodRegularGross(rate, config.payFrequency) *
+                config.payFrequency.periodsPerYear
         }
         return paydays.sumOf {
             SalarySummary.periodRegularGross(SalarySummary.effectiveRateAt(config, it), config.payFrequency)
@@ -273,74 +267,29 @@ object PaycheckCalculator {
         annualOvertimeHours: Double,
         year: Int = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
     ): AnnualProjection {
-        val periodsPerYear = config.payFrequency.periodsPerYear
+        val periodsPerYear = SalarySummary.scheduledPaychecksInYear(config, year)
         val annualRegularPay = annualRegularPayForYear(config, year)
         val latestRate = SalarySummary.effectiveRateAt(config, System.currentTimeMillis())
         val annualOvertimePay = latestRate.hourlyRate * config.overtimeMultiplier * annualOvertimeHours
         val annualGross = annualRegularPay + annualOvertimePay
-
         val perPeriodGross = annualGross / periodsPerYear
 
-        val enabledPreTax = config.preTaxDeductions.filter { it.isEnabled }
-        val enabledPostTax = config.postTaxDeductions.filter { it.isEnabled }
+        fun annualize(deductions: List<Deduction>) =
+            deductionLines(deductions, perPeriodGross).map { it.copy(amount = it.amount * periodsPerYear) }
 
-        val preTaxBreakdown = enabledPreTax.map { d ->
-            val perPeriod = if (d.isPercentage) perPeriodGross * (d.amount / 100.0) else d.amount
-            DeductionLine(name = d.name, amount = perPeriod * periodsPerYear, category = d.category)
-        }
+        val preTaxBreakdown = annualize(config.preTaxDeductions)
         val annualPreTax = preTaxBreakdown.sumOf { it.amount }
-
-        val annualTaxable = annualGross - annualPreTax
-        val standardDeduction = FederalTaxTables.standardDeduction(config.filingStatus)
-        val federalTaxableAnnual = (annualTaxable - standardDeduction).coerceAtLeast(0.0)
-
-        val annualFederalTax = if (config.taxOverrides.isExemptFromFederal) 0.0
-        else {
-            val customRate = config.taxOverrides.customFederalTaxRate
-            val base = if (customRate != null) {
-                annualTaxable * customRate
-            } else {
-                calculateFederalTax(federalTaxableAnnual, config.filingStatus)
-            }
-            base + config.taxOverrides.federalAdditionalWithholding * periodsPerYear
-        }
-
-        val annualStateTax = if (config.taxOverrides.isExemptFromState) 0.0
-        else {
-            val rate = config.taxOverrides.customStateTaxRate ?: estimateStateTaxRate(config.state)
-            annualTaxable * rate + config.taxOverrides.stateAdditionalWithholding * periodsPerYear
-        }
-
-        val annualCountyTax = if (config.taxOverrides.isExemptFromLocal) 0.0
-        else {
-            val rate = config.taxOverrides.customCountyTaxRate ?: 0.0
-            annualTaxable * rate
-        }
-
-        val annualSSRate = config.taxOverrides.customSocialSecurityRate ?: FicaTaxRates.SOCIAL_SECURITY_RATE
-        val annualSS = annualGross.coerceAtMost(FicaTaxRates.SOCIAL_SECURITY_WAGE_BASE) * annualSSRate
-
-        val annualMedRate = config.taxOverrides.customMedicareRate ?: FicaTaxRates.MEDICARE_RATE
-        val medicareThreshold = when (config.filingStatus) {
-            FilingStatus.MARRIED_FILING_JOINTLY -> FicaTaxRates.ADDITIONAL_MEDICARE_THRESHOLD_JOINT
-            else -> FicaTaxRates.ADDITIONAL_MEDICARE_THRESHOLD_SINGLE
-        }
-        val annualMedicare = annualGross * annualMedRate +
-                if (config.taxOverrides.customMedicareRate == null && annualGross > medicareThreshold)
-                    (annualGross - medicareThreshold) * FicaTaxRates.ADDITIONAL_MEDICARE_RATE
-                else 0.0
-
-        val annualTotalTaxes = annualFederalTax + annualStateTax + annualCountyTax + annualSS + annualMedicare
-
-        val postTaxBreakdown = enabledPostTax.map { d ->
-            val perPeriod = if (d.isPercentage) perPeriodGross * (d.amount / 100.0) else d.amount
-            DeductionLine(name = d.name, amount = perPeriod * periodsPerYear, category = d.category)
-        }
+        val taxes = annualWithholding(
+            config,
+            annualGross = annualGross,
+            annualPreTax = annualPreTax,
+            annualFicaExempt = ficaExemptPreTax(config.preTaxDeductions, perPeriodGross) * periodsPerYear,
+            periods = periodsPerYear,
+            year = year
+        )
+        val postTaxBreakdown = annualize(config.postTaxDeductions)
         val annualPostTax = postTaxBreakdown.sumOf { it.amount }
-
-        val annualNet = annualGross - annualPreTax - annualTotalTaxes - annualPostTax
-
-        val marginalRate = findMarginalRate(federalTaxableAnnual, config.filingStatus)
+        val annualNet = annualGross - annualPreTax - taxes.total - annualPostTax
 
         return AnnualProjection(
             annualRegularPay = annualRegularPay,
@@ -348,46 +297,20 @@ object PaycheckCalculator {
             annualGrossPay = annualGross,
             annualPreTaxDeductions = annualPreTax,
             preTaxDeductionBreakdown = preTaxBreakdown,
-            annualFederalTaxableIncome = federalTaxableAnnual,
-            annualFederalTax = annualFederalTax,
-            annualStateTax = annualStateTax,
-            annualCountyTax = annualCountyTax,
-            annualSocialSecurity = annualSS,
-            annualMedicare = annualMedicare,
-            annualTotalTaxes = annualTotalTaxes,
+            annualFederalTaxableIncome = taxes.federalTaxable,
+            annualFederalTax = taxes.federal,
+            annualStateTax = taxes.state,
+            annualCountyTax = taxes.county,
+            annualSocialSecurity = taxes.socialSecurity,
+            annualMedicare = taxes.medicare,
+            annualTotalTaxes = taxes.total,
             annualPostTaxDeductions = annualPostTax,
             postTaxDeductionBreakdown = postTaxBreakdown,
             annualNetPay = annualNet,
-            effectiveTaxRate = if (annualGross > 0) annualTotalTaxes / annualGross else 0.0,
-            marginalFederalRate = marginalRate,
+            effectiveTaxRate = if (annualGross > 0) taxes.total / annualGross else 0.0,
+            marginalFederalRate = taxes.federalMarginalRate,
             overtimeHoursUsed = annualOvertimeHours,
-            perPaycheckNet = if (periodsPerYear > 0) annualNet / periodsPerYear else 0.0
+            perPaycheckNet = annualNet / periodsPerYear
         )
-    }
-
-    private fun findMarginalRate(federalTaxableIncome: Double, status: FilingStatus): Double {
-        val brackets = FederalTaxTables.bracketsFor(status)
-        for (bracket in brackets.reversed()) {
-            if (federalTaxableIncome > bracket.min) return bracket.rate
-        }
-        return brackets.first().rate
-    }
-
-    @Suppress("unused")
-    private fun estimateStateTaxRate(state: String): Double = when (state.uppercase()) {
-        "AL" -> 0.050; "AK" -> 0.000; "AZ" -> 0.025; "AR" -> 0.044
-        "CA" -> 0.093; "CO" -> 0.044; "CT" -> 0.050; "DE" -> 0.066
-        "FL" -> 0.000; "GA" -> 0.055; "HI" -> 0.075; "ID" -> 0.058
-        "IL" -> 0.0495; "IN" -> 0.0315; "IA" -> 0.060; "KS" -> 0.057
-        "KY" -> 0.040; "LA" -> 0.0425; "ME" -> 0.0715; "MD" -> 0.0575
-        "MA" -> 0.050; "MI" -> 0.0425; "MN" -> 0.0985; "MS" -> 0.050
-        "MO" -> 0.048; "MT" -> 0.0575; "NE" -> 0.0564; "NV" -> 0.000
-        "NH" -> 0.000; "NJ" -> 0.0897; "NM" -> 0.059; "NY" -> 0.0685
-        "NC" -> 0.045; "ND" -> 0.0195; "OH" -> 0.040; "OK" -> 0.0475
-        "OR" -> 0.099; "PA" -> 0.0307; "RI" -> 0.0599; "SC" -> 0.065
-        "SD" -> 0.000; "TN" -> 0.000; "TX" -> 0.000; "UT" -> 0.0465
-        "VT" -> 0.0875; "VA" -> 0.0575; "WA" -> 0.000; "WV" -> 0.055
-        "WI" -> 0.0765; "WY" -> 0.000; "DC" -> 0.0895
-        else -> 0.05
     }
 }

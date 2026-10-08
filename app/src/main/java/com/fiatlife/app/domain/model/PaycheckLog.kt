@@ -68,8 +68,12 @@ data class AnnualExtrapolation(
     val basedOnPaychecks: Int,
     val scheduledPaychecksInYear: Int,
     val remainingPaychecksProjected: Int = 0,
+    /** Past paydays with no log, included in [remainingPaychecksProjected]. */
+    val unloggedPastPaychecks: Int = 0,
     val averageOvertimeHoursPerPaycheck: Double = 0.0,
     val projectOvertimeForward: Boolean = true,
+    /** Overtime rate ÷ regular rate (from paystubs when they itemize hours). */
+    val overtimeMultiplier: Double = 1.5,
     val annualGrossPay: Double,
     val annualNetPay: Double,
     val annualTotalTaxes: Double,
@@ -120,11 +124,15 @@ data class FederalTaxReturnProjection(
     val annualPreTaxDeductions: Double,
     val adjustedGrossIncome: Double,
     val standardDeduction: Double,
+    /** "No tax on overtime" deduction (2025–2028). */
+    val overtimeDeduction: Double = 0.0,
     val federalTaxableIncome: Double,
     val estimatedFederalTaxOwed: Double,
     val federalWithheld: Double,
     /** Positive = estimated refund; negative = estimated balance due. */
-    val refundOrBalance: Double
+    val refundOrBalance: Double,
+    /** Logged paystubs with taxes but no line recognizable as federal income tax. */
+    val paychecksMissingFederalLine: Int = 0
 )
 
 data class YtdSummary(
@@ -325,38 +333,50 @@ object SalarySummary {
         )
     }
 
+    /**
+     * Rough Form 1040 estimate: wages minus pre-tax deductions, the standard
+     * deduction and the overtime-premium deduction, through that year's brackets.
+     * Ignores credits, other income and itemizing.
+     */
     fun projectFederalTaxReturn(
         config: SalaryConfig,
-        annual: AnnualExtrapolation
+        annual: AnnualExtrapolation,
+        year: Int = yearOf(System.currentTimeMillis())
     ): FederalTaxReturnProjection {
         val annualGross = annual.annualGrossPay
         val annualPreTax = annual.annualPreTaxDeductions
         val adjustedGrossIncome = annualGross - annualPreTax
-        val standardDeduction = FederalTaxTables.standardDeduction(config.filingStatus)
-        val federalTaxableIncome = (adjustedGrossIncome - standardDeduction).coerceAtLeast(0.0)
-        val overrides = config.taxOverrides
-
-        val estimatedFederalTaxOwed = if (overrides.isExemptFromFederal) {
-            0.0
-        } else if (overrides.customFederalTaxRate != null) {
-            adjustedGrossIncome * overrides.customFederalTaxRate!!
-        } else {
-            FederalTaxTables.calculateTax(federalTaxableIncome, config.filingStatus)
-        }
+        val standardDeduction = FederalTaxTables.standardDeduction(config.filingStatus, year)
+        val overtimeDeduction = FederalTaxTables.overtimeDeduction(
+            overtimePremium(annual.earnings, annual.overtimeMultiplier),
+            adjustedGrossIncome,
+            config.filingStatus,
+            year
+        )
+        val federalTaxableIncome =
+            (adjustedGrossIncome - standardDeduction - overtimeDeduction).coerceAtLeast(0.0)
+        val estimatedFederalTaxOwed =
+            FederalTaxTables.calculateTax(federalTaxableIncome, config.filingStatus, year)
 
         val federalWithheld = annual.taxes
-            .filter { it.label.trim().matches(Regex("(?i)federal\\s+income\\s+tax")) }
+            .filter { classifyTaxLine(it.label) == TaxLineKind.FEDERAL }
             .sumOf { it.amount }
+        val paychecksMissingFederalLine = logsForYear(config, year).count { e ->
+            (e.totalTaxes ?: 0.0) > 0.0 &&
+                entryTaxes(e).none { classifyTaxLine(it.label) == TaxLineKind.FEDERAL }
+        }
 
         return FederalTaxReturnProjection(
             annualGross = annualGross,
             annualPreTaxDeductions = annualPreTax,
             adjustedGrossIncome = adjustedGrossIncome,
             standardDeduction = standardDeduction,
+            overtimeDeduction = overtimeDeduction,
             federalTaxableIncome = federalTaxableIncome,
             estimatedFederalTaxOwed = estimatedFederalTaxOwed,
             federalWithheld = federalWithheld,
-            refundOrBalance = federalWithheld - estimatedFederalTaxOwed
+            refundOrBalance = federalWithheld - estimatedFederalTaxOwed,
+            paychecksMissingFederalLine = paychecksMissingFederalLine
         )
     }
 
@@ -366,13 +386,18 @@ object SalarySummary {
             .sortedByDescending { it.payDate }
     }
 
-    private const val DAY_MS = 24L * 60 * 60 * 1000
-
-    private fun payPeriodStepMs(frequency: PayFrequency): Long? = when (frequency) {
-        PayFrequency.WEEKLY -> 7L * DAY_MS
-        PayFrequency.BIWEEKLY -> 14L * DAY_MS
+    private fun payPeriodStepDays(frequency: PayFrequency): Int? = when (frequency) {
+        PayFrequency.WEEKLY -> 7
+        PayFrequency.BIWEEKLY -> 14
         else -> null
     }
+
+    /** Calendar-day step (keeps local midnight across daylight-saving changes). */
+    private fun addDays(ms: Long, days: Int): Long =
+        Calendar.getInstance().apply {
+            timeInMillis = ms
+            add(Calendar.DAY_OF_MONTH, days)
+        }.timeInMillis
 
     /**
      * Best anchor for scheduled payday enumeration. For weekly/biweekly pay, prefers an
@@ -396,7 +421,7 @@ object SalarySummary {
             return config.firstPaydayOfYearMillis
         }
 
-        val stepMs = payPeriodStepMs(freq)!!
+        val stepDays = payPeriodStepDays(freq)!!
         val rangeEnd = minOf(asOf, yearEnd(year))
         val rangeStart = yearStart(year)
         val configured = config.firstPaydayOfYearMillis?.let { startOfDay(it) }
@@ -406,7 +431,7 @@ object SalarySummary {
         for (logged in loggedDays) {
             candidates.add(logged)
             for (k in 0 until 30) {
-                candidates.add(logged - k * stepMs)
+                candidates.add(addDays(logged, -k * stepDays))
             }
         }
 
@@ -461,12 +486,12 @@ object SalarySummary {
         return cal.get(Calendar.YEAR)
     }
 
-    private fun yearStart(year: Int): Long =
+    fun yearStart(year: Int): Long =
         Calendar.getInstance().apply {
             clear(); set(year, Calendar.JANUARY, 1, 0, 0, 0)
         }.timeInMillis
 
-    private fun yearEnd(year: Int): Long =
+    fun yearEnd(year: Int): Long =
         Calendar.getInstance().apply {
             clear(); set(year, Calendar.DECEMBER, 31, 23, 59, 59)
         }.timeInMillis
@@ -529,13 +554,12 @@ object SalarySummary {
                 }
             }
             else -> {
-                val stepMs = if (frequency == PayFrequency.WEEKLY)
-                    7L * 24 * 60 * 60 * 1000 else 14L * 24 * 60 * 60 * 1000
+                val stepDays = if (frequency == PayFrequency.WEEKLY) 7 else 14
                 var payday = startOfDay(firstPaydayMillis)
                 var i = 0
                 while (i < 500 && payday <= rangeEnd) {
                     if (payday >= rangeStart) days.add(payday)
-                    payday += stepMs
+                    payday = addDays(payday, stepDays)
                     i++
                 }
             }
@@ -556,8 +580,39 @@ object SalarySummary {
     }
 
     fun scheduledPaychecksInYear(config: SalaryConfig, year: Int): Int {
-        val anchor = config.firstPaydayOfYearMillis ?: return config.payFrequency.periodsPerYear
-        return countPaychecksInRange(anchor, config.payFrequency, yearStart(year), yearEnd(year))
+        val counted = config.firstPaydayOfYearMillis
+            ?.let { countPaychecksInRange(it, config.payFrequency, yearStart(year), yearEnd(year)) }
+            ?: 0
+        return if (counted > 0) counted else config.payFrequency.periodsPerYear
+    }
+
+    data class RemainingPaychecks(val future: Int, val unlogged: Int) {
+        val total: Int get() = future + unlogged
+    }
+
+    /**
+     * Paychecks still to be received in [year]: scheduled paydays after [asOf] plus
+     * past paydays that were never logged (they still arrive, just not in the log).
+     */
+    fun remainingPaychecksForYear(
+        config: SalaryConfig,
+        year: Int,
+        asOf: Long = System.currentTimeMillis()
+    ): RemainingPaychecks {
+        val anchor = if (canDetectMissingPaychecks(config, year)) {
+            resolvePaydayAnchor(config, year, asOf)
+        } else null
+        if (anchor != null) {
+            val from = maxOf(yearStart(year), addDays(startOfDay(asOf), 1))
+            val future = if (from > yearEnd(year)) 0
+            else enumeratePaydays(anchor, config.payFrequency, from, yearEnd(year)).size
+            return RemainingPaychecks(future, missingPaydaysForYear(config, year, asOf).size)
+        }
+        val scheduledYtd = scheduledPaychecksYtd(config, year, asOf)
+        return RemainingPaychecks(
+            future = (scheduledPaychecksInYear(config, year) - scheduledYtd).coerceAtLeast(0),
+            unlogged = (scheduledYtd - logsForYear(config, year).size).coerceAtLeast(0)
+        )
     }
 
     private fun mergeLines(groups: List<List<PaycheckLineItem>>): List<YtdBreakdownLine> {
@@ -593,6 +648,64 @@ object SalarySummary {
         if (e.taxes.isNotEmpty()) e.taxes
         else e.totalTaxes?.let { listOf(PaycheckLineItem(e.id, "Taxes", it)) } ?: emptyList()
 
+    private fun entryPreTax(e: PaycheckLogEntry): List<PaycheckLineItem> =
+        if (e.preTaxDeductions.isNotEmpty()) e.preTaxDeductions
+        else e.totalPreTaxDeductions?.takeIf { it != 0.0 }
+            ?.let { listOf(PaycheckLineItem(e.id, "Pre-tax deductions", it)) } ?: emptyList()
+
+    private fun entryPostTax(e: PaycheckLogEntry): List<PaycheckLineItem> =
+        if (e.postTaxDeductions.isNotEmpty()) e.postTaxDeductions
+        else e.totalPostTaxDeductions?.takeIf { it != 0.0 }
+            ?.let { listOf(PaycheckLineItem(e.id, "Post-tax deductions", it)) } ?: emptyList()
+
+    private val OVERTIME_LABEL = Regex("overtime|^ot\\b", RegexOption.IGNORE_CASE)
+    private val REGULAR_LABEL = Regex("regular|^reg\\b|base|salary|straight", RegexOption.IGNORE_CASE)
+
+    /** Paystubs that best describe current withholding: newest real (not generated) stubs. */
+    private const val RECENT_STUBS_FOR_RATES = 3
+
+    private fun recentStubs(logs: List<PaycheckLogEntry>): List<PaycheckLogEntry> {
+        val real = logs.filter { it.autoGenerated != true && it.grossPay > 0 }
+        val pool = real.ifEmpty { logs.filter { it.grossPay > 0 } }
+        return pool.takeLast(RECENT_STUBS_FOR_RATES)
+    }
+
+    /** Each label's share of gross across [stubs]; null when the stubs have no such lines. */
+    private fun lineRates(
+        stubs: List<PaycheckLogEntry>,
+        lines: (PaycheckLogEntry) -> List<PaycheckLineItem>
+    ): List<Pair<String, Double>>? {
+        val gross = stubs.sumOf { it.grossPay }
+        if (gross <= 0) return null
+        val merged = mergeLines(stubs.map(lines))
+        if (merged.isEmpty()) return null
+        return merged.map { it.label to it.amount / gross }
+    }
+
+    /** Overtime ÷ regular hourly rate on the newest stub that itemizes both with hours. */
+    private fun impliedOvertimeMultiplier(logs: List<PaycheckLogEntry>): Double? {
+        for (entry in logs.asReversed()) {
+            val ot = entry.earnings.firstOrNull {
+                OVERTIME_LABEL.containsMatchIn(it.label) && (it.hours ?: 0.0) > 0
+            } ?: continue
+            val reg = entry.earnings.firstOrNull {
+                !OVERTIME_LABEL.containsMatchIn(it.label) &&
+                    REGULAR_LABEL.containsMatchIn(it.label) && (it.hours ?: 0.0) > 0
+            } ?: continue
+            if (reg.amount <= 0) continue
+            val multiplier = (ot.amount / ot.hours!!) / (reg.amount / reg.hours!!)
+            if (multiplier in 1.0..3.0) return multiplier
+        }
+        return null
+    }
+
+    /** Pay above straight time on overtime lines, the part the 2025–2028 deduction covers. */
+    private fun overtimePremium(earnings: List<YtdBreakdownLine>, multiplier: Double): Double {
+        val otPay = earnings.filter { OVERTIME_LABEL.containsMatchIn(it.label) }.sumOf { it.amount }
+        if (otPay <= 0 || multiplier <= 1) return 0.0
+        return otPay * (multiplier - 1) / multiplier
+    }
+
     private fun scaleBreakdownLines(
         lines: List<YtdBreakdownLine>,
         factor: Double
@@ -606,7 +719,8 @@ object SalarySummary {
 
     private fun extrapolationFromModel(
         modelAnnual: AnnualProjection,
-        scheduledInYear: Int
+        scheduledInYear: Int,
+        overtimeMultiplier: Double
     ): AnnualExtrapolation {
         val perPaycheckGross =
             if (scheduledInYear > 0) modelAnnual.annualGrossPay / scheduledInYear else 0.0
@@ -617,6 +731,7 @@ object SalarySummary {
             remainingPaychecksProjected = scheduledInYear,
             averageOvertimeHoursPerPaycheck = 0.0,
             projectOvertimeForward = true,
+            overtimeMultiplier = overtimeMultiplier,
             annualGrossPay = modelAnnual.annualGrossPay,
             annualNetPay = modelAnnual.annualNetPay,
             annualTotalTaxes = modelAnnual.annualTotalTaxes,
@@ -742,85 +857,117 @@ object SalarySummary {
         asOf: Long = System.currentTimeMillis()
     ): AnnualExtrapolation {
         val scheduledInYear = scheduledPaychecksInYear(config, year)
-        val scheduledYtd = scheduledPaychecksYtd(config, year, asOf)
-        val remaining = (scheduledInYear - scheduledYtd).coerceAtLeast(0)
         val logs = logsForYear(config, year).sortedBy { it.payDate }
         if (logs.isEmpty()) {
-            return extrapolationFromModel(modelAnnual, scheduledInYear)
+            return extrapolationFromModel(modelAnnual, scheduledInYear, config.overtimeMultiplier)
         }
 
+        val remainingPaychecks = remainingPaychecksForYear(config, year, asOf)
+        val remaining = remainingPaychecks.total
         val n = logs.size
         val latest = logs.last()
         val rate = effectiveRateAt(config, latest.payDate)
-        val ytdGross = logs.sumOf { it.grossPay }
         val ytdNet = logs.sumOf { it.netPay }
-        val ytdTaxes = logs.sumOf { it.totalTaxes ?: 0.0 }
-        val ytdPreTax = logs.sumOf { it.totalPreTaxDeductions ?: 0.0 }
-        val ytdPostTax = logs.sumOf { it.totalPostTaxDeductions ?: 0.0 }
         val ytdOTHours = logs.sumOf { entryOvertimeHours(it) }
         val avgOTPerPaycheck = if (n > 0) ytdOTHours / n else 0.0
         val forwardOT = if (projectOvertimeForward) avgOTPerPaycheck else 0.0
+        val otMultiplier = impliedOvertimeMultiplier(logs) ?: config.overtimeMultiplier
 
         val forwardConfig = config.copy(
             payType = rate.payType,
             hourlyRate = rate.hourlyRate,
             annualSalary = rate.annualSalary,
             standardHoursPerPeriod = rate.standardHoursPerPeriod,
-            overtimeHours = forwardOT
+            overtimeHours = forwardOT,
+            overtimeMultiplier = otMultiplier
         )
-        val forwardPerPaycheck = PaycheckCalculator.calculate(forwardConfig)
-        val forwardBreakdown = forwardBreakdownFromCalc(forwardPerPaycheck, forwardOT, config)
+        val forwardPerPaycheck = PaycheckCalculator.calculate(
+            forwardConfig,
+            minOf(maxOf(asOf, latest.payDate), yearEnd(year))
+        )
+        val modelBreakdown = forwardBreakdownFromCalc(forwardPerPaycheck, forwardOT, config)
+        val forwardGross = forwardPerPaycheck.grossPay
 
-        val ytdEarnings = mergeLines(logs.map { entryEarnings(it) })
-        val ytdTaxesLines = mergeLines(logs.map { entryTaxes(it) })
-        val ytdPreTaxDeductions = mergeLines(logs.map { it.preTaxDeductions })
-        val ytdPostTaxDeductions = mergeLines(logs.map { it.postTaxDeductions })
-        val ytdEmployerContributions = mergeLines(logs.map { it.employerContributions })
+        val stubs = recentStubs(logs)
+        val stubEarnings = stubs.flatMap { it.earnings }
+        val overtimeLabel = stubEarnings.firstOrNull { OVERTIME_LABEL.containsMatchIn(it.label) }
+            ?.label ?: "Overtime"
+        val regularLabel = stubEarnings.firstOrNull {
+            REGULAR_LABEL.containsMatchIn(it.label) && !OVERTIME_LABEL.containsMatchIn(it.label)
+        }?.label ?: "Regular"
+        fun fromStubs(
+            lines: (PaycheckLogEntry) -> List<PaycheckLineItem>,
+            fallback: List<YtdBreakdownLine>
+        ): List<YtdBreakdownLine> =
+            lineRates(stubs, lines)?.map { (label, rate) -> YtdBreakdownLine(label, rate * forwardGross) }
+                ?: fallback
 
-        val annualGrossPay = ytdGross + forwardPerPaycheck.grossPay * remaining
-        val annualNetPay = ytdNet + forwardPerPaycheck.netPay * remaining
-        val annualTotalTaxes = ytdTaxes + forwardPerPaycheck.totalTaxes * remaining
-        val annualPreTaxDeductions =
-            ytdPreTax + forwardPerPaycheck.totalPreTaxDeductions * remaining
-        val annualPostTaxDeductions =
-            ytdPostTax + forwardPerPaycheck.totalPostTaxDeductions * remaining
-        val annualOTHours = ytdOTHours + forwardOT * remaining
+        val forwardEarnings = modelBreakdown.earnings.map {
+            it.copy(label = if (it.label == "Overtime") overtimeLabel else regularLabel)
+        }
+        var forwardTaxes = scaleBreakdownForRemaining(fromStubs(::entryTaxes, modelBreakdown.taxes), remaining)
+        val forwardPreTax =
+            scaleBreakdownForRemaining(fromStubs(::entryPreTax, modelBreakdown.preTaxDeductions), remaining)
+        val forwardPostTax =
+            scaleBreakdownForRemaining(fromStubs(::entryPostTax, modelBreakdown.postTaxDeductions), remaining)
+
+        val ytdTaxLines = mergeLines(logs.map { entryTaxes(it) })
+        fun isSocialSecurity(line: YtdBreakdownLine) =
+            classifyTaxLine(line.label) == TaxLineKind.SOCIAL_SECURITY
+        val ssRate = config.taxOverrides.customSocialSecurityRate ?: FicaTaxRates.SOCIAL_SECURITY_RATE
+        val socialSecurityRoom = (FederalTaxTables.socialSecurityWageBase(year) * ssRate -
+            ytdTaxLines.filter(::isSocialSecurity).sumOf { it.amount }).coerceAtLeast(0.0)
+        val forwardSocialSecurity = forwardTaxes.filter(::isSocialSecurity).sumOf { it.amount }
+        if (forwardSocialSecurity > socialSecurityRoom) {
+            val scale = socialSecurityRoom / forwardSocialSecurity
+            forwardTaxes = forwardTaxes.map {
+                if (isSocialSecurity(it)) it.copy(amount = it.amount * scale) else it
+            }
+        }
+
+        val earnings = mergeBreakdownLineGroups(
+            listOf(mergeLines(logs.map { entryEarnings(it) }), scaleBreakdownForRemaining(forwardEarnings, remaining))
+        )
+        val taxes = mergeBreakdownLineGroups(listOf(ytdTaxLines, forwardTaxes))
+        val preTaxDeductions =
+            mergeBreakdownLineGroups(listOf(mergeLines(logs.map { entryPreTax(it) }), forwardPreTax))
+        val postTaxDeductions =
+            mergeBreakdownLineGroups(listOf(mergeLines(logs.map { entryPostTax(it) }), forwardPostTax))
+
+        val forwardGrossTotal = forwardGross * remaining
+        val annualGrossPay = logs.sumOf { it.grossPay } + forwardGrossTotal
+        val annualTotalTaxes = taxes.sumOf { it.amount }
+        val annualPreTaxDeductions = preTaxDeductions.sumOf { it.amount }
+        val annualPostTaxDeductions = postTaxDeductions.sumOf { it.amount }
+        val annualNetPay = ytdNet + forwardGrossTotal -
+            forwardTaxes.sumOf { it.amount } -
+            forwardPreTax.sumOf { it.amount } -
+            forwardPostTax.sumOf { it.amount }
+        val paychecksInYear = n + remaining
 
         return AnnualExtrapolation(
             source = AnnualExtrapolation.Source.LOGGED,
             basedOnPaychecks = n,
             scheduledPaychecksInYear = scheduledInYear,
             remainingPaychecksProjected = remaining,
+            unloggedPastPaychecks = remainingPaychecks.unlogged,
             averageOvertimeHoursPerPaycheck = avgOTPerPaycheck,
             projectOvertimeForward = projectOvertimeForward,
+            overtimeMultiplier = otMultiplier,
             annualGrossPay = annualGrossPay,
             annualNetPay = annualNetPay,
             annualTotalTaxes = annualTotalTaxes,
             annualTotalDeductions = annualPreTaxDeductions + annualPostTaxDeductions,
             annualPreTaxDeductions = annualPreTaxDeductions,
             annualPostTaxDeductions = annualPostTaxDeductions,
-            overtimeHours = annualOTHours,
-            perPaycheckNet = if (scheduledInYear > 0) annualNetPay / scheduledInYear else 0.0,
-            perPaycheckGross = if (scheduledInYear > 0) annualGrossPay / scheduledInYear else 0.0,
-            earnings = mergeBreakdownLineGroups(
-                listOf(ytdEarnings, scaleBreakdownForRemaining(forwardBreakdown.earnings, remaining))
-            ),
-            taxes = mergeBreakdownLineGroups(
-                listOf(ytdTaxesLines, scaleBreakdownForRemaining(forwardBreakdown.taxes, remaining))
-            ),
-            preTaxDeductions = mergeBreakdownLineGroups(
-                listOf(
-                    ytdPreTaxDeductions,
-                    scaleBreakdownForRemaining(forwardBreakdown.preTaxDeductions, remaining)
-                )
-            ),
-            postTaxDeductions = mergeBreakdownLineGroups(
-                listOf(
-                    ytdPostTaxDeductions,
-                    scaleBreakdownForRemaining(forwardBreakdown.postTaxDeductions, remaining)
-                )
-            ),
-            employerContributions = ytdEmployerContributions,
+            overtimeHours = ytdOTHours + forwardOT * remaining,
+            perPaycheckNet = if (paychecksInYear > 0) annualNetPay / paychecksInYear else 0.0,
+            perPaycheckGross = if (paychecksInYear > 0) annualGrossPay / paychecksInYear else 0.0,
+            earnings = earnings,
+            taxes = taxes,
+            preTaxDeductions = preTaxDeductions,
+            postTaxDeductions = postTaxDeductions,
+            employerContributions = mergeLines(logs.map { it.employerContributions }),
             effectiveTaxRate =
                 if (annualGrossPay > 0) annualTotalTaxes / annualGrossPay else calc.effectiveTaxRate
         )
@@ -837,7 +984,8 @@ object SalarySummary {
         val logs = logsForYear(config, year)
         val scheduledYtd = scheduledPaychecksYtd(config, year, asOf)
         val scheduledInYear = scheduledPaychecksInYear(config, year)
-        val remaining = (scheduledInYear - scheduledYtd).coerceAtLeast(0)
+        val remainingPaychecks = remainingPaychecksForYear(config, year, asOf)
+        val remaining = if (logs.isNotEmpty()) remainingPaychecks.total else remainingPaychecks.future
         val annualExtrapolation = extrapolateAnnualFromLogs(
             config,
             calc,
@@ -871,8 +1019,8 @@ object SalarySummary {
                 overtimeHours = overtimeHours,
                 earnings = mergeLines(logs.map { entryEarnings(it) }),
                 taxes = mergeLines(logs.map { entryTaxes(it) }),
-                preTaxDeductions = mergeLines(logs.map { it.preTaxDeductions }),
-                postTaxDeductions = mergeLines(logs.map { it.postTaxDeductions }),
+                preTaxDeductions = mergeLines(logs.map { entryPreTax(it) }),
+                postTaxDeductions = mergeLines(logs.map { entryPostTax(it) }),
                 employerContributions = mergeLines(logs.map { it.employerContributions }),
                 annualExtrapolation = annualExtrapolation,
                 annualNetTarget = annualNetTarget,
