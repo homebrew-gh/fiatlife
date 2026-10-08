@@ -635,7 +635,7 @@ private fun CreditLoanPaymentDialog(
                     )
                 } else {
                     Text(
-                        "Enter the amount paid. You can optionally set the new balance (e.g. from a statement); otherwise the balance will be reduced by the amount paid.",
+                        "Enter the amount paid. You can optionally set the new balance (e.g. from a statement); otherwise the balance will be reduced by the amount paid (for a mortgage, only the principal after this month's interest and escrow).",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -648,7 +648,7 @@ private fun CreditLoanPaymentDialog(
                         value = newBalanceStr,
                         onValueChange = { newBalanceStr = it.filter { c -> c.isDigit() || c == '.' } },
                         label = { Text("New balance (optional)") },
-                        placeholder = { Text("Leave blank to subtract amount from current (${currentBalance.formatCurrency()})") },
+                        placeholder = { Text("Leave blank to estimate from current (${currentBalance.formatCurrency()})") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         shape = MaterialTheme.shapes.medium
@@ -1389,7 +1389,7 @@ internal fun BillDialog(
                                     payFromExpanded = false
                                 }
                             )
-                            bankAccounts.forEach { acc ->
+                            bankAccounts.filter { it.isCash || it.id == payFromBankAccountId }.forEach { acc ->
                                 DropdownMenuItem(
                                     text = { Text("${acc.name} (Bank)") },
                                     onClick = {

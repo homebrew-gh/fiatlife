@@ -174,6 +174,24 @@ fun scheduleForMortgageAccount(
     )
 }
 
+/**
+ * Balance after [payment]. A mortgage payment covers this month's interest and
+ * escrow first; only the remainder reduces principal.
+ */
+fun CreditAccount.balanceAfterPayment(
+    payment: Double,
+    balance: Double = currentBalance
+): Double {
+    val start = balance.coerceAtLeast(0.0)
+    var principal = payment
+    if (type == CreditAccountType.MORTGAGE) {
+        val interest = if (apr > 0.0) start * (apr / 12.0) else 0.0
+        principal = payment - interest - escrowedMonthlyAmount()
+    }
+    val after = (start - principal.coerceAtLeast(0.0)).coerceAtLeast(0.0)
+    return Math.round(after * 100.0) / 100.0
+}
+
 fun currentMortgagePaymentSnapshot(
     account: CreditAccount,
     nowMs: Long = System.currentTimeMillis()

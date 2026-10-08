@@ -16,6 +16,7 @@ import com.fiatlife.app.domain.model.BillWithSource
 import com.fiatlife.app.domain.model.Biller
 import com.fiatlife.app.domain.model.CreditAccount
 import com.fiatlife.app.domain.model.CreditStatementUpdate
+import com.fiatlife.app.domain.model.balanceAfterPayment
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -128,7 +129,7 @@ class BillDetailViewModel @Inject constructor(
                 repository.saveBill(updatedBill)
                 bill.linkedCreditAccountId?.let { accountId ->
                     creditAccountRepository.getCreditAccountById(accountId).first()?.let { acc ->
-                        val balance = newBalance ?: (acc.currentBalance - amount).coerceAtLeast(0.0)
+                        val balance = newBalance ?: acc.balanceAfterPayment(amount)
                         creditAccountRepository.saveCreditAccount(
                             acc.copy(currentBalance = balance),
                             inferPayment = false

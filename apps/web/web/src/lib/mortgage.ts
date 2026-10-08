@@ -523,6 +523,25 @@ export function termMonthsFromYears(years: number): number {
   return Math.max(1, Math.round(years * 12));
 }
 
+/**
+ * Balance after `payment`. A mortgage payment covers this month's interest and
+ * escrow first; only the remainder reduces principal.
+ */
+export function balanceAfterPayment(
+  account: CreditAccount,
+  payment: number,
+  balance = account.currentBalance,
+): number {
+  const start = Math.max(0, balance);
+  let principal = payment;
+  if (account.type === "MORTGAGE") {
+    const interest = account.apr > 0 ? start * (account.apr / 12) : 0;
+    principal = payment - interest - escrowedMonthlyAmount(account);
+  }
+  const after = Math.max(0, start - Math.max(0, principal));
+  return Math.round(after * 100) / 100;
+}
+
 export type MortgagePaymentSnapshot = {
   principal: number;
   interest: number;

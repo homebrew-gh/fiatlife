@@ -7,6 +7,7 @@ import {
   type CreditAccount,
 } from "../../lib/creditAccount";
 import { formatUsd } from "../../lib/format";
+import { balanceAfterPayment as estimateBalanceAfterPayment } from "../../lib/mortgage";
 
 export type StatementUpdateInput = {
   statementBalance: number;
@@ -220,7 +221,9 @@ export function UpdateBalanceSheet({
                   setPaymentAmount(e.target.value);
                   const balance = Number.parseFloat(statementBalance) || 0;
                   const payment = Number.parseFloat(e.target.value) || 0;
-                  setBalanceAfterPayment(String(Math.max(0, balance - payment)));
+                  setBalanceAfterPayment(
+                    String(estimateBalanceAfterPayment(account, payment, balance)),
+                  );
                 }}
                 placeholder="Optional"
               />

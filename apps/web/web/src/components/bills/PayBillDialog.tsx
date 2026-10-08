@@ -11,6 +11,7 @@ import {
 } from "../../lib/creditAccount";
 import { useDebtData } from "../../lib/debtData";
 import { formatUsd } from "../../lib/format";
+import { balanceAfterPayment } from "../../lib/mortgage";
 
 export type PayBillMode = "MINIMUM" | "FULL" | "CUSTOM";
 
@@ -185,12 +186,15 @@ export function PayBillDialog({
                 value={newBalance}
                 onChange={(e) => setNewBalance(e.target.value)}
                 placeholder={formatUsd(
-                  Math.max(0, fullBalance - resolvedAmount()),
+                  linkedAccount
+                    ? balanceAfterPayment(linkedAccount, resolvedAmount() || 0)
+                    : Math.max(0, fullBalance - resolvedAmount()),
                 )}
               />
               <p className="text-xs text-muted mt-1">
-                Leave blank to subtract the payment from the current account
-                balance.
+                {linkedAccount?.type === "MORTGAGE"
+                  ? "Leave blank to take only the principal off the balance (after this month's interest and escrow)."
+                  : "Leave blank to subtract the payment from the current account balance."}
               </p>
             </div>
           ) : null}

@@ -25,6 +25,7 @@ import androidx.navigation.NavController
 import com.fiatlife.app.domain.model.CreditAccount
 import com.fiatlife.app.domain.model.CreditStatementUpdate
 import com.fiatlife.app.domain.model.StatementEntry
+import com.fiatlife.app.domain.model.balanceAfterPayment
 import com.fiatlife.app.domain.model.formatMonths
 import com.fiatlife.app.domain.model.formatPayoffDate
 import com.fiatlife.app.domain.model.monthlyInterest
@@ -535,7 +536,7 @@ internal fun UpdateStatementDialog(
                         paymentAmount = it
                         val balance = statementBalance.toDoubleOrNull() ?: 0.0
                         val payment = it.toDoubleOrNull() ?: 0.0
-                        balanceAfter = (balance - payment).coerceAtLeast(0.0).toString()
+                        balanceAfter = account.balanceAfterPayment(payment, balance).toString()
                     },
                     label = "Payment made now (optional)"
                 )
