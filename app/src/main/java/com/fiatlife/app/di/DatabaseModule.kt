@@ -8,6 +8,7 @@ import com.fiatlife.app.data.local.FiatLifeDatabase
 import com.fiatlife.app.data.local.dao.BankAccountDao
 import com.fiatlife.app.data.local.dao.BillDao
 import com.fiatlife.app.data.local.dao.BillerDao
+import com.fiatlife.app.data.local.dao.BitcoinWalletDao
 import com.fiatlife.app.data.local.dao.BudgetDao
 import com.fiatlife.app.data.local.dao.CreditAccountDao
 import com.fiatlife.app.data.local.dao.CypherLogSubscriptionDao
@@ -102,6 +103,15 @@ private val MIGRATION_8_9 = object : Migration(8, 9) {
     }
 }
 
+private val MIGRATION_9_10 = object : Migration(9, 10) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS bitcoin_wallets " +
+                "(id TEXT NOT NULL, name TEXT NOT NULL, jsonData TEXT NOT NULL, PRIMARY KEY(id))"
+        )
+    }
+}
+
 @Module
 @InstallIn(SingletonComponent::class)
 object DatabaseModule {
@@ -121,7 +131,8 @@ object DatabaseModule {
             MIGRATION_5_6,
             MIGRATION_6_7,
             MIGRATION_7_8,
-            MIGRATION_8_9
+            MIGRATION_8_9,
+            MIGRATION_9_10
         ).build()
     }
 
@@ -153,4 +164,8 @@ object DatabaseModule {
     @Provides
     fun provideBudgetDao(database: FiatLifeDatabase): BudgetDao =
         database.budgetDao()
+
+    @Provides
+    fun provideBitcoinWalletDao(database: FiatLifeDatabase): BitcoinWalletDao =
+        database.bitcoinWalletDao()
 }

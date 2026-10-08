@@ -32,6 +32,7 @@ import com.fiatlife.app.data.repository.BillRepository
 import com.fiatlife.app.data.repository.BillerRepository
 import com.fiatlife.app.data.repository.BudgetRepository
 import com.fiatlife.app.data.repository.BankAccountRepository
+import com.fiatlife.app.data.repository.BitcoinWalletRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
 import com.fiatlife.app.data.repository.GoalRepository
@@ -66,6 +67,7 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var goalRepository: GoalRepository
     @Inject lateinit var creditAccountRepository: CreditAccountRepository
     @Inject lateinit var bankAccountRepository: BankAccountRepository
+    @Inject lateinit var bitcoinWalletRepository: BitcoinWalletRepository
     @Inject lateinit var cypherLogSubscriptionRepository: CypherLogSubscriptionRepository
     @Inject lateinit var budgetRepository: BudgetRepository
     @Inject lateinit var appSettingsRepository: AppSettingsRepository
@@ -441,6 +443,7 @@ class MainActivity : ComponentActivity() {
                 try { goalRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Goal sync: ${e.message}") }
                 try { creditAccountRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Credit account sync: ${e.message}") }
                 try { bankAccountRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bank account sync: ${e.message}") }
+                try { bitcoinWalletRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Bitcoin wallet sync: ${e.message}") }
                 try { billerRepository.syncFromNostr() } catch (e: Exception) { Log.w(TAG, "Biller sync: ${e.message}") }
                 try { cypherLogSubscriptionRepository.syncFromRelay() } catch (e: Exception) { Log.w(TAG, "CypherLog sync: ${e.message}") }
                 Log.d(TAG, "Sync from relay finished")
@@ -462,6 +465,7 @@ class MainActivity : ComponentActivity() {
         runCatching { goalRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Goal sync: ${it.message}") }
         runCatching { creditAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Credit account sync: ${it.message}") }
         runCatching { bankAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bank account sync: ${it.message}") }
+        runCatching { bitcoinWalletRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bitcoin wallet sync: ${it.message}") }
         runCatching { billerRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Biller sync: ${it.message}") }
         runCatching { cypherLogSubscriptionRepository.syncFromRelay() }.onFailure { Log.w(TAG, "CypherLog sync: ${it.message}") }
     }

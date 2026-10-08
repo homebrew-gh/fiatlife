@@ -3,7 +3,10 @@ package com.fiatlife.app.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.fiatlife.app.data.nostr.NostrClient
+import com.fiatlife.app.data.repository.BankAccountRepository
 import com.fiatlife.app.data.repository.BillRepository
+import com.fiatlife.app.data.repository.BitcoinWalletRepository
+import com.fiatlife.app.data.repository.BtcPriceRepository
 import com.fiatlife.app.data.repository.BudgetRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
@@ -14,6 +17,7 @@ import com.fiatlife.app.domain.model.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class DashboardState(
@@ -47,6 +51,10 @@ data class DashboardState(
     val debtFreeDateMs: Long? = null,
     val debtPayoffFeasible: Boolean = true,
     val debtAccountCount: Int = 0,
+    val netWorth: Double = 0.0,
+    val netWorthCash: Double = 0.0,
+    /** Bank balances or bitcoin wallets are on file (debt alone isn't a net worth). */
+    val hasNetWorthData: Boolean = false,
 )
 
 data class UpcomingBillRow(
@@ -66,6 +74,9 @@ class DashboardViewModel @Inject constructor(
     private val goalRepository: GoalRepository,
     private val creditAccountRepository: CreditAccountRepository,
     private val budgetRepository: BudgetRepository,
+    private val bankAccountRepository: BankAccountRepository,
+    private val bitcoinWalletRepository: BitcoinWalletRepository,
+    private val btcPriceRepository: BtcPriceRepository,
     private val nostrClient: NostrClient
 ) : ViewModel() {
 
@@ -88,9 +99,21 @@ class DashboardViewModel @Inject constructor(
         ) { inputs, creditAccounts, budgetConfig ->
             Triple(inputs, creditAccounts, budgetConfig)
         }
+        val netWorthFlow = combine(
+            bankAccountRepository.getAllBankAccounts(),
+            bitcoinWalletRepository.getAllWallets(),
+            btcPriceRepository.price
+        ) { bank, wallets, price -> Triple(bank, wallets, price?.usd) }
 
-        combine(baseFlow, monthAnchor) { data, currentMonthAnchor ->
-            buildDashboardState(data, currentMonthAnchor)
+        viewModelScope.launch { btcPriceRepository.refresh() }
+
+        combine(baseFlow, netWorthFlow, monthAnchor) { data, (bank, wallets, usdPerBtc), currentMonthAnchor ->
+            val netWorth = computeNetWorth(bank, wallets, usdPerBtc, data.second)
+            buildDashboardState(data, currentMonthAnchor).copy(
+                netWorth = netWorth.total,
+                netWorthCash = netWorth.cash,
+                hasNetWorthData = bank.any { it.balance != null } || wallets.isNotEmpty()
+            )
         }
             .flowOn(Dispatchers.Default)
             .distinctUntilChanged()

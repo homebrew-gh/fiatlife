@@ -161,56 +161,79 @@ fun DashboardScreen(
         val showBudget = state.hasBudgetTargets || state.takeHomePay > 0
         val showDebt = state.debtAccountCount > 0
         val showHousing = state.housingMonthly > 0.0
-        if (showBudget || showDebt || showHousing) {
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    if (showBudget) {
-                        SnapshotTile(
-                            label = if (state.hasBudgetTargets) "Unbudgeted" else "Budget",
-                            value = if (state.hasBudgetTargets) {
-                                state.budgetUnbudgeted.formatCurrency()
-                            } else {
-                                "Set targets"
-                            },
-                            icon = Icons.Filled.PieChart,
-                            onClick = { openTab(Screen.Budget.route) },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    if (showDebt) {
-                        val freeDate = state.debtFreeDateMs
-                        val debtDetail = if (state.debtPayoffFeasible && freeDate != null) {
-                            "Free ${formatPayoffDate(freeDate)}"
+        val tiles = buildList<@Composable (Modifier) -> Unit> {
+            add { modifier ->
+                SnapshotTile(
+                    label = "Net worth",
+                    value = if (state.hasNetWorthData) state.netWorth.formatCurrency() else "Add accounts",
+                    detail = if (state.hasNetWorthData) "Cash ${state.netWorthCash.formatCurrency()}" else null,
+                    icon = Icons.Filled.ShowChart,
+                    onClick = { navController.navigate(Screen.NetWorth.route) },
+                    modifier = modifier
+                )
+            }
+            if (showBudget) {
+                add { modifier ->
+                    SnapshotTile(
+                        label = if (state.hasBudgetTargets) "Unbudgeted" else "Budget",
+                        value = if (state.hasBudgetTargets) {
+                            state.budgetUnbudgeted.formatCurrency()
                         } else {
-                            null
-                        }
-                        SnapshotTile(
-                            label = "Debt",
-                            value = state.totalDebt.formatCurrency(),
-                            detail = debtDetail,
-                            icon = Icons.Filled.AccountBalance,
-                            onClick = { openTab(Screen.Debt.route) },
-                            modifier = Modifier.weight(1f)
-                        )
+                            "Set targets"
+                        },
+                        icon = Icons.Filled.PieChart,
+                        onClick = { openTab(Screen.Budget.route) },
+                        modifier = modifier
+                    )
+                }
+            }
+            if (showDebt) {
+                add { modifier ->
+                    val freeDate = state.debtFreeDateMs
+                    val debtDetail = if (state.debtPayoffFeasible && freeDate != null) {
+                        "Free ${formatPayoffDate(freeDate)}"
+                    } else {
+                        null
                     }
-                    if (showHousing) {
-                        SnapshotTile(
-                            label = "Housing (PITI)",
-                            value = state.housingMonthly.formatCurrency(),
-                            icon = Icons.Filled.Home,
-                            onClick = {
-                                val id = state.mortgageAccountId
-                                if (id != null) {
-                                    navController.navigate(Screen.DebtDetail.routeWithId(id))
-                                } else {
-                                    openTab(Screen.Debt.route)
-                                }
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
+                    SnapshotTile(
+                        label = "Debt",
+                        value = state.totalDebt.formatCurrency(),
+                        detail = debtDetail,
+                        icon = Icons.Filled.AccountBalance,
+                        onClick = { openTab(Screen.Debt.route) },
+                        modifier = modifier
+                    )
+                }
+            }
+            if (showHousing) {
+                add { modifier ->
+                    SnapshotTile(
+                        label = "Housing (PITI)",
+                        value = state.housingMonthly.formatCurrency(),
+                        icon = Icons.Filled.Home,
+                        onClick = {
+                            val id = state.mortgageAccountId
+                            if (id != null) {
+                                navController.navigate(Screen.DebtDetail.routeWithId(id))
+                            } else {
+                                openTab(Screen.Debt.route)
+                            }
+                        },
+                        modifier = modifier
+                    )
+                }
+            }
+        }
+        // Four tiles don't fit one row on a phone; use a 2×2 grid.
+        val tileRows = if (tiles.size == 4) tiles.chunked(2) else listOf(tiles)
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                tileRows.forEach { row ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        row.forEach { tile -> tile(Modifier.weight(1f)) }
                     }
                 }
             }

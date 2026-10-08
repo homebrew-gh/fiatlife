@@ -8,6 +8,7 @@ import com.fiatlife.app.data.repository.BillRepository
 import com.fiatlife.app.data.repository.BillerRepository
 import com.fiatlife.app.data.repository.BudgetRepository
 import com.fiatlife.app.data.repository.BankAccountRepository
+import com.fiatlife.app.data.repository.BitcoinWalletRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
 import com.fiatlife.app.data.repository.CypherLogSubscriptionRepository
 import com.fiatlife.app.data.repository.GoalRepository
@@ -41,7 +42,8 @@ class MainAppViewModel @Inject constructor(
     private val creditAccountRepository: CreditAccountRepository,
     private val bankAccountRepository: BankAccountRepository,
     private val billerRepository: BillerRepository,
-    private val budgetRepository: BudgetRepository
+    private val budgetRepository: BudgetRepository,
+    private val bitcoinWalletRepository: BitcoinWalletRepository
 ) : ViewModel() {
 
     private val _isManualSyncing = MutableStateFlow(false)
@@ -101,6 +103,7 @@ class MainAppViewModel @Inject constructor(
                 runCatching { goalRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Goal sync failed: ${it.message}") }
                 runCatching { creditAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Credit account sync failed: ${it.message}") }
                 runCatching { bankAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bank account sync failed: ${it.message}") }
+                runCatching { bitcoinWalletRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bitcoin wallet sync failed: ${it.message}") }
                 runCatching { billerRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Biller sync failed: ${it.message}") }
                 runCatching { billRepository.backfillLegacyCreditLoanPayments() }
             } finally {

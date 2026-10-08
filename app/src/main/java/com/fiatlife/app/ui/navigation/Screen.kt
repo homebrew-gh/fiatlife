@@ -118,6 +118,14 @@ sealed class Screen(
         unselectedIcon = Icons.Outlined.AccountBalance
     )
 
+    data object NetWorth : Screen(
+        route = "net_worth",
+        title = "Net Worth",
+        subtitle = "Everything you own minus everything you owe",
+        selectedIcon = Icons.Filled.ShowChart,
+        unselectedIcon = Icons.Outlined.ShowChart
+    )
+
     companion object {
         /** Bottom tab items (Settings stays in the top bar). */
         val bottomNavItems = listOf(Dashboard, Bills, Salary, Debt, Goals, Budget)
@@ -135,6 +143,7 @@ sealed class Screen(
             route == CompanyHistory.route -> CompanyHistory
             route?.startsWith("debt_detail") == true -> DebtDetail
             route == DebtPlanner.route -> DebtPlanner
+            route == NetWorth.route -> NetWorth
             else -> null
         }
     }

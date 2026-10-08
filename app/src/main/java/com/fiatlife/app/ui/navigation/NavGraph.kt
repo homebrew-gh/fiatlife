@@ -43,6 +43,7 @@ import com.fiatlife.app.ui.screens.debt.DebtDetailScreen
 import com.fiatlife.app.ui.screens.debt.DebtPlannerScreen
 import com.fiatlife.app.ui.screens.debt.DebtScreen
 import com.fiatlife.app.ui.screens.goals.GoalsScreen
+import com.fiatlife.app.ui.screens.networth.NetWorthScreen
 import com.fiatlife.app.ui.screens.salary.SalaryScreen
 import com.fiatlife.app.ui.screens.settings.SettingsScreen
 import com.fiatlife.app.ui.viewmodel.MainAppViewModel
@@ -58,6 +59,7 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
     val hideGlobalTopBar = currentScreen == Screen.BillDetail ||
         currentScreen == Screen.DebtDetail ||
         currentScreen == Screen.DebtPlanner ||
+        currentScreen == Screen.NetWorth ||
         currentScreen == Screen.CompanyHistory ||
         currentScreen == Screen.CompanyHistoryDetail
 
@@ -140,6 +142,9 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
                 }
                 composable(Screen.DebtPlanner.route) {
                     DebtPlannerScreen(navController = navController)
+                }
+                composable(Screen.NetWorth.route) {
+                    NetWorthScreen(navController = navController)
                 }
                 composable(Screen.Goals.route) {
                     GoalsScreen()
