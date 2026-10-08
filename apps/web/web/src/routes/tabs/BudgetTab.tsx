@@ -241,7 +241,7 @@ export function BudgetTab() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Budget"
+        title="Spending"
         description="Set monthly targets and track spending against your take-home pay."
         refreshing={refreshing}
         onRefresh={() => void onRefresh()}

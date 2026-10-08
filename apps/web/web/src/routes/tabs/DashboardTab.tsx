@@ -313,7 +313,7 @@ export function DashboardTab() {
               ) : null}
               {showBudget ? (
                 <SnapshotTile
-                  to="/app/budget"
+                  to="/app/spending"
                   label={
                     budgetSummary.totalTarget > 0 ? "Unbudgeted" : "Budget"
                   }
@@ -326,7 +326,7 @@ export function DashboardTab() {
               ) : null}
               {showDebt ? (
                 <SnapshotTile
-                  to="/app/debt"
+                  to="/app/accounts"
                   label="Debt"
                   value={formatUsd(debtSummary.totalDebt)}
                   detail={
@@ -341,7 +341,7 @@ export function DashboardTab() {
                   to={
                     dash.mortgageAccountId
                       ? `/app/debt/${dash.mortgageAccountId}`
-                      : "/app/debt"
+                      : "/app/accounts"
                   }
                   label="Housing (PITI)"
                   value={formatUsd(dash.housingMonthly)}

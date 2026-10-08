@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -58,7 +59,7 @@ fun DashboardScreen(
                     subtitle = "Set up your paycheck and bills to see leftover cash and what's due."
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { openTab(Screen.Salary.route) }) {
+                        Button(onClick = { navController.navigate(Screen.Salary.route) }) {
                             Text("Paycheck")
                         }
                         OutlinedButton(onClick = { openTab(Screen.Bills.route) }) {
@@ -120,7 +121,7 @@ fun DashboardScreen(
                     }
                     if (state.missingPaycheckCount > 0) {
                         AssistChip(
-                            onClick = { openTab(Screen.Salary.route) },
+                            onClick = { navController.navigate(Screen.Salary.route) },
                             label = {
                                 Text(
                                     if (state.missingPaycheckCount == 1) "Log paycheck"
@@ -154,7 +155,7 @@ fun DashboardScreen(
                 loggedBonus = state.monthlyLoggedBonus,
                 perPaycheckEstimate = state.monthlyPerPaycheckEstimate,
                 hasSalary = state.hasSalary,
-                onClick = { openTab(Screen.Salary.route) }
+                onClick = { navController.navigate(Screen.Salary.route) }
             )
         }
 
@@ -167,7 +168,7 @@ fun DashboardScreen(
                     label = "Net worth",
                     value = if (state.hasNetWorthData) state.netWorth.formatCurrency() else "Add accounts",
                     detail = if (state.hasNetWorthData) "Cash ${state.netWorthCash.formatCurrency()}" else null,
-                    icon = Icons.Filled.ShowChart,
+                    icon = Icons.AutoMirrored.Filled.ShowChart,
                     onClick = { navController.navigate(Screen.NetWorth.route) },
                     modifier = modifier
                 )
@@ -182,7 +183,7 @@ fun DashboardScreen(
                             "Set targets"
                         },
                         icon = Icons.Filled.PieChart,
-                        onClick = { openTab(Screen.Budget.route) },
+                        onClick = { openTab(Screen.Spending.route) },
                         modifier = modifier
                     )
                 }
@@ -200,7 +201,7 @@ fun DashboardScreen(
                         value = state.totalDebt.formatCurrency(),
                         detail = debtDetail,
                         icon = Icons.Filled.AccountBalance,
-                        onClick = { openTab(Screen.Debt.route) },
+                        onClick = { openTab(Screen.Accounts.route) },
                         modifier = modifier
                     )
                 }
@@ -216,7 +217,7 @@ fun DashboardScreen(
                             if (id != null) {
                                 navController.navigate(Screen.DebtDetail.routeWithId(id))
                             } else {
-                                openTab(Screen.Debt.route)
+                                openTab(Screen.Accounts.route)
                             }
                         },
                         modifier = modifier
@@ -300,7 +301,7 @@ fun DashboardScreen(
             SectionCard(
                 title = "Goal",
                 icon = Icons.Filled.Flag,
-                modifier = Modifier.clickable { openTab(Screen.Goals.route) }
+                modifier = Modifier.clickable { navController.navigate(Screen.Goals.route) }
             ) {
                 val goal = state.primaryGoal
                 if (state.goalCount == 0) {

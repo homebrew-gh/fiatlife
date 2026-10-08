@@ -367,10 +367,10 @@ Port, don't redesign: ERV already ships these pieces for Maple Proxy.
 
 ### T0 — Navigation
 
-- [ ] Android: `bottomNavItems` = Home, Spending, Bills, Accounts; Paycheck, Goals, Net Worth as back-button screens
-- [ ] Android: Accounts screen = net worth summary + today's Debt content
-- [ ] Android: Home cards for Paycheck and Goals
-- [ ] Web: `AppShell` tabs; `/app/budget` → `/app/spending`; Accounts route
+- [x] Android: `bottomNavItems` = Home, Spending, Bills, Accounts; Paycheck, Goals, Net Worth as back-button screens
+- [x] Android: Accounts screen = net worth summary + today's Debt content
+- [x] Android: Home cards for Paycheck and Goals (existing cards now push the screens)
+- [x] Web: `AppShell` tabs; `/app/budget` → `/app/spending`, `/app/debt` → `/app/accounts`; Accounts route
 - **Acceptance:** every screen reachable before is reachable in at most two taps; dashboard chips still deep-link.
 
 ### T1 — Fetch, store, show (read-only)

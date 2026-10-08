@@ -180,6 +180,7 @@ export function GoalsTab() {
     <div className="space-y-5">
       <PageHeader
         title="Goals"
+        back={{ to: "/app", label: "Home" }}
         description="Savings targets synced with Android via your Nostr relay."
         refreshing={refreshing}
         onRefresh={() => void onRefresh()}

@@ -15,7 +15,7 @@ import { DebtDetailRoute } from "./routes/DebtDetailRoute";
 import { DebtPlannerRoute } from "./routes/DebtPlannerRoute";
 import { MortgageCalculatorRoute } from "./routes/MortgageCalculatorRoute";
 import { NetWorthRoute } from "./routes/NetWorthRoute";
-import { DebtTab } from "./routes/tabs/DebtTab";
+import { AccountsRoute } from "./routes/AccountsRoute";
 import { GoalsTab } from "./routes/tabs/GoalsTab";
 import { BudgetTab } from "./routes/tabs/BudgetTab";
 import { SettingsTab } from "./routes/tabs/SettingsTab";
@@ -55,13 +55,15 @@ function Gate() {
         />
         <Route path="bills/:billId" element={<BillDetailRoute />} />
         <Route path="paycheck" element={<PaycheckTab />} />
-        <Route path="debt" element={<DebtTab />} />
+        <Route path="accounts" element={<AccountsRoute />} />
+        <Route path="debt" element={<Navigate to="/app/accounts" replace />} />
         <Route path="debt/planner" element={<DebtPlannerRoute />} />
         <Route path="debt/mortgage-calculator" element={<MortgageCalculatorRoute />} />
         <Route path="debt/:accountId" element={<DebtDetailRoute />} />
         <Route path="net-worth" element={<NetWorthRoute />} />
         <Route path="goals" element={<GoalsTab />} />
-        <Route path="budget" element={<BudgetTab />} />
+        <Route path="spending" element={<BudgetTab />} />
+        <Route path="budget" element={<Navigate to="/app/spending" replace />} />
         <Route path="settings" element={<SettingsTab />} />
       </Route>
       <Route path="*" element={<RootRedirect status={status} />} />

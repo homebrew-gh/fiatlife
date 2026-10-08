@@ -2,6 +2,7 @@ package com.fiatlife.app.ui.screens.debt
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -40,7 +41,8 @@ import java.util.UUID
 @Composable
 fun DebtScreen(
     navController: NavController,
-    viewModel: DebtViewModel = hiltViewModel()
+    viewModel: DebtViewModel = hiltViewModel(),
+    header: LazyListScope.() -> Unit = {}
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var statementAccount by remember { mutableStateOf<CreditAccount?>(null) }
@@ -51,6 +53,7 @@ fun DebtScreen(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            header()
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),

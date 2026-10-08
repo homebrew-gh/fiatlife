@@ -22,7 +22,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -41,7 +40,7 @@ import com.fiatlife.app.ui.screens.budget.BudgetScreen
 import com.fiatlife.app.ui.screens.dashboard.DashboardScreen
 import com.fiatlife.app.ui.screens.debt.DebtDetailScreen
 import com.fiatlife.app.ui.screens.debt.DebtPlannerScreen
-import com.fiatlife.app.ui.screens.debt.DebtScreen
+import com.fiatlife.app.ui.screens.accounts.AccountsScreen
 import com.fiatlife.app.ui.screens.goals.GoalsScreen
 import com.fiatlife.app.ui.screens.networth.NetWorthScreen
 import com.fiatlife.app.ui.screens.salary.SalaryScreen
@@ -71,7 +70,10 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
                 MainAppTopBar(
                     title = currentScreen?.title ?: "FiatLife",
                     subtitle = currentScreen?.subtitle?.takeIf { it.isNotBlank() } ?: "Your financial dashboard",
-                    onSettingsClick = { navController.navigate(Screen.Settings.route) }
+                    onSettingsClick = { navController.navigate(Screen.Settings.route) },
+                    onBack = if (currentScreen in Screen.backButtonScreens) {
+                        { navController.popBackStack() }
+                    } else null
                 )
             }
         },
@@ -80,10 +82,9 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
                 containerColor = MaterialTheme.colorScheme.surface,
                 contentColor = MaterialTheme.colorScheme.onSurface
             ) {
+                val activeTab = Screen.parentTab(currentScreen)
                 Screen.bottomNavItems.forEach { screen ->
-                    val selected = currentDestination?.hierarchy?.any {
-                        it.route == screen.route
-                    } == true
+                    val selected = activeTab == screen
 
                     NavigationBarItem(
                         icon = {
@@ -137,8 +138,8 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
                 composable(Screen.CompanyHistory.route) {
                     CompanyHistoryScreen(navController = navController)
                 }
-                composable(Screen.Debt.route) {
-                    DebtScreen(navController = navController)
+                composable(Screen.Accounts.route) {
+                    AccountsScreen(navController = navController)
                 }
                 composable(Screen.DebtPlanner.route) {
                     DebtPlannerScreen(navController = navController)
@@ -149,7 +150,7 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
                 composable(Screen.Goals.route) {
                     GoalsScreen()
                 }
-                composable(Screen.Budget.route) {
+                composable(Screen.Spending.route) {
                     BudgetScreen()
                 }
                 composable(Screen.Settings.route) {
@@ -195,7 +196,8 @@ fun FiatLifeNavGraph(onLogout: () -> Unit = {}) {
 private fun MainAppTopBar(
     title: String,
     subtitle: String,
-    onSettingsClick: () -> Unit
+    onSettingsClick: () -> Unit,
+    onBack: (() -> Unit)?
 ) {
     val mainViewModel: MainAppViewModel = hiltViewModel()
     val mainState by mainViewModel.state.collectAsStateWithLifecycle()
@@ -212,6 +214,7 @@ private fun MainAppTopBar(
             hasData = mainState.hasData,
             isSyncing = mainState.isManualSyncing,
             onSyncClick = { mainViewModel.manualSyncFromRelay() },
+            onBack = onBack,
             actions = {
                 IconButton(onClick = onSettingsClick) {
                     Icon(Icons.Filled.Settings, contentDescription = "Settings")

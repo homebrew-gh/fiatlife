@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { CreditAccountSheet } from "../../components/debt/CreditAccountSheet";
@@ -137,7 +137,16 @@ function DebtAccountCard({
   );
 }
 
-export function DebtTab() {
+export function DebtTab({
+  title = "Debt",
+  description = "Credit cards and loans synced with Android via your Nostr relay.",
+  intro,
+}: {
+  title?: string;
+  description?: string;
+  /** Rendered under the header, above the debt content (the Accounts page's net worth card). */
+  intro?: ReactNode;
+} = {}) {
   const navigate = useNavigate();
   const {
     accounts,
@@ -200,8 +209,8 @@ export function DebtTab() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Debt"
-        description="Credit cards and loans synced with Android via your Nostr relay."
+        title={title}
+        description={description}
         refreshing={refreshing}
         onRefresh={() => void onRefresh()}
         refreshDisabled={loading}
@@ -218,6 +227,8 @@ export function DebtTab() {
       />
 
       {error ? <ErrorBanner message={error} /> : null}
+
+      {intro}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <Link

@@ -3,6 +3,8 @@ package com.fiatlife.app.ui.navigation
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.automirrored.filled.ShowChart
+import androidx.compose.material.icons.automirrored.outlined.ShowChart
 import androidx.compose.ui.graphics.vector.ImageVector
 
 sealed class Screen(
@@ -36,10 +38,10 @@ sealed class Screen(
         unselectedIcon = Icons.Outlined.Receipt
     )
 
-    data object Debt : Screen(
-        route = "debt",
-        title = "Debt",
-        subtitle = "Credit & loans",
+    data object Accounts : Screen(
+        route = "accounts",
+        title = "Accounts",
+        subtitle = "Net worth, credit & loans",
         selectedIcon = Icons.Filled.AccountBalance,
         unselectedIcon = Icons.Outlined.AccountBalance
     )
@@ -52,9 +54,9 @@ sealed class Screen(
         unselectedIcon = Icons.Outlined.Flag
     )
 
-    data object Budget : Screen(
-        route = "budget",
-        title = "Budget",
+    data object Spending : Screen(
+        route = "spending",
+        title = "Spending",
         subtitle = "Monthly targets and spending",
         selectedIcon = Icons.Filled.PieChart,
         unselectedIcon = Icons.Outlined.PieChart
@@ -122,21 +124,34 @@ sealed class Screen(
         route = "net_worth",
         title = "Net Worth",
         subtitle = "Everything you own minus everything you owe",
-        selectedIcon = Icons.Filled.ShowChart,
-        unselectedIcon = Icons.Outlined.ShowChart
+        selectedIcon = Icons.AutoMirrored.Filled.ShowChart,
+        unselectedIcon = Icons.AutoMirrored.Outlined.ShowChart
     )
 
     companion object {
         /** Bottom tab items (Settings stays in the top bar). */
-        val bottomNavItems = listOf(Dashboard, Bills, Salary, Debt, Goals, Budget)
+        val bottomNavItems = listOf(Dashboard, Spending, Bills, Accounts)
+
+        /** Screens opened from a tab, with a back button; their parent tab stays highlighted. */
+        val backButtonScreens = setOf(Salary, Goals)
+
+        /** The bottom tab a screen belongs to, for highlighting. */
+        fun parentTab(screen: Screen?): Screen? = when (screen) {
+            null -> null
+            Dashboard, Salary, Goals -> Dashboard
+            Spending -> Spending
+            Bills, BillDetail, CompanyHistory, CompanyHistoryDetail -> Bills
+            Accounts, DebtDetail, DebtPlanner, NetWorth -> Accounts
+            else -> null
+        }
 
         fun fromRoute(route: String?): Screen? = when {
             route == Dashboard.route -> Dashboard
             route == Salary.route -> Salary
             route == Bills.route -> Bills
-            route == Debt.route -> Debt
+            route == Accounts.route -> Accounts
             route == Goals.route -> Goals
-            route == Budget.route -> Budget
+            route == Spending.route -> Spending
             route == Settings.route -> Settings
             route?.startsWith("bill_detail") == true -> BillDetail
             route?.startsWith("company_history/") == true -> CompanyHistoryDetail

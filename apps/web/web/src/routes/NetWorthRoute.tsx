@@ -263,6 +263,7 @@ export function NetWorthRoute() {
     <div className="space-y-5">
       <PageHeader
         title="Net Worth"
+        back={{ to: "/app/accounts", label: "Accounts" }}
         description="Everything you own minus everything you owe, with bitcoin at the live price."
         refreshing={refreshing}
         onRefresh={() => void onRefresh()}
@@ -344,8 +345,8 @@ export function NetWorthRoute() {
           <p className="text-xs text-muted mt-2">
             Your mortgage has no home price, so it only counts as debt. Add the
             purchase price on the{" "}
-            <Link to="/app/debt" className="underline">
-              Debt
+            <Link to="/app/accounts" className="underline">
+              Accounts
             </Link>{" "}
             page to count your equity.
           </p>

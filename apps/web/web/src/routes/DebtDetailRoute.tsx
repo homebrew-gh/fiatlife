@@ -60,10 +60,10 @@ export function DebtDetailRoute() {
   const [showStatement, setShowStatement] = useState(false);
   const [attaching, setAttaching] = useState(false);
 
-  if (!accountId) return <Navigate to="/app/debt" replace />;
+  if (!accountId) return <Navigate to="/app/accounts" replace />;
 
   if (!loading && !account) {
-    return <Navigate to="/app/debt" replace />;
+    return <Navigate to="/app/accounts" replace />;
   }
 
   if (!account) {
@@ -85,7 +85,7 @@ export function DebtDetailRoute() {
       return;
     }
     await deleteAccount(account);
-    navigate("/app/debt", { replace: true });
+    navigate("/app/accounts", { replace: true });
   };
 
   const onSaveEdit = async (
@@ -107,8 +107,8 @@ export function DebtDetailRoute() {
   return (
     <div className="space-y-5">
       <div className="flex items-start gap-3">
-        <Link to="/app/debt" className="btn-ghost text-sm py-1.5 shrink-0">
-          ← Debt
+        <Link to="/app/accounts" className="btn-ghost text-sm py-1.5 shrink-0">
+          ← Accounts
         </Link>
         <div className="min-w-0 flex-1">
           <h1 className="page-title truncate">{account.name}</h1>

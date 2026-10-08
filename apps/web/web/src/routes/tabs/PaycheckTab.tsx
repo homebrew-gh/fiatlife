@@ -134,6 +134,7 @@ export function PaycheckTab() {
     <div className="space-y-5">
       <PageHeader
         title="Paycheck"
+        back={{ to: "/app", label: "Home" }}
         description="Track actual paychecks on Summary. Use Model for raises, bonuses, and other scenarios."
         refreshing={refreshing}
         onRefresh={() => void onRefresh()}

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
+import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { Logo } from "../components/Logo";
 import { ThemeToggle } from "../components/ThemeToggle";
@@ -18,18 +18,29 @@ import { SyncStatusOverlay } from "../components/SyncStatusOverlay";
 import { useAuth } from "../lib/auth";
 import { hasRelayConfigured } from "../lib/relayUrl";
 
-const TABS: { to: string; label: string; end?: boolean }[] = [
-  { to: "/app", label: "Home", end: true },
+/** `also`: pages opened from the tab that keep it highlighted. */
+const TABS: { to: string; label: string; also?: string[] }[] = [
+  { to: "/app", label: "Home", also: ["/app/paycheck", "/app/goals"] },
+  { to: "/app/spending", label: "Spending" },
   { to: "/app/bills", label: "Bills" },
-  { to: "/app/paycheck", label: "Paycheck" },
-  { to: "/app/debt", label: "Debt" },
-  { to: "/app/goals", label: "Goals" },
-  { to: "/app/budget", label: "Budget" },
+  { to: "/app/accounts", label: "Accounts", also: ["/app/debt", "/app/net-worth"] },
 ];
+
+function isUnder(path: string, base: string): boolean {
+  return path === base || path.startsWith(`${base}/`);
+}
+
+function tabIsActive(tab: (typeof TABS)[number], path: string): boolean {
+  if (tab.to === "/app") {
+    return path === "/app" || path === "/app/" || (tab.also ?? []).some((p) => isUnder(path, p));
+  }
+  return [tab.to, ...(tab.also ?? [])].some((p) => isUnder(path, p));
+}
 
 export function AppShell() {
   const { status, loading, lock } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [locking, setLocking] = useState(false);
 
   if (loading) return null;
@@ -100,18 +111,19 @@ export function AppShell() {
 
       <nav className="app-chrome border-t sticky bottom-0 z-10">
         <div className="mx-auto max-w-5xl px-2 py-2 flex justify-between gap-1 overflow-x-auto">
-          {TABS.map((tab) => (
-            <NavLink
-              key={tab.to}
-              to={tab.to}
-              end={tab.end}
-              className={({ isActive }) =>
-                clsx("nav-tab min-w-[4.5rem]", isActive && "nav-tab-active")
-              }
-            >
-              <span>{tab.label}</span>
-            </NavLink>
-          ))}
+          {TABS.map((tab) => {
+            const active = tabIsActive(tab, location.pathname);
+            return (
+              <Link
+                key={tab.to}
+                to={tab.to}
+                aria-current={active ? "page" : undefined}
+                className={clsx("nav-tab min-w-[4.5rem]", active && "nav-tab-active")}
+              >
+                <span>{tab.label}</span>
+              </Link>
+            );
+          })}
         </div>
       </nav>
       <SyncStatusOverlay />

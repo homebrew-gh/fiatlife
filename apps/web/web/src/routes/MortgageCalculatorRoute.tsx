@@ -40,8 +40,8 @@ export function MortgageCalculatorRoute() {
   return (
     <div className="space-y-5">
       <div className="flex items-start gap-3">
-        <Link to="/app/debt" className="btn-ghost text-sm py-1.5 shrink-0">
-          ← Debt
+        <Link to="/app/accounts" className="btn-ghost text-sm py-1.5 shrink-0">
+          ← Accounts
         </Link>
         <div>
           <h1 className="page-title">Mortgage Calculator</h1>
