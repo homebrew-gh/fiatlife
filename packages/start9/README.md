@@ -53,21 +53,19 @@ make x86-import install
 
 ### Sideload updates (not reinstall)
 
-StartOS only treats a sideload as an **update** when the package **version string is higher** than what is installed. Rebuilding without bumping the version produces the same `0.4.0:N` label, so the UI offers install/reinstall instead of update.
+StartOS only treats a sideload as an **update** when the package **version string is higher** than what is installed.
 
-Before each sideload rebuild, **increment the downstream revision** in `startos/versions/`:
+For wrapper-only webapp changes (no data migration), bump `version` **in place** in `startos/versions/current.ts` (for example `0.4.0:7` → `0.4.0:8`) and rebuild. Do **not** add a new file to `other` — that shrinks `canMigrateFrom` and StartOS fails with `uninit target range ! is unsatisfiable`.
 
-1. Add `startos/versions/v0.4.0.N.ts` with `version: '0.4.0:N'` and release notes.
-2. Set it as `current` in `startos/versions/index.ts` and add the previous current to `other`.
-3. Rebuild: `make x86-import`
-
-Version format is `<upstream>:<downstream>` (ExVer). FiatLife wrapper bumps only change the part after the colon (`0.4.0:4` → `0.4.0:5`). No migration is needed for most wrapper-only changes — use an empty `up: async () => {}`.
-
-Inspect the built package version:
+Only add a historical version file to `other` when that version has its own `up` migration that must run on the way to current.
 
 ```bash
-start-cli s9pk inspect fiatlife_x86_64.s9pk manifest | jq .version
+start-cli s9pk inspect fiatlife_x86_64.s9pk manifest | jq '{version, canMigrateFrom, canMigrateTo}'
 ```
+
+`canMigrateFrom` should be `<=0.4.0:N` (N = current downstream). If it is `<=0.4.0:0`, the graph is wrong.
+
+Version format is `<upstream>:<downstream>` (ExVer). FiatLife wrapper bumps only change the part after the colon.
 
 ## Local dev (web + server)
 

@@ -117,7 +117,7 @@ assemble_rootfs() {
 
 if [[ -f "$PACK/Dockerfile" && -f "$PACK/fiatlife-web" && -d "$PACK/dist" ]]; then
   echo ">> docker build from prebuilt .pack (no sudo/mmdebstrap)"
-  run_docker build -t "$IMAGE_TAG" "$PACK"
+  run_docker build --network=host -t "$IMAGE_TAG" "$PACK"
   echo ">> built $IMAGE_TAG"
 else
   echo ">> assemble rootfs"
