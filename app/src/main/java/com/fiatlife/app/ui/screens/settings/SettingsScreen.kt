@@ -26,6 +26,8 @@ import com.fiatlife.app.domain.model.BankAccount
 import com.fiatlife.app.domain.model.BankAccountType
 import com.fiatlife.app.ui.components.MoneyText
 import com.fiatlife.app.ui.components.SectionCard
+import com.fiatlife.app.ui.components.formatBalanceAsOf
+import com.fiatlife.app.ui.components.formatCurrency
 import com.fiatlife.app.ui.screens.pin.SetPinSheet
 import com.fiatlife.app.ui.theme.ProfitGreen
 import com.fiatlife.app.ui.viewmodel.SettingsViewModel
@@ -635,11 +637,19 @@ fun SettingsScreen(
                         }
                     }
                     if (isLinked) {
-                        Text(
-                            text = "Balance syncs from SimpleFIN in the web app.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        val asOf = formatBalanceAsOf(account.balanceAsOf)
+                        Column {
+                            Text(
+                                text = "Balance ${account.balance?.formatCurrency() ?: "—"}",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "Synced from SimpleFIN in the web app" +
+                                    if (asOf.isNotEmpty()) " · as of $asOf" else "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     } else {
                         OutlinedTextField(
                             value = balanceText,

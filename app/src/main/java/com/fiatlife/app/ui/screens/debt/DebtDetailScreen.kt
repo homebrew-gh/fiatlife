@@ -35,6 +35,7 @@ import com.fiatlife.app.ui.components.CurrencyTextField
 import com.fiatlife.app.ui.navigation.Screen
 import com.fiatlife.app.ui.components.MortgageSnapshotLines
 import com.fiatlife.app.ui.components.SectionCard
+import com.fiatlife.app.ui.components.formatBalanceAsOf
 import com.fiatlife.app.ui.components.formatCurrency
 import com.fiatlife.app.ui.viewmodel.DebtDetailViewModel
 import kotlinx.coroutines.launch
@@ -137,6 +138,14 @@ fun DebtDetailScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                         )
+                        if (acc.simplefinAccountKey != null) {
+                            val asOf = formatBalanceAsOf(acc.simplefinBalanceAsOf)
+                            Text(
+                                text = "Synced from SimpleFIN" + if (asOf.isNotEmpty()) " · $asOf" else "",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                            )
+                        }
                         if (acc.isPromotionActive()) {
                             Spacer(modifier = Modifier.height(8.dp))
                             AssistChip(

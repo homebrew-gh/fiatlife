@@ -26,6 +26,8 @@ import com.fiatlife.app.ui.theme.MoneyGreen
 import com.fiatlife.app.ui.theme.ProfitGreen
 import com.fiatlife.app.ui.theme.WarningAmber
 import java.text.NumberFormat
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 private val currencyFormatter = ThreadLocal.withInitial { NumberFormat.getCurrencyInstance(Locale.US) }
@@ -325,3 +327,9 @@ fun Double.formatCurrency(): String = currencyFormatter.get().format(this)
 fun Double.formatPercentage(decimals: Int = 1): String {
     return "%.${decimals}f%%".format(this * 100)
 }
+
+private val balanceAsOfFormatter = ThreadLocal.withInitial { SimpleDateFormat("MMM d, h:mm a", Locale.US) }
+
+/** "Oct 8, 3:04 PM" — same as web `formatBalanceAsOf`; empty for null/0. */
+fun formatBalanceAsOf(ms: Long?): String =
+    if (ms == null || ms <= 0L) "" else balanceAsOfFormatter.get().format(Date(ms))

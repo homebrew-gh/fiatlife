@@ -34,15 +34,12 @@ import com.fiatlife.app.domain.model.BitcoinWallet
 import com.fiatlife.app.domain.model.CreditAccount
 import com.fiatlife.app.domain.model.CreditAccountType
 import com.fiatlife.app.ui.components.SectionCard
+import com.fiatlife.app.ui.components.formatBalanceAsOf
 import com.fiatlife.app.ui.components.formatCurrency
 import com.fiatlife.app.ui.navigation.Screen
 import com.fiatlife.app.ui.theme.LossRed
 import com.fiatlife.app.ui.theme.ProfitGreen
 import com.fiatlife.app.ui.viewmodel.NetWorthViewModel
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 
 private data class BreakdownItem(
     val key: String,
@@ -246,7 +243,7 @@ fun NetWorthScreen(
                 }
             ) {
                 Text(
-                    state.price?.let { "BTC ${it.usd.formatCurrency()} · ${it.source} · ${formatAsOf(it.fetchedAtMs)}" }
+                    state.price?.let { "BTC ${it.usd.formatCurrency()} · ${it.source} · ${formatBalanceAsOf(it.fetchedAtMs)}" }
                         ?: state.priceError
                         ?: "Loading BTC price…",
                     style = MaterialTheme.typography.bodySmall,
@@ -266,7 +263,7 @@ fun NetWorthScreen(
                     ) {
                         state.wallets.forEachIndexed { index, wallet ->
                             if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                            val updated = wallet.updatedAt.takeIf { it > 0 }?.let { " · updated ${formatAsOf(it)}" }.orEmpty()
+                            val updated = wallet.updatedAt.takeIf { it > 0 }?.let { " · updated ${formatBalanceAsOf(it)}" }.orEmpty()
                             ItemRow(
                                 BreakdownItem(
                                     key = wallet.id,
@@ -550,19 +547,7 @@ private fun bankItems(
     }
 }
 
-private fun syncedDetail(typeLabel: String, syncedAt: Long?): String =
-    if (syncedAt != null && syncedAt > 0) "$typeLabel · synced ${formatAsOf(syncedAt)}" else typeLabel
-
-/** "today 3:04 PM", "yesterday", "Mar 4", or "Mar 4, 2025" for older years. */
-private fun formatAsOf(ms: Long): String {
-    val then = Calendar.getInstance().apply { timeInMillis = ms }
-    val now = Calendar.getInstance()
-    val sameYear = then.get(Calendar.YEAR) == now.get(Calendar.YEAR)
-    val dayDiff = now.get(Calendar.DAY_OF_YEAR) - then.get(Calendar.DAY_OF_YEAR)
-    return when {
-        sameYear && dayDiff == 0 -> "today " + SimpleDateFormat("h:mm a", Locale.US).format(Date(ms))
-        sameYear && dayDiff == 1 -> "yesterday"
-        sameYear -> SimpleDateFormat("MMM d", Locale.US).format(Date(ms))
-        else -> SimpleDateFormat("MMM d, yyyy", Locale.US).format(Date(ms))
-    }
+private fun syncedDetail(typeLabel: String, syncedAt: Long?): String {
+    val asOf = formatBalanceAsOf(syncedAt)
+    return if (asOf.isNotEmpty()) "$typeLabel · synced $asOf" else typeLabel
 }
