@@ -7,6 +7,9 @@ import {
   HeroCard,
   PageHeader,
 } from "../../components/ui";
+import { useBankAccountsData } from "../../lib/bankAccountsData";
+import { useBitcoinData } from "../../lib/bitcoinData";
+import { computeNetWorth } from "../../lib/netWorth";
 import { GENERAL_CATEGORY_LABELS, generalCategoryForBill, monthlyEquivalent, type BillGeneralCategory } from "../../lib/bill";
 import { computeBudgetSummary } from "../../lib/budget";
 import { useBudgetData } from "../../lib/budgetData";
@@ -36,6 +39,8 @@ export function DashboardTab() {
   } = useGoalsData();
   const budget = useBudgetData();
   const debt = useDebtData();
+  const bank = useBankAccountsData();
+  const btc = useBitcoinData();
   const [refreshing, setRefreshing] = useState(false);
 
   const loading =
@@ -88,6 +93,17 @@ export function DashboardTab() {
     () => summarizeDebtPayoff(debt.accounts),
     [debt.accounts],
   );
+  const usdPerBtc = btc.price?.usd ?? null;
+  const netWorth = useMemo(
+    () =>
+      computeNetWorth({
+        bankAccounts: bank.accounts,
+        wallets: btc.wallets,
+        usdPerBtc,
+        creditAccounts: debt.accounts,
+      }),
+    [bank.accounts, btc.wallets, usdPerBtc, debt.accounts],
+  );
 
   const onRefresh = async () => {
     if (refreshing) return;
@@ -99,6 +115,9 @@ export function DashboardTab() {
         reloadGoals(),
         budget.reload(),
         debt.reload(),
+        bank.reload(),
+        btc.reload(),
+        btc.refreshPrice(),
       ]);
     } finally {
       setRefreshing(false);
@@ -108,8 +127,13 @@ export function DashboardTab() {
   const showBudget = dash.takeHomePay > 0 || budgetSummary.totalTarget > 0;
   const showDebt = debtSummary.accountCount > 0;
   const showHousing = dash.housingMonthly > 0;
+  const showNetWorth =
+    bank.accounts.some((a) => a.balance != null) || btc.wallets.length > 0;
   const snapshotCount =
-    Number(showBudget) + Number(showDebt) + Number(showHousing);
+    Number(showNetWorth) +
+    Number(showBudget) +
+    Number(showDebt) +
+    Number(showHousing);
 
   return (
     <div className="space-y-5">
@@ -272,11 +296,21 @@ export function DashboardTab() {
             <div
               className={clsx(
                 "grid gap-3",
-                snapshotCount >= 3
-                  ? "grid-cols-1 sm:grid-cols-3"
-                  : "grid-cols-2",
+                snapshotCount >= 4
+                  ? "grid-cols-2 sm:grid-cols-4"
+                  : snapshotCount === 3
+                    ? "grid-cols-1 sm:grid-cols-3"
+                    : "grid-cols-2",
               )}
             >
+              {showNetWorth ? (
+                <SnapshotTile
+                  to="/app/net-worth"
+                  label="Net worth"
+                  value={formatUsd(netWorth.total)}
+                  detail={`Cash ${formatUsd(netWorth.cash)}`}
+                />
+              ) : null}
               {showBudget ? (
                 <SnapshotTile
                   to="/app/budget"

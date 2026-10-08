@@ -14,6 +14,7 @@ import { PaycheckTab } from "./routes/tabs/PaycheckTab";
 import { DebtDetailRoute } from "./routes/DebtDetailRoute";
 import { DebtPlannerRoute } from "./routes/DebtPlannerRoute";
 import { MortgageCalculatorRoute } from "./routes/MortgageCalculatorRoute";
+import { NetWorthRoute } from "./routes/NetWorthRoute";
 import { DebtTab } from "./routes/tabs/DebtTab";
 import { GoalsTab } from "./routes/tabs/GoalsTab";
 import { BudgetTab } from "./routes/tabs/BudgetTab";
@@ -58,6 +59,7 @@ function Gate() {
         <Route path="debt/planner" element={<DebtPlannerRoute />} />
         <Route path="debt/mortgage-calculator" element={<MortgageCalculatorRoute />} />
         <Route path="debt/:accountId" element={<DebtDetailRoute />} />
+        <Route path="net-worth" element={<NetWorthRoute />} />
         <Route path="goals" element={<GoalsTab />} />
         <Route path="budget" element={<BudgetTab />} />
         <Route path="settings" element={<SettingsTab />} />

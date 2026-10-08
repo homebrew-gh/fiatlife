@@ -5,12 +5,14 @@ import { Logo } from "../components/Logo";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { AppSettingsDataProvider } from "../lib/appSettingsData";
 import { BankAccountsDataProvider } from "../lib/bankAccountsData";
+import { BitcoinDataProvider } from "../lib/bitcoinData";
 import { BillersDataProvider } from "../lib/billersData";
 import { BillsDataProvider } from "../lib/billsData";
 import { BudgetDataProvider } from "../lib/budgetData";
 import { DebtDataProvider } from "../lib/debtData";
 import { GoalsDataProvider } from "../lib/goalsData";
 import { SalaryDataProvider } from "../lib/salaryData";
+import { SimpleFinDataProvider } from "../lib/simplefinData";
 import { SyncStatusProvider } from "../lib/syncStatus";
 import { SyncStatusOverlay } from "../components/SyncStatusOverlay";
 import { useAuth } from "../lib/auth";
@@ -52,9 +54,11 @@ export function AppShell() {
     <BillersDataProvider>
     <AppSettingsDataProvider>
     <BankAccountsDataProvider>
+    <BitcoinDataProvider>
     <SalaryDataProvider>
     <GoalsDataProvider>
     <DebtDataProvider>
+    <SimpleFinDataProvider>
     <BudgetDataProvider>
     <div className="h-full flex flex-col">
       <header className="app-chrome border-b sticky top-0 z-10">
@@ -113,9 +117,11 @@ export function AppShell() {
       <SyncStatusOverlay />
     </div>
     </BudgetDataProvider>
+    </SimpleFinDataProvider>
     </DebtDataProvider>
     </GoalsDataProvider>
     </SalaryDataProvider>
+    </BitcoinDataProvider>
     </BankAccountsDataProvider>
     </AppSettingsDataProvider>
     </BillersDataProvider>
