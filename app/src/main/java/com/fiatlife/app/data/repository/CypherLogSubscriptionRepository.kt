@@ -334,7 +334,7 @@ class CypherLogSubscriptionRepository @Inject constructor(
     suspend fun syncFromRelay() {
         if (!nostrClient.hasSigner) return
         try {
-            withTimeout(30_000) {
+            withTimeout(90_000) {
                 val deletedDTags = loadDeletedDTagsFromRelay()
                 val deleteDTags = mutableListOf<String>()
                 if (deletedDTags.isNotEmpty()) {

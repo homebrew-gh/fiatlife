@@ -6,7 +6,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.*
 import com.fiatlife.app.data.network.NetworkClients
 import okhttp3.*
@@ -14,6 +14,14 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "NostrClient"
+private const val RELAY_PAGE_LIMIT = 500
+private const val MAX_RELAY_PAGES = 40
+
+private sealed class PublishOutcome {
+    data object Accepted : PublishOutcome()
+    data class Rejected(val reason: String) : PublishOutcome()
+    data object NotSent : PublishOutcome()
+}
 
 sealed class NostrMessage {
     data class EventReceived(val subscriptionId: String, val event: NostrEvent) : NostrMessage()
@@ -49,8 +57,13 @@ class NostrClient @Inject constructor(
     private var authInFlight = false
     private var authChallengeReceived = false
 
-    /** Buffer must be large enough to avoid dropping events when relay sends many at once. */
-    private val _messages = MutableSharedFlow<NostrMessage>(extraBufferCapacity = 512)
+    /**
+     * Relay messages are queued without a cap, then emitted onto [messages].
+     * tryEmit into a bounded SharedFlow drops events once the buffer fills, which
+     * made sync miss bills, goals, and accounts the web app still had.
+     */
+    private val inboundMessages = Channel<NostrMessage>(Channel.UNLIMITED)
+    private val _messages = MutableSharedFlow<NostrMessage>(extraBufferCapacity = 64)
     val messages: SharedFlow<NostrMessage> = _messages.asSharedFlow()
 
     private val _connectionState = MutableStateFlow(false)
@@ -58,6 +71,16 @@ class NostrClient @Inject constructor(
 
     private val pendingQueue = Channel<String>(Channel.BUFFERED)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    /** One stored-event query at a time so parallel syncs cannot interleave REQ/EVENT. */
+    private val subscriptionMutex = Mutex()
+
+    init {
+        scope.launch {
+            for (msg in inboundMessages) {
+                _messages.emit(msg)
+            }
+        }
+    }
 
     // --- Background relay-publish outbox ---------------------------------
     // Events are signed synchronously (so signer rejections still surface to
@@ -107,7 +130,7 @@ class NostrClient @Inject constructor(
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.d(TAG, "WebSocket open to $relayUrl")
                 _connectionState.value = true
-                _messages.tryEmit(NostrMessage.Connected)
+                emitMessage(NostrMessage.Connected)
                 // Don't drain the pending queue yet — wait for NIP-42 auth.
                 // If the relay doesn't send AUTH within 7s, assume no auth
                 // is required and drain then (slow VPN links need more time).
@@ -128,7 +151,7 @@ class NostrClient @Inject constructor(
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 webSocket.close(1000, null)
                 _connectionState.value = false
-                _messages.tryEmit(NostrMessage.Disconnected)
+                emitMessage(NostrMessage.Disconnected)
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -136,7 +159,7 @@ class NostrClient @Inject constructor(
                 _connectionState.value = false
                 isAuthenticated = false
                 authInFlight = false
-                _messages.tryEmit(NostrMessage.Error(t))
+                emitMessage(NostrMessage.Error(t))
             }
         })
     }
@@ -204,10 +227,26 @@ class NostrClient @Inject constructor(
         var attempt = 0
         while (true) {
             val ready = ensureConnected()
-            if (ready && publishSignedEventJson(job.signedJson)) {
-                _outbox.update { it.copy(pending = (it.pending - 1).coerceAtLeast(0)) }
-                Log.d(TAG, "outbox delivered ${job.label}")
-                return
+            if (ready) {
+                when (val outcome = publishAndAwaitOk(job.signedJson)) {
+                    PublishOutcome.Accepted -> {
+                        _outbox.update { it.copy(pending = (it.pending - 1).coerceAtLeast(0)) }
+                        Log.d(TAG, "outbox delivered ${job.label}")
+                        return
+                    }
+                    is PublishOutcome.Rejected -> {
+                        outboxMutex.withLock { failedJobs.add(job) }
+                        _outbox.update {
+                            it.copy(
+                                pending = (it.pending - 1).coerceAtLeast(0),
+                                failed = it.failed + 1,
+                            )
+                        }
+                        Log.w(TAG, "outbox relay rejected ${job.label}: ${outcome.reason}")
+                        return
+                    }
+                    PublishOutcome.NotSent -> Unit
+                }
             }
             if (attempt >= outboxBackoffsMs.size) {
                 outboxMutex.withLock { failedJobs.add(job) }
@@ -222,6 +261,48 @@ class NostrClient @Inject constructor(
             }
             delay(outboxBackoffsMs[attempt])
             attempt++
+        }
+    }
+
+    /**
+     * Send a signed event and wait for the relay's OK. A successful WebSocket
+     * write is not delivery — relays reject invalid ids and older replaceable
+     * events, and those used to be counted as synced.
+     */
+    private suspend fun publishAndAwaitOk(signedJson: String): PublishOutcome {
+        val eventId = runCatching {
+            Json.parseToJsonElement(signedJson).jsonObject["id"]?.jsonPrimitive?.content
+        }.getOrNull()?.takeIf { it.isNotEmpty() } ?: return PublishOutcome.NotSent
+
+        val result = CompletableDeferred<NostrMessage.Ok>()
+        val subscribed = CompletableDeferred<Unit>()
+        val job = scope.launch {
+            messages
+                .onSubscription {
+                    if (!subscribed.isCompleted) subscribed.complete(Unit)
+                }
+                .collect { msg ->
+                    if (msg is NostrMessage.Ok &&
+                        msg.eventId.equals(eventId, ignoreCase = true) &&
+                        !result.isCompleted
+                    ) {
+                        result.complete(msg)
+                    }
+                }
+        }
+        try {
+            if (withTimeoutOrNull(2_000) { subscribed.await() } == null) {
+                return PublishOutcome.NotSent
+            }
+            if (!publishSignedEventJson(signedJson)) return PublishOutcome.NotSent
+            val ok = withTimeoutOrNull(15_000) { result.await() } ?: return PublishOutcome.NotSent
+            return if (ok.success) {
+                PublishOutcome.Accepted
+            } else {
+                PublishOutcome.Rejected(ok.message.ifBlank { "relay rejected event" })
+            }
+        } finally {
+            job.cancel()
         }
     }
 
@@ -465,106 +546,160 @@ class NostrClient @Inject constructor(
 
     /**
      * Subscribe to replaceable app-data events (kind 30078) by d-tag prefix.
-     * Emits raw events (tags + content) until EOSE and then closes.
+     * Pages through the relay so a default REQ cap cannot hide older records.
      */
     fun subscribeToKind30078ByDTagPrefix(dTagPrefix: String): Flow<NostrEvent> = flow {
         val s = signer ?: throw IllegalStateException("No signer configured")
-        val filter = NostrFilter(
-            authors = listOf(s.pubkeyHex),
-            kinds = listOf(NostrEvent.KIND_APP_SPECIFIC_DATA)
-        )
-        val subId = subscribe(filter)
-        Log.d(TAG, "Subscribed for kind 30078 with dTagPrefix=$dTagPrefix: subId=$subId")
-        try {
-            messages.collect { msg ->
-                when (msg) {
-                    is NostrMessage.Eose -> {
-                        if (msg.subscriptionId == subId) throw EoseSignal()
-                    }
-                    is NostrMessage.EventReceived -> {
-                        if (msg.subscriptionId != subId) return@collect
-                        val eventDTag = msg.event.tags
-                            .firstOrNull { it.size >= 2 && it[0] == "d" }
-                            ?.getOrNull(1)
-                            .orEmpty()
-                        if (eventDTag.startsWith(dTagPrefix)) {
-                            emit(msg.event)
-                        }
-                    }
-                    else -> {}
+        subscriptionMutex.withLock {
+            val seen = mutableSetOf<String>()
+            var until: Long? = null
+            var pages = 0
+            while (pages < MAX_RELAY_PAGES) {
+                pages++
+                val page = collectPage(
+                    NostrFilter(
+                        authors = listOf(s.pubkeyHex),
+                        kinds = listOf(NostrEvent.KIND_APP_SPECIFIC_DATA),
+                        until = until,
+                        limit = RELAY_PAGE_LIMIT
+                    )
+                )
+                if (page.events.isEmpty()) break
+                val oldest = page.events.minOf { it.created_at }
+                var added = 0
+                for (event in page.events) {
+                    if (!seen.add(event.id)) continue
+                    added++
+                    val eventDTag = event.tags
+                        .firstOrNull { it.size >= 2 && it[0] == "d" }
+                        ?.getOrNull(1)
+                        .orEmpty()
+                    if (eventDTag.startsWith(dTagPrefix)) emit(event)
                 }
+                until = nextPageUntil(page.events.size, oldest, added, until) ?: break
             }
-        } catch (_: EoseSignal) {
-        } finally {
-            closeSubscription(subId)
         }
     }
 
     /**
-     * Subscribe to app data events and decrypt them. Collects events until
-     * the relay sends EOSE (End of Stored Events), then closes the subscription
-     * and terminates the flow. Safe for one-shot sync operations.
+     * Subscribe to app data events and decrypt them. Pages until the relay
+     * returns a short page so a default limit cannot truncate the user's data.
+     * Safe for one-shot sync operations.
      */
     fun subscribeToAppData(
         dTag: String? = null,
         dTagPrefix: String? = null
     ): Flow<Pair<String, String>> = flow {
         val s = signer ?: throw IllegalStateException("No signer configured")
-
-        val tagFilters = mutableMapOf<String, List<String>>()
-        if (dTag != null) tagFilters["d"] = listOf(dTag)
-
-        val filter = NostrFilter(
-            authors = listOf(s.pubkeyHex),
-            kinds = listOf(NostrEvent.KIND_APP_SPECIFIC_DATA),
-            tagFilters = tagFilters,
-            limit = 5000
-        )
-
-        val subId = subscribe(filter)
-        Log.d(TAG, "Subscribed for app data: subId=$subId, dTag=$dTag, dTagPrefix=$dTagPrefix")
-
-        try {
-            messages.collect { msg ->
-                when (msg) {
-                    is NostrMessage.Eose -> {
-                        if (msg.subscriptionId == subId) {
-                            Log.d(TAG, "EOSE received for $subId, closing subscription")
-                            throw EoseSignal()
+        subscriptionMutex.withLock {
+            val seen = mutableSetOf<String>()
+            var until: Long? = null
+            var pages = 0
+            while (pages < MAX_RELAY_PAGES) {
+                pages++
+                val tagFilters = mutableMapOf<String, List<String>>()
+                if (dTag != null) tagFilters["d"] = listOf(dTag)
+                val page = collectPage(
+                    NostrFilter(
+                        authors = listOf(s.pubkeyHex),
+                        kinds = listOf(NostrEvent.KIND_APP_SPECIFIC_DATA),
+                        tagFilters = tagFilters,
+                        until = until,
+                        limit = RELAY_PAGE_LIMIT
+                    )
+                )
+                if (page.events.isEmpty()) break
+                val oldest = page.events.minOf { it.created_at }
+                var added = 0
+                for (event in page.events) {
+                    if (!seen.add(event.id)) continue
+                    added++
+                    val eventDTag = event.tags
+                        .firstOrNull { it.size >= 2 && it[0] == "d" }
+                        ?.getOrNull(1) ?: ""
+                    if (dTagPrefix != null && !eventDTag.startsWith(dTagPrefix)) continue
+                    try {
+                        val decrypted = s.nip44Decrypt(event.content, s.pubkeyHex)
+                        if (decrypted != null) {
+                            Log.d(TAG, "Decrypted event: dTag=$eventDTag")
+                            emit(eventDTag to decrypted)
                         }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Decryption failed for event ${event.id}: ${e.message}")
                     }
-                    is NostrMessage.EventReceived -> {
-                        if (msg.subscriptionId == subId) {
-                            val eventDTag = msg.event.tags
-                                .firstOrNull { it.size >= 2 && it[0] == "d" }
-                                ?.getOrNull(1) ?: ""
-
-                            if (dTagPrefix != null && !eventDTag.startsWith(dTagPrefix)) {
-                                return@collect
-                            }
-
-                            try {
-                                val decrypted = s.nip44Decrypt(msg.event.content, s.pubkeyHex)
-                                if (decrypted != null) {
-                                    Log.d(TAG, "Decrypted event: dTag=$eventDTag")
-                                    emit(eventDTag to decrypted)
-                                }
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Decryption failed for event ${msg.event.id}: ${e.message}")
-                            }
-                        }
-                    }
-                    else -> {}
                 }
+                Log.d(
+                    TAG,
+                    "App-data page $pages: ${page.events.size} event(s), $added new, dTag=$dTag, prefix=$dTagPrefix"
+                )
+                until = nextPageUntil(page.events.size, oldest, added, until) ?: break
             }
-        } catch (_: EoseSignal) {
-            // Normal termination after EOSE
-        } finally {
-            closeSubscription(subId)
         }
     }
 
+    private data class EventPage(val events: List<NostrEvent>, val eose: Boolean)
+
+    private suspend fun collectPage(filter: NostrFilter): EventPage = coroutineScope {
+        val events = mutableListOf<NostrEvent>()
+        var eose = false
+        val started = CompletableDeferred<Unit>()
+        val subIdHolder = CompletableDeferred<String>()
+        val collectJob = launch {
+            try {
+                messages.onSubscription {
+                    if (!started.isCompleted) started.complete(Unit)
+                }.collect { msg ->
+                    val subId = subIdHolder.await()
+                    when (msg) {
+                        is NostrMessage.Eose -> if (msg.subscriptionId == subId) {
+                            eose = true
+                            throw EoseSignal()
+                        }
+                        is NostrMessage.EventReceived -> if (msg.subscriptionId == subId) {
+                            events.add(msg.event)
+                        }
+                        else -> {}
+                    }
+                }
+            } catch (_: EoseSignal) {
+            }
+        }
+        var subId: String? = null
+        try {
+            if (withTimeoutOrNull(2_000) { started.await() } == null) {
+                throw IllegalStateException("Timed out waiting to listen for relay events")
+            }
+            subId = subscribe(filter)
+            Log.d(TAG, "REQ $subId limit=${filter.limit} until=${filter.until}")
+            subIdHolder.complete(subId)
+            collectJob.join()
+        } finally {
+            subId?.let { closeSubscription(it) }
+            collectJob.cancel()
+        }
+        if (!eose) {
+            Log.w(TAG, "REQ $subId ended before EOSE (${events.size} events)")
+        }
+        EventPage(events, eose)
+    }
+
+    /** Inclusive `until` for the next page, or null when this page is the last. */
+    private fun nextPageUntil(pageSize: Int, oldest: Long, added: Int, previousUntil: Long?): Long? {
+        if (pageSize == 0 || pageSize < RELAY_PAGE_LIMIT) return null
+        val candidate = if (added == 0) oldest - 1 else oldest
+        if (previousUntil == candidate) {
+            val stepped = oldest - 1
+            if (previousUntil == stepped) return null
+            return stepped
+        }
+        return candidate
+    }
+
     private class EoseSignal : Exception()
+
+    private fun emitMessage(message: NostrMessage) {
+        inboundMessages.trySend(message)
+    }
 
     private fun handleMessage(text: String) {
         try {
@@ -575,31 +710,31 @@ class NostrClient @Inject constructor(
                 "EVENT" -> {
                     val subId = array[1].jsonPrimitive.content
                     val event = Json.decodeFromJsonElement<NostrEvent>(array[2])
-                    _messages.tryEmit(NostrMessage.EventReceived(subId, event))
+                    emitMessage(NostrMessage.EventReceived(subId, event))
                 }
                 "OK" -> {
                     val eventId = array[1].jsonPrimitive.content
                     val success = array[2].jsonPrimitive.boolean
                     val message = if (array.size > 3) array[3].jsonPrimitive.content else ""
                     Log.d(TAG, "OK: eventId=${eventId.take(8)}… success=$success msg=$message")
-                    _messages.tryEmit(NostrMessage.Ok(eventId, success, message))
+                    emitMessage(NostrMessage.Ok(eventId, success, message))
                 }
                 "EOSE" -> {
                     val subId = array[1].jsonPrimitive.content
                     Log.d(TAG, "EOSE from relay for sub: $subId")
-                    _messages.tryEmit(NostrMessage.Eose(subId))
+                    emitMessage(NostrMessage.Eose(subId))
                 }
                 "NOTICE" -> {
                     val message = array[1].jsonPrimitive.content
                     Log.d(TAG, "NOTICE: $message")
-                    _messages.tryEmit(NostrMessage.Notice(message))
+                    emitMessage(NostrMessage.Notice(message))
                 }
                 "AUTH" -> {
                     val challenge = array[1].jsonPrimitive.content
                     Log.d(TAG, "AUTH challenge received")
                     authChallengeReceived = true
                     authInFlight = true
-                    _messages.tryEmit(NostrMessage.AuthChallenge(challenge))
+                    emitMessage(NostrMessage.AuthChallenge(challenge))
                     handleAuthChallenge(challenge)
                 }
                 "CLOSED" -> {
@@ -612,7 +747,7 @@ class NostrClient @Inject constructor(
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error parsing message: ${e.message}")
-            _messages.tryEmit(NostrMessage.Error(e))
+            emitMessage(NostrMessage.Error(e))
         }
     }
 

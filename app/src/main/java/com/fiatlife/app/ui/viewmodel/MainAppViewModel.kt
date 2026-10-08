@@ -18,7 +18,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -93,17 +92,16 @@ class MainAppViewModel @Inject constructor(
                     Log.w(TAG, "Manual sync: relay not ready after timeout")
                 }
                 budgetRepository.prepareForInitialRelaySync()
-                val jobs = listOf(
-                    launch { runCatching { salaryRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Salary sync failed: ${it.message}") } },
-                    launch { runCatching { billRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bill sync failed: ${it.message}") } },
-                    launch { runCatching { budgetRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Budget sync failed: ${it.message}") } },
-                    launch { runCatching { cypherLogSubscriptionRepository.syncFromRelay() }.onFailure { Log.w(TAG, "CypherLog 37004 sync failed: ${it.message}") } },
-                    launch { runCatching { goalRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Goal sync failed: ${it.message}") } },
-                    launch { runCatching { creditAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Credit account sync failed: ${it.message}") } },
-                    launch { runCatching { bankAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bank account sync failed: ${it.message}") } },
-                    launch { runCatching { billerRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Biller sync failed: ${it.message}") } }
-                )
-                jobs.joinAll()
+                // Sequential: each sync reads the whole kind-30078 stream. Parallel
+                // REQs flooded the socket and the two clients diverged.
+                runCatching { salaryRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Salary sync failed: ${it.message}") }
+                runCatching { billRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bill sync failed: ${it.message}") }
+                runCatching { budgetRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Budget sync failed: ${it.message}") }
+                runCatching { cypherLogSubscriptionRepository.syncFromRelay() }.onFailure { Log.w(TAG, "CypherLog 37004 sync failed: ${it.message}") }
+                runCatching { goalRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Goal sync failed: ${it.message}") }
+                runCatching { creditAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Credit account sync failed: ${it.message}") }
+                runCatching { bankAccountRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Bank account sync failed: ${it.message}") }
+                runCatching { billerRepository.syncFromNostr() }.onFailure { Log.w(TAG, "Biller sync failed: ${it.message}") }
                 runCatching { billRepository.backfillLegacyCreditLoanPayments() }
             } finally {
                 _isManualSyncing.update { false }

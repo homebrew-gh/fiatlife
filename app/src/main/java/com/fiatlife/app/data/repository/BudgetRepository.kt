@@ -91,7 +91,7 @@ class BudgetRepository @Inject constructor(
         if (isInitial) _relayPublishReady.value = false
         relayBudgetRepairPending = false
         try {
-            withTimeout(30_000) {
+            withTimeout(90_000) {
                 var latest: BudgetConfig? = null
                 var latestJson: String? = null
                 var count = 0

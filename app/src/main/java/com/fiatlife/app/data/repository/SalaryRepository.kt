@@ -90,7 +90,7 @@ class SalaryRepository @Inject constructor(
         if (isInitial) _relayPublishReady.value = false
         relaySalaryRepairPending = false
         try {
-            withTimeout(30_000) {
+            withTimeout(90_000) {
                 var latest: SalaryConfig? = null
                 var latestJson: String? = null
                 var count = 0

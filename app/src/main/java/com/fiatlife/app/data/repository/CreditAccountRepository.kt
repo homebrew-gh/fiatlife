@@ -477,7 +477,7 @@ class CreditAccountRepository @Inject constructor(
     suspend fun syncFromNostr() {
         if (!nostrClient.hasSigner) return
         try {
-            withTimeout(30_000) {
+            withTimeout(90_000) {
                 val localBefore = creditAccountDao.getAllSnapshot().associateBy { it.id }
                 val deleteIds = mutableListOf<String>()
                 val upsertsById = mutableMapOf<String, CreditAccountEntity>()

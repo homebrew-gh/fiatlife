@@ -138,7 +138,7 @@ class BillRepository @Inject constructor(
     suspend fun syncFromNostr() {
         if (!nostrClient.hasSigner) return
         try {
-            withTimeout(30_000) {
+            withTimeout(90_000) {
                 val localBefore = billDao.getAll().first().associateBy { it.id }
                 val deleteIds = mutableListOf<String>()
                 val upsertsById = mutableMapOf<String, BillEntity>()
