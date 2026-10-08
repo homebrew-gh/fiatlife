@@ -4,6 +4,9 @@ import {
   federalMarginalRate,
   federalStandardDeduction,
   FICA,
+  overtimeDeduction,
+  socialSecurityWageBase,
+  yearOf,
   type FilingStatus,
 } from "./tax";
 
@@ -25,15 +28,97 @@ export const PERIODS_PER_YEAR: Record<PayFrequency, number> = {
   MONTHLY: 12,
 };
 
+/** Same names as Android's `DeductionCategory`, so records round-trip. */
+export type DeductionCategory =
+  | "MEDICAL_INSURANCE"
+  | "DENTAL_INSURANCE"
+  | "VISION_INSURANCE"
+  | "HSA"
+  | "FSA"
+  | "TRADITIONAL_401K"
+  | "ROTH_401K"
+  | "LIFE_INSURANCE"
+  | "AD_AND_D"
+  | "CRITICAL_ILLNESS"
+  | "DISABILITY_INSURANCE"
+  | "LEGAL_PLAN"
+  | "UNION_DUES"
+  | "PARKING_TRANSIT"
+  | "OTHER";
+
+export const PRE_TAX_DEDUCTION_CATEGORIES: {
+  id: DeductionCategory;
+  label: string;
+}[] = [
+  { id: "TRADITIONAL_401K", label: "Traditional 401(k)/403(b)" },
+  { id: "MEDICAL_INSURANCE", label: "Medical insurance" },
+  { id: "DENTAL_INSURANCE", label: "Dental insurance" },
+  { id: "VISION_INSURANCE", label: "Vision insurance" },
+  { id: "HSA", label: "HSA" },
+  { id: "FSA", label: "FSA" },
+  { id: "PARKING_TRANSIT", label: "Parking/transit" },
+  { id: "OTHER", label: "Other" },
+];
+
+/** Section 125 / HSA / transit deductions also skip Social Security and Medicare. */
+const FICA_EXEMPT_CATEGORIES = new Set<DeductionCategory>([
+  "MEDICAL_INSURANCE",
+  "DENTAL_INSURANCE",
+  "VISION_INSURANCE",
+  "HSA",
+  "FSA",
+  "PARKING_TRANSIT",
+]);
+
 export type Deduction = {
   id: string;
   name: string;
   amount: number;
   type?: "PRE_TAX" | "POST_TAX";
-  category?: string;
+  category?: DeductionCategory;
   isPercentage: boolean;
   isEnabled: boolean;
 };
+
+/** Stored category, or a guess from the name for deductions saved without one. */
+export function deductionCategory(d: Pick<Deduction, "name" | "category">): DeductionCategory {
+  if (d.category && d.category !== "OTHER") return d.category;
+  const name = d.name.toLowerCase();
+  if (/roth/.test(name)) return "ROTH_401K";
+  if (/401|403|457|\btsp\b|retire|pension/.test(name)) return "TRADITIONAL_401K";
+  if (/\bhsa\b|health\s*sav/.test(name)) return "HSA";
+  if (/\bfsa\b|flex/.test(name)) return "FSA";
+  if (/dental/.test(name)) return "DENTAL_INSURANCE";
+  if (/vision/.test(name)) return "VISION_INSURANCE";
+  if (/medical|health|\bmed\b/.test(name)) return "MEDICAL_INSURANCE";
+  if (/parking|transit|commut/.test(name)) return "PARKING_TRANSIT";
+  return d.category ?? "OTHER";
+}
+
+export function isFicaExemptDeduction(d: Pick<Deduction, "name" | "category">): boolean {
+  return FICA_EXEMPT_CATEGORIES.has(deductionCategory(d));
+}
+
+export type TaxLineKind =
+  | "federal"
+  | "state"
+  | "local"
+  | "socialSecurity"
+  | "medicare"
+  | "other";
+
+/** Classify a paystub tax line by its label ("FITW", "Fed OASDI/EE", "Medicare"…). */
+export function classifyTaxLine(label: string): TaxLineKind {
+  const l = label.toLowerCase();
+  if (/medicare|\bmed\b|med\/ee|\bmedi\b|\bmwt\b/.test(l)) return "medicare";
+  if (/social\s*sec|oasdi|\bss\b|\bsoc\s*sec/.test(l)) return "socialSecurity";
+  if (/local|city|county|school|\beit\b|\blst\b|municipal|borough|township/.test(l)) {
+    return "local";
+  }
+  if (/fed|\bfitw?\b|\bfwt\b/.test(l)) return "federal";
+  if (/state|\bsitw?\b|\bswt\b/.test(l)) return "state";
+  return "other";
+}
 
 export type DirectDeposit = {
   id: string;
@@ -181,6 +266,8 @@ export type PaycheckCalculation = {
   preTaxDeductionBreakdown: DeductionLine[];
   federalTax: number;
   federalMarginalRate: number;
+  /** Bracket-based federal withholding ÷ taxable wages (what a custom rate replaces). */
+  federalEffectiveRate: number;
   stateTax: number;
   stateTaxRate: number;
   countyTax: number;
@@ -265,8 +352,12 @@ export type AnnualExtrapolation = {
   basedOnPaychecks: number;
   scheduledPaychecksInYear: number;
   remainingPaychecksProjected: number;
+  /** Past paydays with no log, included in remainingPaychecksProjected. */
+  unloggedPastPaychecks: number;
   averageOvertimeHoursPerPaycheck: number;
   projectOvertimeForward: boolean;
+  /** Overtime rate ÷ regular rate (from paystubs when they itemize hours). */
+  overtimeMultiplier: number;
   annualGrossPay: number;
   annualNetPay: number;
   annualTotalTaxes: number;
@@ -290,11 +381,15 @@ export type FederalTaxReturnProjection = {
   annualPreTaxDeductions: number;
   adjustedGrossIncome: number;
   standardDeduction: number;
+  /** "No tax on overtime" deduction (2025–2028). */
+  overtimeDeduction: number;
   federalTaxableIncome: number;
   estimatedFederalTaxOwed: number;
   federalWithheld: number;
   /** Positive = estimated refund; negative = estimated balance due. */
   refundOrBalance: number;
+  /** Logged paystubs with taxes but no line recognizable as federal income tax. */
+  paychecksMissingFederalLine: number;
 };
 
 export type YtdSummary = {
@@ -435,6 +530,103 @@ function calcDeductionLines(
   return { lines, total: lines.reduce((s, l) => s + l.amount, 0) };
 }
 
+function ficaExemptPreTax(deductions: Deduction[], grossPay: number): number {
+  return deductions
+    .filter((d) => d.isEnabled && isFicaExemptDeduction(d))
+    .reduce((s, d) => s + deductionAmount(d, grossPay), 0);
+}
+
+type AnnualWithholding = {
+  federal: number;
+  state: number;
+  county: number;
+  socialSecurity: number;
+  medicare: number;
+  total: number;
+  federalTaxable: number;
+  federalMarginalRate: number;
+  /** Federal withholding (before extra per-paycheck amounts) ÷ taxable wages. */
+  federalEffectiveRate: number;
+  stateRate: number;
+  countyRate: number;
+  socialSecurityRate: number;
+  medicareRate: number;
+};
+
+/**
+ * Annual withholding for a year of wages. Income taxes apply to gross minus all
+ * pre-tax deductions; Social Security and Medicare apply to gross minus only the
+ * FICA-exempt ones (a traditional 401(k) still owes FICA).
+ */
+function annualWithholding(
+  config: SalaryConfig,
+  input: {
+    annualGross: number;
+    annualPreTax: number;
+    annualFicaExempt: number;
+    /** Paychecks in the year, for per-paycheck extra withholding. */
+    periods: number;
+    year: number;
+  },
+): AnnualWithholding {
+  const overrides = config.taxOverrides ?? {};
+  const { annualGross, year, periods } = input;
+  const annualTaxable = Math.max(0, annualGross - input.annualPreTax);
+  const federalTaxable = Math.max(
+    0,
+    annualTaxable - federalStandardDeduction(config.filingStatus, year),
+  );
+  const customFederal = overrides.customFederalTaxRate;
+  const bracketFederal = calculateFederalTax(federalTaxable, config.filingStatus, year);
+  const baseFederal =
+    customFederal != null ? annualTaxable * customFederal : bracketFederal;
+  const federal = overrides.isExemptFromFederal
+    ? 0
+    : baseFederal + (overrides.federalAdditionalWithholding ?? 0) * periods;
+
+  const stateRate = overrides.isExemptFromState
+    ? 0
+    : (overrides.customStateTaxRate ?? estimateStateTaxRate(config.state));
+  const state = overrides.isExemptFromState
+    ? 0
+    : annualTaxable * stateRate + (overrides.stateAdditionalWithholding ?? 0) * periods;
+
+  const countyRate = overrides.isExemptFromLocal
+    ? 0
+    : (overrides.customCountyTaxRate ?? 0);
+  const county = annualTaxable * countyRate;
+
+  const ficaWages = Math.max(0, annualGross - input.annualFicaExempt);
+  const socialSecurityRate =
+    overrides.customSocialSecurityRate ?? FICA.SOCIAL_SECURITY_RATE;
+  const socialSecurity =
+    Math.min(ficaWages, socialSecurityWageBase(year)) * socialSecurityRate;
+  const medicareRate = overrides.customMedicareRate ?? FICA.MEDICARE_RATE;
+  const threshold = FICA.ADDITIONAL_MEDICARE_WITHHOLDING_THRESHOLD;
+  const medicare =
+    ficaWages * medicareRate +
+    (overrides.customMedicareRate == null && ficaWages > threshold
+      ? (ficaWages - threshold) * FICA.ADDITIONAL_MEDICARE_RATE
+      : 0);
+
+  return {
+    federal,
+    state,
+    county,
+    socialSecurity,
+    medicare,
+    total: federal + state + county + socialSecurity + medicare,
+    federalTaxable,
+    federalMarginalRate:
+      customFederal ?? federalMarginalRate(federalTaxable, config.filingStatus, year),
+    federalEffectiveRate: annualTaxable > 0 ? bracketFederal / annualTaxable : 0,
+    stateRate,
+    countyRate,
+    socialSecurityRate,
+    medicareRate,
+  };
+}
+
 export function calculatePaycheck(
   config: SalaryConfig,
   asOf = Date.now(),
@@ -445,65 +637,22 @@ export function calculatePaycheck(
     rate.hourlyRate * config.overtimeMultiplier * config.overtimeHours;
   const grossPay = regularPay + overtimePay;
   const periodsPerYear = PERIODS_PER_YEAR[config.payFrequency];
-  const overrides = config.taxOverrides ?? {};
 
   const pre = calcDeductionLines(config.preTaxDeductions, grossPay);
-  const taxableGross = grossPay - pre.total;
-  const annualTaxable = taxableGross * periodsPerYear;
-  const standardDeduction = federalStandardDeduction(config.filingStatus);
-  const federalTaxableAnnual = Math.max(0, annualTaxable - standardDeduction);
-
-  const marginal =
-    overrides.customFederalTaxRate ??
-    federalMarginalRate(federalTaxableAnnual, config.filingStatus);
-
-  let federalTax = 0;
-  if (!overrides.isExemptFromFederal) {
-    const annualFederal = overrides.customFederalTaxRate
-      ? annualTaxable * overrides.customFederalTaxRate
-      : calculateFederalTax(federalTaxableAnnual, config.filingStatus);
-    federalTax =
-      annualFederal / periodsPerYear +
-      (overrides.federalAdditionalWithholding ?? 0);
-  }
-
-  const stateTaxRate = overrides.isExemptFromState
-    ? 0
-    : (overrides.customStateTaxRate ??
-      estimateStateTaxRate(config.state));
-  const stateTax = overrides.isExemptFromState
-    ? 0
-    : (annualTaxable * stateTaxRate) / periodsPerYear +
-      (overrides.stateAdditionalWithholding ?? 0);
-
-  const countyTaxRate = overrides.isExemptFromLocal
-    ? 0
-    : (overrides.customCountyTaxRate ?? 0);
-  const countyTax = overrides.isExemptFromLocal
-    ? 0
-    : (annualTaxable * countyTaxRate) / periodsPerYear;
-
   const annualGross = grossPay * periodsPerYear;
-  const ssRate =
-    overrides.customSocialSecurityRate ?? FICA.SOCIAL_SECURITY_RATE;
-  const socialSecurity =
-    (Math.min(annualGross, FICA.SOCIAL_SECURITY_WAGE_BASE) * ssRate) /
-    periodsPerYear;
-
-  const medRate = overrides.customMedicareRate ?? FICA.MEDICARE_RATE;
-  const medicareThreshold =
-    config.filingStatus === "MARRIED_FILING_JOINTLY"
-      ? FICA.ADDITIONAL_MEDICARE_THRESHOLD_JOINT
-      : FICA.ADDITIONAL_MEDICARE_THRESHOLD_SINGLE;
-  const baseMedicare = annualGross * medRate;
-  const additionalMedicare =
-    overrides.customMedicareRate == null && annualGross > medicareThreshold
-      ? (annualGross - medicareThreshold) * FICA.ADDITIONAL_MEDICARE_RATE
-      : 0;
-  const medicare = (baseMedicare + additionalMedicare) / periodsPerYear;
-
-  const totalTaxes =
-    federalTax + stateTax + countyTax + socialSecurity + medicare;
+  const taxes = annualWithholding(config, {
+    annualGross,
+    annualPreTax: pre.total * periodsPerYear,
+    annualFicaExempt: ficaExemptPreTax(config.preTaxDeductions, grossPay) * periodsPerYear,
+    periods: periodsPerYear,
+    year: yearOf(asOf),
+  });
+  const federalTax = taxes.federal / periodsPerYear;
+  const stateTax = taxes.state / periodsPerYear;
+  const countyTax = taxes.county / periodsPerYear;
+  const socialSecurity = taxes.socialSecurity / periodsPerYear;
+  const medicare = taxes.medicare / periodsPerYear;
+  const totalTaxes = taxes.total / periodsPerYear;
 
   const post = calcDeductionLines(config.postTaxDeductions, grossPay);
   const netPay = grossPay - pre.total - totalTaxes - post.total;
@@ -519,15 +668,16 @@ export function calculatePaycheck(
     totalPreTaxDeductions: pre.total,
     preTaxDeductionBreakdown: pre.lines,
     federalTax,
-    federalMarginalRate: marginal,
+    federalMarginalRate: taxes.federalMarginalRate,
+    federalEffectiveRate: taxes.federalEffectiveRate,
     stateTax,
-    stateTaxRate,
+    stateTaxRate: taxes.stateRate,
     countyTax,
-    countyTaxRate,
+    countyTaxRate: taxes.countyRate,
     socialSecurity,
-    socialSecurityRate: ssRate,
+    socialSecurityRate: taxes.socialSecurityRate,
     medicare,
-    medicareRate: medRate,
+    medicareRate: taxes.medicareRate,
     totalTaxes,
     totalPostTaxDeductions: post.total,
     postTaxDeductionBreakdown: post.lines,
@@ -542,18 +692,10 @@ export function calculatePaycheck(
 /** Sum of base/regular gross across a year's paydays, honoring mid-year raises. */
 function annualRegularPayForYear(config: SalaryConfig, year: number): number {
   const periodsPerYear = PERIODS_PER_YEAR[config.payFrequency];
-  const history = config.payRateHistory ?? [];
   const anchor = config.firstPaydayOfYearMillis;
-  if (history.length === 0 || !anchor) {
-    const rate = effectiveRateAt(config, anchor ?? Date.now());
-    return periodRegularGross(rate, config.payFrequency) * periodsPerYear;
-  }
-  const paydays = enumeratePaydays(
-    anchor,
-    config.payFrequency,
-    yearStart(year),
-    yearEnd(year),
-  );
+  const paydays = anchor
+    ? enumeratePaydays(anchor, config.payFrequency, yearStart(year), yearEnd(year))
+    : [];
   if (paydays.length === 0) {
     const rate = effectiveRateAt(config, Date.now());
     return periodRegularGross(rate, config.payFrequency) * periodsPerYear;
@@ -570,105 +712,57 @@ export function calculateAnnual(
   annualOvertimeHours: number,
   year = new Date().getFullYear(),
 ): AnnualProjection {
-  const periodsPerYear = PERIODS_PER_YEAR[config.payFrequency];
+  const periodsPerYear = scheduledPaychecksInYear(config, year);
   const annualRegularPay = annualRegularPayForYear(config, year);
   const latestRate = effectiveRateAt(config, Date.now());
   const annualOvertimePay =
     latestRate.hourlyRate * config.overtimeMultiplier * annualOvertimeHours;
   const annualGross = annualRegularPay + annualOvertimePay;
   const perPeriodGross = annualGross / periodsPerYear;
-  const overrides = config.taxOverrides ?? {};
 
-  const preEnabled = config.preTaxDeductions.filter((d) => d.isEnabled);
-  const preTaxBreakdown = preEnabled.map((d) => {
-    const perPeriod = d.isPercentage
-      ? perPeriodGross * (d.amount / 100)
-      : d.amount;
-    return { name: d.name, amount: perPeriod * periodsPerYear };
-  });
+  const annualize = (deductions: Deduction[]) =>
+    deductions
+      .filter((d) => d.isEnabled)
+      .map((d) => ({
+        name: d.name,
+        amount: deductionAmount(d, perPeriodGross) * periodsPerYear,
+        category: d.category,
+      }));
+  const preTaxBreakdown = annualize(config.preTaxDeductions);
   const annualPreTax = preTaxBreakdown.reduce((s, l) => s + l.amount, 0);
 
-  const annualTaxable = annualGross - annualPreTax;
-  const federalTaxableAnnual = Math.max(
-    0,
-    annualTaxable - federalStandardDeduction(config.filingStatus),
-  );
-
-  let annualFederalTax = 0;
-  if (!overrides.isExemptFromFederal) {
-    const base = overrides.customFederalTaxRate
-      ? annualTaxable * overrides.customFederalTaxRate
-      : calculateFederalTax(federalTaxableAnnual, config.filingStatus);
-    annualFederalTax =
-      base + (overrides.federalAdditionalWithholding ?? 0) * periodsPerYear;
-  }
-
-  let annualStateTax = 0;
-  if (!overrides.isExemptFromState) {
-    const rate =
-      overrides.customStateTaxRate ?? estimateStateTaxRate(config.state);
-    annualStateTax =
-      annualTaxable * rate +
-      (overrides.stateAdditionalWithholding ?? 0) * periodsPerYear;
-  }
-
-  const annualCountyTax = overrides.isExemptFromLocal
-    ? 0
-    : annualTaxable * (overrides.customCountyTaxRate ?? 0);
-
-  const ssRate =
-    overrides.customSocialSecurityRate ?? FICA.SOCIAL_SECURITY_RATE;
-  const annualSS =
-    Math.min(annualGross, FICA.SOCIAL_SECURITY_WAGE_BASE) * ssRate;
-
-  const medRate = overrides.customMedicareRate ?? FICA.MEDICARE_RATE;
-  const medicareThreshold =
-    config.filingStatus === "MARRIED_FILING_JOINTLY"
-      ? FICA.ADDITIONAL_MEDICARE_THRESHOLD_JOINT
-      : FICA.ADDITIONAL_MEDICARE_THRESHOLD_SINGLE;
-  const annualMedicare =
-    annualGross * medRate +
-    (overrides.customMedicareRate == null && annualGross > medicareThreshold
-      ? (annualGross - medicareThreshold) * FICA.ADDITIONAL_MEDICARE_RATE
-      : 0);
-
-  const annualTotalTaxes =
-    annualFederalTax + annualStateTax + annualCountyTax + annualSS + annualMedicare;
-
-  const postEnabled = config.postTaxDeductions.filter((d) => d.isEnabled);
-  const postTaxBreakdown = postEnabled.map((d) => {
-    const perPeriod = d.isPercentage
-      ? perPeriodGross * (d.amount / 100)
-      : d.amount;
-    return { name: d.name, amount: perPeriod * periodsPerYear };
+  const taxes = annualWithholding(config, {
+    annualGross,
+    annualPreTax,
+    annualFicaExempt: ficaExemptPreTax(config.preTaxDeductions, perPeriodGross) * periodsPerYear,
+    periods: periodsPerYear,
+    year,
   });
+
+  const postTaxBreakdown = annualize(config.postTaxDeductions);
   const annualPostTax = postTaxBreakdown.reduce((s, l) => s + l.amount, 0);
 
-  const annualNet =
-    annualGross - annualPreTax - annualTotalTaxes - annualPostTax;
+  const annualNet = annualGross - annualPreTax - taxes.total - annualPostTax;
 
   return {
     annualRegularPay,
     annualOvertimePay,
     annualGrossPay: annualGross,
     annualPreTaxDeductions: annualPreTax,
-    annualTotalTaxes,
-    annualFederalTax,
-    annualStateTax,
-    annualCountyTax,
-    annualSocialSecurity: annualSS,
-    annualMedicare,
+    annualTotalTaxes: taxes.total,
+    annualFederalTax: taxes.federal,
+    annualStateTax: taxes.state,
+    annualCountyTax: taxes.county,
+    annualSocialSecurity: taxes.socialSecurity,
+    annualMedicare: taxes.medicare,
     preTaxDeductionBreakdown: preTaxBreakdown,
     postTaxDeductionBreakdown: postTaxBreakdown,
     annualPostTaxDeductions: annualPostTax,
     annualNetPay: annualNet,
-    effectiveTaxRate: annualGross > 0 ? annualTotalTaxes / annualGross : 0,
-    marginalFederalRate: federalMarginalRate(
-      federalTaxableAnnual,
-      config.filingStatus,
-    ),
+    effectiveTaxRate: annualGross > 0 ? taxes.total / annualGross : 0,
+    marginalFederalRate: taxes.federalMarginalRate,
     overtimeHoursUsed: annualOvertimeHours,
-    perPaycheckNet: periodsPerYear > 0 ? annualNet / periodsPerYear : 0,
+    perPaycheckNet: annualNet / periodsPerYear,
   };
 }
 
@@ -725,19 +819,14 @@ export function countPaychecksInRange(
     return Math.max(count, 0);
   }
 
-  const stepMs =
-    frequency === "WEEKLY"
-      ? 7 * 24 * 60 * 60 * 1000
-      : 14 * 24 * 60 * 60 * 1000;
+  return enumeratePaydays(firstPaydayMillis, frequency, rangeStart, rangeEnd).length;
+}
 
-  let count = 0;
-  let payday = startOfDay(firstPaydayMillis);
-  const maxIterations = 500;
-  for (let i = 0; i < maxIterations && payday <= rangeEnd; i++) {
-    if (payday >= rangeStart && payday <= rangeEnd) count++;
-    payday += stepMs;
-  }
-  return count;
+/** Calendar-day step (keeps local midnight across daylight-saving changes). */
+function addDays(ms: number, days: number): number {
+  const d = new Date(ms);
+  d.setDate(d.getDate() + days);
+  return d.getTime();
 }
 
 /** Enumerate payday timestamps within [rangeStart, rangeEnd] (inclusive). */
@@ -785,14 +874,11 @@ export function enumeratePaydays(
     return days.sort((a, b) => a - b);
   }
 
-  const stepMs =
-    frequency === "WEEKLY"
-      ? 7 * 24 * 60 * 60 * 1000
-      : 14 * 24 * 60 * 60 * 1000;
+  const stepDays = frequency === "WEEKLY" ? 7 : 14;
   let payday = startOfDay(firstPaydayMillis);
   for (let i = 0; i < 500 && payday <= rangeEnd; i++) {
     if (payday >= rangeStart) days.push(payday);
-    payday += stepMs;
+    payday = addDays(payday, stepDays);
   }
   return days;
 }
@@ -823,13 +909,37 @@ export function scheduledPaychecksInYear(
   year: number,
 ): number {
   const anchor = config.firstPaydayOfYearMillis;
-  if (!anchor) return PERIODS_PER_YEAR[config.payFrequency];
-  return countPaychecksInRange(
-    anchor,
-    config.payFrequency,
-    yearStart(year),
-    yearEnd(year),
-  );
+  const counted = anchor
+    ? countPaychecksInRange(anchor, config.payFrequency, yearStart(year), yearEnd(year))
+    : 0;
+  return counted > 0 ? counted : PERIODS_PER_YEAR[config.payFrequency];
+}
+
+/**
+ * Paychecks still to be received in [year]: scheduled paydays after [asOf] plus
+ * past paydays that were never logged (they still arrive, just not in the log).
+ */
+export function remainingPaychecksForYear(
+  config: SalaryConfig,
+  year: number,
+  asOf = Date.now(),
+): { future: number; unlogged: number } {
+  const anchor = canDetectMissingPaychecks(config, year)
+    ? resolvePaydayAnchor(config, year, asOf)
+    : null;
+  if (anchor != null) {
+    const from = Math.max(yearStart(year), addDays(startOfDay(asOf), 1));
+    const future =
+      from > yearEnd(year)
+        ? 0
+        : enumeratePaydays(anchor, config.payFrequency, from, yearEnd(year)).length;
+    return { future, unlogged: missingPaydaysForYear(config, year, asOf).length };
+  }
+  const scheduledYtd = scheduledPaychecksYtd(config, year, asOf);
+  return {
+    future: Math.max(0, scheduledPaychecksInYear(config, year) - scheduledYtd),
+    unlogged: Math.max(0, scheduledYtd - logsForYear(config, year).length),
+  };
 }
 
 export function logsForYear(
@@ -1062,11 +1172,9 @@ export function applyInferredPayRatesForAllLogYears(
   return next;
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-function payPeriodStepMs(frequency: PayFrequency): number | null {
-  if (frequency === "WEEKLY") return 7 * DAY_MS;
-  if (frequency === "BIWEEKLY") return 14 * DAY_MS;
+function payPeriodStepDays(frequency: PayFrequency): number | null {
+  if (frequency === "WEEKLY") return 7;
+  if (frequency === "BIWEEKLY") return 14;
   return null;
 }
 
@@ -1093,7 +1201,7 @@ export function resolvePaydayAnchor(
     return config.firstPaydayOfYearMillis ?? null;
   }
 
-  const stepMs = payPeriodStepMs(freq)!;
+  const stepDays = payPeriodStepDays(freq)!;
   const rangeEnd = Math.min(asOf, yearEnd(year));
   const rangeStart = yearStart(year);
   const configured =
@@ -1106,7 +1214,7 @@ export function resolvePaydayAnchor(
   for (const logged of loggedDays) {
     candidates.add(logged);
     for (let k = 0; k < 30; k++) {
-      candidates.add(logged - k * stepMs);
+      candidates.add(addDays(logged, -k * stepDays));
     }
   }
 
@@ -1404,6 +1512,71 @@ function entryTaxes(e: PaycheckLogEntry): PaycheckLineItem[] {
     : [];
 }
 
+function entryPreTax(e: PaycheckLogEntry): PaycheckLineItem[] {
+  if (e.preTaxDeductions && e.preTaxDeductions.length > 0) return e.preTaxDeductions;
+  return e.totalPreTaxDeductions
+    ? [{ id: e.id, label: "Pre-tax deductions", amount: e.totalPreTaxDeductions }]
+    : [];
+}
+
+function entryPostTax(e: PaycheckLogEntry): PaycheckLineItem[] {
+  if (e.postTaxDeductions && e.postTaxDeductions.length > 0) return e.postTaxDeductions;
+  return e.totalPostTaxDeductions
+    ? [{ id: e.id, label: "Post-tax deductions", amount: e.totalPostTaxDeductions }]
+    : [];
+}
+
+const OVERTIME_LABEL = /overtime|^ot\b/i;
+const REGULAR_LABEL = /regular|^reg\b|base|salary|straight/i;
+
+/** Paystubs that best describe current withholding: newest real (not generated) stubs. */
+const RECENT_STUBS_FOR_RATES = 3;
+
+function recentStubs(logs: PaycheckLogEntry[]): PaycheckLogEntry[] {
+  const real = logs.filter((e) => !e.autoGenerated && e.grossPay > 0);
+  const pool = real.length > 0 ? real : logs.filter((e) => e.grossPay > 0);
+  return pool.slice(-RECENT_STUBS_FOR_RATES);
+}
+
+/** Each label's share of gross across [stubs]; null when the stubs have no such lines. */
+function lineRates(
+  stubs: PaycheckLogEntry[],
+  lines: (e: PaycheckLogEntry) => PaycheckLineItem[],
+): { label: string; rate: number }[] | null {
+  const gross = stubs.reduce((s, e) => s + e.grossPay, 0);
+  if (gross <= 0) return null;
+  const merged = mergeLines(stubs.map(lines));
+  if (merged.length === 0) return null;
+  return merged.map((l) => ({ label: l.label, rate: l.amount / gross }));
+}
+
+/** Overtime ÷ regular hourly rate on the newest stub that itemizes both with hours. */
+function impliedOvertimeMultiplier(logs: PaycheckLogEntry[]): number | null {
+  for (let i = logs.length - 1; i >= 0; i--) {
+    const earnings = logs[i]!.earnings ?? [];
+    const ot = earnings.find((l) => OVERTIME_LABEL.test(l.label) && (l.hours ?? 0) > 0);
+    const reg = earnings.find(
+      (l) => !OVERTIME_LABEL.test(l.label) && REGULAR_LABEL.test(l.label) && (l.hours ?? 0) > 0,
+    );
+    if (!ot || !reg || reg.amount <= 0) continue;
+    const multiplier = ot.amount / ot.hours! / (reg.amount / reg.hours!);
+    if (multiplier >= 1 && multiplier <= 3) return multiplier;
+  }
+  return null;
+}
+
+/** Pay above straight time on overtime lines, the part the 2025–2028 deduction covers. */
+function overtimePremium(
+  earnings: YtdBreakdownLine[],
+  multiplier: number,
+): number {
+  const otPay = earnings
+    .filter((l) => OVERTIME_LABEL.test(l.label))
+    .reduce((s, l) => s + l.amount, 0);
+  if (otPay <= 0 || multiplier <= 1) return 0;
+  return (otPay * (multiplier - 1)) / multiplier;
+}
+
 function mergeBreakdownLineGroups(
   groups: YtdBreakdownLine[][],
 ): YtdBreakdownLine[] {
@@ -1486,6 +1659,7 @@ function forwardBreakdownFromCalc(
 function extrapolationFromModel(
   modelAnnual: AnnualProjection,
   scheduledInYear: number,
+  overtimeMultiplier: number,
 ): AnnualExtrapolation {
   const perPaycheckGross =
     scheduledInYear > 0 ? modelAnnual.annualGrossPay / scheduledInYear : 0;
@@ -1494,8 +1668,10 @@ function extrapolationFromModel(
     basedOnPaychecks: 0,
     scheduledPaychecksInYear: scheduledInYear,
     remainingPaychecksProjected: scheduledInYear,
+    unloggedPastPaychecks: 0,
     averageOvertimeHoursPerPaycheck: 0,
     projectOvertimeForward: true,
+    overtimeMultiplier,
     annualGrossPay: modelAnnual.annualGrossPay,
     annualNetPay: modelAnnual.annualNetPay,
     annualTotalTaxes: modelAnnual.annualTotalTaxes,
@@ -1555,33 +1731,24 @@ export function extrapolateAnnualFromLogs(
   const projectOvertimeForward = options.projectOvertimeForward !== false;
   const asOf = options.asOf ?? Date.now();
   const scheduledInYear = scheduledPaychecksInYear(config, year);
-  const scheduledYtd = scheduledPaychecksYtd(config, year, asOf);
-  const remaining = Math.max(0, scheduledInYear - scheduledYtd);
   const logs = [...logsForYear(config, year)].sort(
     (a, b) => a.payDate - b.payDate,
   );
 
   if (logs.length === 0) {
-    return extrapolationFromModel(modelAnnual, scheduledInYear);
+    return extrapolationFromModel(modelAnnual, scheduledInYear, config.overtimeMultiplier);
   }
 
+  const { future, unlogged } = remainingPaychecksForYear(config, year, asOf);
+  const remaining = future + unlogged;
   const n = logs.length;
   const latest = logs[logs.length - 1];
   const rate = effectiveRateAt(config, latest.payDate);
-  const ytdGross = logs.reduce((s, e) => s + e.grossPay, 0);
   const ytdNet = logs.reduce((s, e) => s + e.netPay, 0);
-  const ytdTaxTotal = logs.reduce((s, e) => s + (e.totalTaxes ?? 0), 0);
-  const ytdPreTax = logs.reduce(
-    (s, e) => s + (e.totalPreTaxDeductions ?? 0),
-    0,
-  );
-  const ytdPostTax = logs.reduce(
-    (s, e) => s + (e.totalPostTaxDeductions ?? 0),
-    0,
-  );
   const ytdOTHours = logs.reduce((s, e) => s + entryOvertimeHours(e), 0);
   const avgOTPerPaycheck = n > 0 ? ytdOTHours / n : 0;
   const forwardOT = projectOvertimeForward ? avgOTPerPaycheck : 0;
+  const otMultiplier = impliedOvertimeMultiplier(logs) ?? config.overtimeMultiplier;
 
   const forwardConfig: SalaryConfig = {
     ...config,
@@ -1590,44 +1757,108 @@ export function extrapolateAnnualFromLogs(
     annualSalary: rate.annualSalary,
     standardHoursPerPeriod: rate.standardHoursPerPeriod,
     overtimeHours: forwardOT,
+    overtimeMultiplier: otMultiplier,
   };
-  const forwardPerPaycheck = calculatePaycheck(forwardConfig);
-  const forwardBreakdown = forwardBreakdownFromCalc(
+  const forwardPerPaycheck = calculatePaycheck(
+    forwardConfig,
+    Math.min(Math.max(asOf, latest.payDate), yearEnd(year)),
+  );
+  const modelBreakdown = forwardBreakdownFromCalc(
     forwardPerPaycheck,
     forwardOT,
     config,
   );
+  const forwardGross = forwardPerPaycheck.grossPay;
 
-  const ytdEarnings = mergeLines(logs.map(entryEarnings));
+  const stubs = recentStubs(logs);
+  const stubEarnings = stubs.flatMap((e) => e.earnings ?? []);
+  const overtimeLabel =
+    stubEarnings.find((l) => OVERTIME_LABEL.test(l.label))?.label ?? "Overtime";
+  const regularLabel =
+    stubEarnings.find((l) => REGULAR_LABEL.test(l.label) && !OVERTIME_LABEL.test(l.label))
+      ?.label ?? "Regular";
+  const fromStubs = (
+    lines: (e: PaycheckLogEntry) => PaycheckLineItem[],
+    fallback: YtdBreakdownLine[],
+  ): YtdBreakdownLine[] =>
+    lineRates(stubs, lines)?.map((r) => ({ label: r.label, amount: r.rate * forwardGross })) ??
+    fallback;
+
+  const forwardEarnings = modelBreakdown.earnings.map((line) => ({
+    ...line,
+    label: line.label === "Overtime" ? overtimeLabel : regularLabel,
+  }));
+  const forwardTaxes = scaleBreakdownForRemaining(
+    fromStubs(entryTaxes, modelBreakdown.taxes),
+    remaining,
+  );
+  const forwardPreTax = scaleBreakdownForRemaining(
+    fromStubs(entryPreTax, modelBreakdown.preTaxDeductions),
+    remaining,
+  );
+  const forwardPostTax = scaleBreakdownForRemaining(
+    fromStubs(entryPostTax, modelBreakdown.postTaxDeductions),
+    remaining,
+  );
+
   const ytdTaxLines = mergeLines(logs.map(entryTaxes));
-  const ytdPreTaxDeductions = mergeLines(
-    logs.map((e) => e.preTaxDeductions ?? []),
+  const ssRate =
+    config.taxOverrides?.customSocialSecurityRate ?? FICA.SOCIAL_SECURITY_RATE;
+  const ytdSocialSecurity = ytdTaxLines
+    .filter((l) => classifyTaxLine(l.label) === "socialSecurity")
+    .reduce((s, l) => s + l.amount, 0);
+  const socialSecurityRoom = Math.max(
+    0,
+    socialSecurityWageBase(year) * ssRate - ytdSocialSecurity,
   );
-  const ytdPostTaxDeductions = mergeLines(
-    logs.map((e) => e.postTaxDeductions ?? []),
-  );
-  const ytdEmployerContributions = mergeLines(
-    logs.map((e) => e.employerContributions ?? []),
-  );
+  const forwardSocialSecurity = forwardTaxes
+    .filter((l) => classifyTaxLine(l.label) === "socialSecurity")
+    .reduce((s, l) => s + l.amount, 0);
+  if (forwardSocialSecurity > socialSecurityRoom) {
+    const scale = socialSecurityRoom / forwardSocialSecurity;
+    for (const line of forwardTaxes) {
+      if (classifyTaxLine(line.label) === "socialSecurity") line.amount *= scale;
+    }
+  }
 
-  const annualGrossPay =
-    ytdGross + forwardPerPaycheck.grossPay * remaining;
-  const annualNetPay = ytdNet + forwardPerPaycheck.netPay * remaining;
-  const annualTotalTaxes =
-    ytdTaxTotal + forwardPerPaycheck.totalTaxes * remaining;
-  const annualPreTaxDeductions =
-    ytdPreTax + forwardPerPaycheck.totalPreTaxDeductions * remaining;
-  const annualPostTaxDeductions =
-    ytdPostTax + forwardPerPaycheck.totalPostTaxDeductions * remaining;
+  const total = (lines: YtdBreakdownLine[]) => lines.reduce((s, l) => s + l.amount, 0);
+  const earnings = mergeBreakdownLineGroups([
+    mergeLines(logs.map(entryEarnings)),
+    scaleBreakdownForRemaining(forwardEarnings, remaining),
+  ]);
+  const taxes = mergeBreakdownLineGroups([ytdTaxLines, forwardTaxes]);
+  const preTaxDeductions = mergeBreakdownLineGroups([
+    mergeLines(logs.map(entryPreTax)),
+    forwardPreTax,
+  ]);
+  const postTaxDeductions = mergeBreakdownLineGroups([
+    mergeLines(logs.map(entryPostTax)),
+    forwardPostTax,
+  ]);
+
+  const forwardGrossTotal = forwardGross * remaining;
+  const annualGrossPay = logs.reduce((s, e) => s + e.grossPay, 0) + forwardGrossTotal;
+  const annualTotalTaxes = total(taxes);
+  const annualPreTaxDeductions = total(preTaxDeductions);
+  const annualPostTaxDeductions = total(postTaxDeductions);
+  const annualNetPay =
+    ytdNet +
+    forwardGrossTotal -
+    total(forwardTaxes) -
+    total(forwardPreTax) -
+    total(forwardPostTax);
   const annualOTHours = ytdOTHours + forwardOT * remaining;
+  const paychecksInYear = n + remaining;
 
   return {
     source: "logged",
     basedOnPaychecks: n,
     scheduledPaychecksInYear: scheduledInYear,
     remainingPaychecksProjected: remaining,
+    unloggedPastPaychecks: unlogged,
     averageOvertimeHoursPerPaycheck: avgOTPerPaycheck,
     projectOvertimeForward,
+    overtimeMultiplier: otMultiplier,
     annualGrossPay,
     annualNetPay,
     annualTotalTaxes,
@@ -1635,74 +1866,71 @@ export function extrapolateAnnualFromLogs(
     annualPreTaxDeductions,
     annualPostTaxDeductions,
     overtimeHours: annualOTHours,
-    perPaycheckNet:
-      scheduledInYear > 0 ? annualNetPay / scheduledInYear : 0,
-    perPaycheckGross:
-      scheduledInYear > 0 ? annualGrossPay / scheduledInYear : 0,
-    earnings: mergeBreakdownLineGroups([
-      ytdEarnings,
-      scaleBreakdownForRemaining(forwardBreakdown.earnings, remaining),
-    ]),
-    taxes: mergeBreakdownLineGroups([
-      ytdTaxLines,
-      scaleBreakdownForRemaining(forwardBreakdown.taxes, remaining),
-    ]),
-    preTaxDeductions: mergeBreakdownLineGroups([
-      ytdPreTaxDeductions,
-      scaleBreakdownForRemaining(forwardBreakdown.preTaxDeductions, remaining),
-    ]),
-    postTaxDeductions: mergeBreakdownLineGroups([
-      ytdPostTaxDeductions,
-      scaleBreakdownForRemaining(forwardBreakdown.postTaxDeductions, remaining),
-    ]),
-    employerContributions: ytdEmployerContributions,
+    perPaycheckNet: paychecksInYear > 0 ? annualNetPay / paychecksInYear : 0,
+    perPaycheckGross: paychecksInYear > 0 ? annualGrossPay / paychecksInYear : 0,
+    earnings,
+    taxes,
+    preTaxDeductions,
+    postTaxDeductions,
+    employerContributions: mergeLines(logs.map((e) => e.employerContributions ?? [])),
     effectiveTaxRate:
       annualGrossPay > 0 ? annualTotalTaxes / annualGrossPay : calc.effectiveTaxRate,
   };
 }
 
-function federalWithheldFromAnnual(
-  taxes: YtdBreakdownLine[],
-): number {
-  const line = taxes.find((t) => /federal\s+income\s+tax/i.test(t.label));
-  return line?.amount ?? 0;
-}
-
-/** Project federal income tax owed vs withheld for the annual extrapolation. */
+/**
+ * Rough Form 1040 estimate: wages minus pre-tax deductions, the standard
+ * deduction and the overtime-premium deduction, through that year's brackets.
+ * Ignores credits, other income and itemizing.
+ */
 export function projectFederalTaxReturn(
   config: SalaryConfig,
   annual: Pick<
     AnnualExtrapolation,
-    "annualGrossPay" | "annualPreTaxDeductions" | "taxes"
+    "annualGrossPay" | "annualPreTaxDeductions" | "taxes" | "earnings" | "overtimeMultiplier"
   >,
+  year = new Date().getFullYear(),
 ): FederalTaxReturnProjection {
   const annualGross = annual.annualGrossPay;
   const annualPreTaxDeductions = annual.annualPreTaxDeductions;
   const adjustedGrossIncome = annualGross - annualPreTaxDeductions;
-  const standardDeduction = federalStandardDeduction(config.filingStatus);
+  const standardDeduction = federalStandardDeduction(config.filingStatus, year);
+  const overtimeDeductionAmount = overtimeDeduction(
+    overtimePremium(annual.earnings, annual.overtimeMultiplier),
+    adjustedGrossIncome,
+    config.filingStatus,
+    year,
+  );
   const federalTaxableIncome = Math.max(
     0,
-    adjustedGrossIncome - standardDeduction,
+    adjustedGrossIncome - standardDeduction - overtimeDeductionAmount,
   );
-  const overrides = config.taxOverrides ?? {};
+  const estimatedFederalTaxOwed = calculateFederalTax(
+    federalTaxableIncome,
+    config.filingStatus,
+    year,
+  );
 
-  let estimatedFederalTaxOwed = 0;
-  if (!overrides.isExemptFromFederal) {
-    estimatedFederalTaxOwed = overrides.customFederalTaxRate != null
-      ? adjustedGrossIncome * overrides.customFederalTaxRate
-      : calculateFederalTax(federalTaxableIncome, config.filingStatus);
-  }
+  const federalWithheld = annual.taxes
+    .filter((t) => classifyTaxLine(t.label) === "federal")
+    .reduce((s, t) => s + t.amount, 0);
+  const paychecksMissingFederalLine = logsForYear(config, year).filter(
+    (e) =>
+      (e.totalTaxes ?? 0) > 0 &&
+      !entryTaxes(e).some((t) => classifyTaxLine(t.label) === "federal"),
+  ).length;
 
-  const federalWithheld = federalWithheldFromAnnual(annual.taxes);
   return {
     annualGross,
     annualPreTaxDeductions,
     adjustedGrossIncome,
     standardDeduction,
+    overtimeDeduction: overtimeDeductionAmount,
     federalTaxableIncome,
     estimatedFederalTaxOwed,
     federalWithheld,
     refundOrBalance: federalWithheld - estimatedFederalTaxOwed,
+    paychecksMissingFederalLine,
   };
 }
 
@@ -1717,7 +1945,8 @@ export function summarizeYtd(
   const logs = logsForYear(config, year);
   const scheduledYtd = scheduledPaychecksYtd(config, year, asOf);
   const scheduledInYear = scheduledPaychecksInYear(config, year);
-  const remaining = Math.max(0, scheduledInYear - scheduledYtd);
+  const { future, unlogged } = remainingPaychecksForYear(config, year, asOf);
+  const remaining = logs.length > 0 ? future + unlogged : future;
   const annualExtrapolation = extrapolateAnnualFromLogs(
     config,
     calc,
@@ -1757,8 +1986,8 @@ export function summarizeYtd(
       overtimeHours,
       earnings: mergeLines(logs.map(entryEarnings)),
       taxes: mergeLines(logs.map(entryTaxes)),
-      preTaxDeductions: mergeLines(logs.map((e) => e.preTaxDeductions ?? [])),
-      postTaxDeductions: mergeLines(logs.map((e) => e.postTaxDeductions ?? [])),
+      preTaxDeductions: mergeLines(logs.map(entryPreTax)),
+      postTaxDeductions: mergeLines(logs.map(entryPostTax)),
       employerContributions: mergeLines(
         logs.map((e) => e.employerContributions ?? []),
       ),

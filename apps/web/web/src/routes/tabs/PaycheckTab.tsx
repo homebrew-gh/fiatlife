@@ -17,8 +17,11 @@ import {
   logsForYear,
   missingPaydaysForYear,
   parseIsoDate,
+  PRE_TAX_DEDUCTION_CATEGORIES,
+  deductionCategory,
   projectFederalTaxReturn,
   summarizeYtd,
+  type DeductionCategory,
   type DirectDeposit,
   type PayFrequency,
   type PayRateChange,
@@ -28,7 +31,7 @@ import {
   type TaxOverrides,
   type YtdBreakdownLine,
 } from "../../lib/salary";
-import { FILING_STATUS_LABELS } from "../../lib/tax";
+import { FILING_STATUS_LABELS, taxTableYear } from "../../lib/tax";
 import {
   CollapsibleSection,
   EmptyState,
@@ -293,8 +296,8 @@ function SummaryView({
     [config, year],
   );
   const federalReturn = useMemo(
-    () => projectFederalTaxReturn(config, annual),
-    [config, annual],
+    () => projectFederalTaxReturn(config, annual, year),
+    [config, annual, year],
   );
 
   const logsSig = logs
@@ -475,9 +478,15 @@ function SummaryView({
             {annual.source === "logged"
               ? `YTD actuals from ${annual.basedOnPaychecks} logged paycheck${
                   annual.basedOnPaychecks === 1 ? "" : "s"
-                }, plus latest pay rate × ${annual.remainingPaychecksProjected} remaining pay period${
+                }, plus ${annual.remainingPaychecksProjected} more paycheck${
                   annual.remainingPaychecksProjected === 1 ? "" : "s"
-                }.`
+                } at your latest pay rate with the tax and deduction rates from your recent stubs.${
+                  annual.unloggedPastPaychecks > 0
+                    ? ` Includes ${annual.unloggedPastPaychecks} past payday${
+                        annual.unloggedPastPaychecks === 1 ? "" : "s"
+                      } not logged yet.`
+                    : ""
+                }`
               : "Log paychecks to project from actual stubs, or use Model settings until then."}
           </p>
 
@@ -554,6 +563,7 @@ function SummaryView({
           <FederalTaxReturnSection
             projection={federalReturn}
             filingStatus={config.filingStatus}
+            year={year}
           />
 
           {annual.earnings.length > 0 ? (
@@ -1021,7 +1031,7 @@ function WhatIfView({
         <EditableTaxLine
           label="Federal income tax"
           amount={calc.federalTax}
-          defaultRate={calc.federalMarginalRate}
+          defaultRate={calc.federalEffectiveRate}
           customRate={config.taxOverrides.customFederalTaxRate}
           exempt={config.taxOverrides.isExemptFromFederal}
           onExemptChange={(v) => updateTaxOverrides(setConfig, { isExemptFromFederal: v })}
@@ -1547,10 +1557,13 @@ function DirectDepositsSection({
 function FederalTaxReturnSection({
   projection,
   filingStatus,
+  year,
 }: {
   projection: FederalTaxReturnProjection;
   filingStatus: keyof typeof FILING_STATUS_LABELS;
+  year: number;
 }) {
+  const tableYear = taxTableYear(year);
   if (projection.annualGross <= 0) {
     return (
       <section className="card p-5">
@@ -1575,9 +1588,20 @@ function FederalTaxReturnSection({
     <section className="card p-5">
       <h2 className="section-title">Projected Federal Return</h2>
       <p className="text-sm text-muted mt-1">
-        W-2 estimate for {FILING_STATUS_LABELS[filingStatus]} using the standard
-        deduction. Excludes credits, other income, and itemized deductions.
+        W-2 estimate for {FILING_STATUS_LABELS[filingStatus]} using {tableYear}{" "}
+        federal brackets and the standard deduction
+        {tableYear !== year ? ` (${year} figures aren't published yet)` : ""}.
+        Excludes credits (child tax credit, etc.), other income, and itemized
+        deductions.
       </p>
+      {projection.paychecksMissingFederalLine > 0 ? (
+        <p className="text-sm text-error mt-2">
+          {projection.paychecksMissingFederalLine} logged paycheck
+          {projection.paychecksMissingFederalLine === 1 ? " has" : "s have"} taxes
+          but no line recognized as federal income tax, so withholding is
+          undercounted. Label it like "Federal income tax" or "FITW".
+        </p>
+      ) : null}
 
       <div className="mt-4 card-quiet p-4 text-center">
         <p className="text-xs text-muted tracking-wide uppercase">
@@ -1616,6 +1640,13 @@ function FederalTaxReturnSection({
           amount={projection.standardDeduction}
           negative
         />
+        {projection.overtimeDeduction > 0 ? (
+          <ReturnLine
+            label="Overtime premium deduction"
+            amount={projection.overtimeDeduction}
+            negative
+          />
+        ) : null}
         <ReturnLine
           label="Federal taxable income"
           amount={projection.federalTaxableIncome}
@@ -1938,6 +1969,36 @@ function DeductionRow({
         onChange={(e) => onChange({ ...deduction, name: e.target.value })}
         placeholder={isPreTax ? "e.g. 401(k)" : "e.g. Union dues"}
       />
+      {isPreTax ? (
+        <label className="block space-y-1">
+          <span className="text-xs text-muted">
+            Type (health, HSA, FSA and transit also skip Social Security and
+            Medicare; a traditional 401(k) doesn't)
+          </span>
+          <select
+            className="input"
+            value={
+              PRE_TAX_DEDUCTION_CATEGORIES.some(
+                (c) => c.id === deductionCategory(deduction),
+              )
+                ? deductionCategory(deduction)
+                : "OTHER"
+            }
+            onChange={(e) =>
+              onChange({
+                ...deduction,
+                category: e.target.value as DeductionCategory,
+              })
+            }
+          >
+            {PRE_TAX_DEDUCTION_CATEGORIES.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
       <div className="grid grid-cols-2 gap-2">
         <DecimalInput
           className="input money"
