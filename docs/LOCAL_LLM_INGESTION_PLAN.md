@@ -2,6 +2,11 @@
 
 Status: planning / iterate-on draft. No code yet.
 
+Revised Oct 2026: parse known layouts with deterministic **layout templates** first and use the
+model only for layouts it hasn't seen (sections 1, 5.1); inference is **provider-agnostic** (local
+llama.cpp / vLLM, Maple Proxy, any OpenAI-compatible endpoint — section 6); text extraction uses
+`pdftotext` from the Rust server (section 15).
+
 This is the single source of truth for adding AI/LLM features to FiatLife. It supersedes
 and consolidates the earlier external-agent docs (OpenClaw playbook/schemas, email-to-FiatLife
 mapping spec, AI agent NIP-26/NIP-46 signing doc). Those were written assuming an **external**
@@ -22,6 +27,19 @@ Initial target use cases:
 1. **Paystub PDF -> paycheck log entry** (highest value; most tedious manual entry).
 2. **Credit card statement PDF -> credit account update** (small, bounded field set).
 3. **Utility / recurring bill PDF -> new or updated bill** (the original motivating idea).
+
+### Template first, model as fallback
+
+One user's documents come from a handful of issuers (one or two payroll providers, a few card
+issuers and utilities), each with a fixed layout. So the model's main job is **not** to read every
+document — it's to look at the **first** document of a new layout and propose a **layout template**
+(section 5.1). After the user confirms it, every later document in that layout parses
+deterministically: instant, identical every time, and no model call. The model only runs for a
+layout no template matches (and then proposes a template for it).
+
+This beats running a 14B model on CPU for every monthly paystub on speed, repeatability and error
+rate, and keeps the model away from the routine path entirely. The deterministic cross-checks
+(section 9.3) and the review UI apply to both paths.
 
 ---
 
@@ -114,7 +132,7 @@ real paystubs during shadow mode (section 14).
   bill entry, **small-field extraction** (credit statement -> balance / min payment / due date).
 - **Risk area:** **accurate many-field numeric extraction** (full paystub). Grammar constraints
   guarantee valid JSON *structure*, not field *accuracy* — hence the deterministic cross-check in
-  section 5.3 and human review.
+  section 9.3 and human review.
 - **Mitigations:** deterministic text extraction first (don't rely on vision for numbers),
   temperature 0, GBNF / JSON-schema-constrained decoding, decompose large extractions, per-field
   confidence, deterministic totals recomputation + cross-check, and human-in-the-loop review.
@@ -128,10 +146,15 @@ real paystubs during shadow mode (section 14).
 1. **Upload** PDF in the Bills / Paycheck tab. Reuse the existing Blossom upload path
    (`accept="application/pdf"` already exists for attachments) so the source doc is stored and
    hash-linked to whatever record we create.
-2. **Extract text** with a deterministic script (e.g. pdfplumber). Add an OCR fallback
-   (e.g. Tesseract) for image-only / scanned PDFs.
-3. **LLM normalize**: grammar-constrained call to llama.cpp -> JSON in the canonical extraction shape
-   (section 7) + per-field confidence.
+2. **Extract text** with `pdftotext -layout` (poppler-utils in the server image), called from the
+   Rust server. `-layout` keeps columns aligned, which is what makes current-period vs YTD columns
+   separable. Add an OCR fallback (e.g. Tesseract) for image-only / scanned PDFs.
+3. **Parse**:
+   - **Template match** (section 5.1): if a confirmed layout template's markers match, parse
+     deterministically -> canonical extraction shape (section 7). No model call.
+   - **Otherwise, model**: schema-constrained call to the configured provider (section 6) -> JSON in
+     the canonical shape + per-field confidence. Then ask the model to propose a template for this
+     layout (section 5.1).
 4. **Map -> domain model** (`Bill`, `PaycheckLogEntry`, or credit-account patch) and run
    **validation + anomaly checks** (sections 8-10).
 5. **Propose, don't silently write**: surface a review card pre-filled into the existing
@@ -148,20 +171,53 @@ A paystub maps to a `PaycheckLogEntry` (with `earnings[]`, `taxes[]`, `preTaxDed
 `SalaryConfig`, not a fresh event — and `apps/web/server/src/salary_merge.rs` already handles exactly
 that merge concern.
 
+### 5.1 Layout templates
+
+A **layout template** is declarative data, not code: the server interprets it, so nothing the model
+writes is ever executed.
+
+- **Identify:** issuer, `doc_type`, and marker strings / regexes that must all appear in the extracted
+  text (e.g. payroll provider name + a header line), so a template only fires on its own layout.
+- **Fields:** per field, an anchor (label regex), which column to read (current period, never YTD),
+  and a number/date format. For paystubs, a row pattern per section (earnings, taxes, pre-tax,
+  post-tax, employer contributions) that captures `label` + current-period `amount`.
+- **Storage:** a synced, NIP-44 encrypted record `fiatlife/ingest/template/<uuid>` so it works from
+  any device; includes `version`, `created_from_doc_hash`, `confirmed_at`.
+
+**Creating one.** For an unmatched layout, after the user has reviewed and corrected the model's
+extraction, ask the model for a template given the extracted text **and the confirmed values**. The
+server then runs the template against that same text; it is only saved if it reproduces the confirmed
+values exactly. The user sees "Use this layout next time?" and confirms.
+
+**When one breaks.** If markers match but required fields are missing or the section 9.3 cross-check
+fails, fall back to the model for that document and flag the template ("layout may have changed"),
+offering to regenerate it from the corrected result.
+
 ---
 
-## 6. llama.cpp deployment notes (Start9)
+## 6. Inference providers
 
-- Run llama.cpp as a **sibling service** exposing its OpenAI-compatible `/v1/chat/completions`
-  (or native `/completion`) endpoint on **localhost / the StartOS internal network only** — never
-  exposed externally.
-- The Rust server calls it via the `reqwest` client it already depends on.
+The model call goes through one OpenAI-compatible client with a provider setting, shared with
+transaction categorization and the planner (see `TRANSACTIONS_AND_SPENDING_PLAN.md`, section 5.3):
+
+| Provider | Where it runs | Default for documents |
+|----------|---------------|-----------------------|
+| **Local** — llama.cpp or vLLM | Sibling service on the Start9 box, internal network only | **Yes** |
+| **Maple Proxy** | Maple's secure-enclave inference via the local proxy package | Opt-in, off by default |
+| **OpenAI-compatible** | Any other endpoint the user configures | Opt-in, off by default |
+
+- Paystubs and statements are the most sensitive documents in the app, so **local is the default**
+  and nothing leaves the box unless the user switches providers. If they do, show exactly what will
+  be sent before the first call.
+- With templates (section 5.1), the model only sees the **first** document of each layout, which
+  limits exposure on any provider.
+- The Rust server calls the provider via the `reqwest` client it already depends on; local services
+  are never exposed externally.
 - **Determinism:** temperature 0 (or near) for repeatable, debuggable extraction.
-- **Structured output:** use llama.cpp **GBNF grammar / JSON-schema-constrained decoding** so the
-  model can only emit JSON conforming to the target shape. This eliminates the "wrapped in prose" /
-  invalid-JSON failure class, which is the #1 headache in PDF->struct pipelines.
-- **Privacy win (worth stating):** statements and paystubs are highly sensitive and **never leave the
-  box**. That's the main reason to keep this local rather than using a cloud API.
+- **Structured output:** use the provider's schema-constrained decoding where available — llama.cpp
+  **GBNF grammar / JSON schema**, vLLM guided JSON — so the model can only emit JSON in the target
+  shape. Where it isn't available, strict JSON parsing + schema validation, and treat a parse failure
+  as "needs manual entry".
 
 ---
 
@@ -640,20 +696,28 @@ Nice-to-have:
 
 ## 14. Rollout plan
 
-1. **Shadow mode**: upload -> extract -> propose into the review sheet, **no auto-publish**. Validate
-   extraction quality on real documents and tune prompts/grammar.
-2. **Paystubs + credit statements** with high-confidence one-tap accept; everything else stays
-   manual-review.
-3. **General bills**, with biller matching/dedup.
-4. Only then consider an off-box / NIP-46 path if parsing ever needs to run somewhere other than the
-   Start9 box (re-introduce the relevant signing design at that point).
+1. **Upload + extract + review, no model**: PDF upload on the paycheck screen, `pdftotext` on the
+   server, and the extracted text shown beside a blank `LogPaycheckSheet`. Useful on its own and the
+   base for everything below. Needs one or two real (redacted is fine) pay statements.
+2. **Paystub templates**: template format + interpreter (section 5.1) and the section 9.3
+   cross-check; write the first template from the user's real paystub layout by hand, then pre-fill
+   the review sheet from it. No model yet.
+3. **Model fallback, shadow mode**: unmatched layouts go to the configured provider and propose into
+   the review sheet, **no auto-publish**; the model proposes templates. Tune prompts/schemas on real
+   documents.
+4. **Credit statements**, then **general bills** with biller matching/dedup — same template-first flow.
+5. One-tap accept for template parses that pass the cross-check.
+6. Running the vault/agent off this box (see `PLAN.md` in the homebrew-suite repo) brings back the signing
+   question; the bunker answers it there, not here.
 
 ---
 
 ## 15. Open questions / to decide
 
-- Where does the PDF text-extraction + OCR script run? (Sidecar process vs in the Rust server vs a
-  small Python service.)
+- ~~Where does the PDF text-extraction + OCR script run?~~ **Decided:** `pdftotext -layout`
+  (poppler-utils added to the server Docker image), invoked by the Rust server as a subprocess with a
+  timeout. No separate Python service. OCR fallback (Tesseract) the same way, if needed.
+- Template match strictness: all markers required (recommended) vs a score threshold.
 - Exact llama.cpp grammar definitions per doc type (derive GBNF from the section 12 JSON schemas).
 - Final auto-accept confidence thresholds (start conservative).
 - Whether to do per-document-type prompts (recommended) vs one general prompt.
