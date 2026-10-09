@@ -1,4 +1,9 @@
 import { i18n } from './i18n'
+import {
+  mempoolInterfaceId,
+  mempoolInternalUrl,
+  mempoolPackageId,
+} from './mempool'
 import { sdk } from './sdk'
 import {
   nostrRelayInterfaceId,
@@ -43,18 +48,33 @@ export const main = sdk.setupMain(async ({ effects }) => {
     'fiatlife-sub',
   )
 
-  const relayEnv: Record<string, string> = {
+  const env: Record<string, string> = {
     FL_INTERNAL_RELAY_URL: internalRelayUrl,
   }
   if (suggestedRelayUrl) {
-    relayEnv.FL_SUGGESTED_RELAY_URL = suggestedRelayUrl
+    env.FL_SUGGESTED_RELAY_URL = suggestedRelayUrl
+  }
+
+  // Only set when Mempool is installed, so the server doesn't wait on a dead host.
+  const mempoolUrls =
+    (await sdk.serviceInterface
+      .get(
+        effects,
+        { id: mempoolInterfaceId, packageId: mempoolPackageId },
+        (i) => i?.addressInfo?.format() ?? null,
+      )
+      .const()) ?? null
+  if (mempoolUrls) {
+    env.FL_MEMPOOL_URL =
+      mempoolUrls.find((u) => u.startsWith('http://') && u.includes('.startos')) ??
+      mempoolInternalUrl
   }
 
   return sdk.Daemons.of(effects).addDaemon('primary', {
     subcontainer,
     exec: {
       command: ['/usr/local/bin/fiatlife-web'],
-      env: relayEnv,
+      env,
     },
     ready: {
       display: i18n('Web UI'),

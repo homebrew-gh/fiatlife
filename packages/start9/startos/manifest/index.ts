@@ -40,5 +40,15 @@ export const manifest = setupManifest({
         icon: '../icon.svg',
       },
     },
+    mempool: {
+      description:
+        'Optional — when installed, FiatLife gets the BTC price from your own Mempool instead of mempool.space.',
+      optional: true,
+      s9pk: null,
+      metadata: {
+        title: 'Mempool',
+        icon: '../icon.svg',
+      },
+    },
   },
 })
