@@ -1,0 +1,59 @@
+name: Web & server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/web.yml"
+  pull_request:
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/web.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Web typecheck & build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/web/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/web/package-lock.json
+
+      - run: npm ci
+      - run: npm run build
+
+  server:
+    name: Server tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/web/server
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: OpenSSL headers (native-tls)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libssl-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/web/server
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - run: cargo test --locked
