@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Nostr RS Relay">
+  <defs>
+    <linearGradient id="relay-bg" x1="24" y1="16" x2="104" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#7c4dff"/>
+      <stop offset="55%" stop-color="#5e35b1"/>
+      <stop offset="100%" stop-color="#311b92"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#relay-bg)"/>
+  <g fill="none" stroke="#e1bee7" stroke-linecap="round" stroke-width="4">
+    <path d="M64 28v16"/>
+    <path d="M64 84v16"/>
+    <path d="M28 64h16"/>
+    <path d="M84 64h16"/>
+    <path d="M39 39l11 11"/>
+    <path d="M78 78l11 11"/>
+    <path d="M89 39l-11 11"/>
+    <path d="M50 78l-11 11"/>
+  </g>
+  <circle cx="64" cy="64" r="18" fill="#ede7f6" opacity="0.95"/>
+  <circle cx="64" cy="64" r="10" fill="#5e35b1"/>
+  <path d="M58 64h12M64 58v12" stroke="#ede7f6" stroke-width="3" stroke-linecap="round"/>
+</svg>

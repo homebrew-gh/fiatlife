@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Maple Proxy">
+  <rect width="128" height="128" rx="28" fill="#1b3a2f"/>
+  <path
+    d="M64 22 C66 40 78 48 96 50 C78 54 68 66 64 106 C60 66 50 54 32 50 C50 48 62 40 64 22 Z"
+    fill="#d7f5e3"
+  />
+  <circle cx="64" cy="58" r="6" fill="#1b3a2f"/>
+</svg>

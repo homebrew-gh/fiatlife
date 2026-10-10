@@ -37,7 +37,7 @@ export const manifest = setupManifest({
       s9pk: null,
       metadata: {
         title: 'Nostr RS Relay',
-        icon: '../icon.svg',
+        icon: '../assets/nostr-rs-relay.svg',
       },
     },
     mempool: {
@@ -47,7 +47,17 @@ export const manifest = setupManifest({
       s9pk: null,
       metadata: {
         title: 'Mempool',
-        icon: '../icon.svg',
+        icon: '../assets/mempool.svg',
+      },
+    },
+    'maple-proxy': {
+      description:
+        'Optional — planned AI provider for transaction categorization and the financial planner. Not used yet. Prompts leave this server for the Maple enclave and are billed to your Maple account.',
+      optional: true,
+      s9pk: null,
+      metadata: {
+        title: 'Maple Proxy',
+        icon: '../assets/maple-proxy.svg',
       },
     },
   },
