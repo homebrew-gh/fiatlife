@@ -58,6 +58,7 @@ fun NetWorthScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
+    val refreshMessage by viewModel.refreshMessage.collectAsStateWithLifecycle()
     val summary = state.summary
     val usdPerBtc = state.price?.usd
 
@@ -121,8 +122,8 @@ fun NetWorthScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = viewModel::refreshPrice, enabled = !refreshing) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh BTC price")
+                    IconButton(onClick = viewModel::refresh, enabled = !refreshing) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Refresh balances and BTC price")
                     }
                 }
             )
@@ -138,6 +139,17 @@ fun NetWorthScreen(
         ) {
             if (state.loading) {
                 Text("Loading net worth…", style = MaterialTheme.typography.bodyMedium)
+            }
+            if (refreshing) {
+                Text(
+                    "Refreshing balances…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                refreshMessage?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
 
             Card(

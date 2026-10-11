@@ -1,5 +1,9 @@
 //! FiatLife Nostr d-tag namespace (kind 30078), matching the Android app.
 
+/// SimpleFIN access URL shared with the Android app. Written only by this server;
+/// never returned to or accepted from the browser.
+pub const SIMPLEFIN_SHARE_D_TAG: &str = "fiatlife/settings/simplefin";
+
 /// Whether a d-tag belongs to FiatLife (or CypherLog subscriptions it imports).
 pub fn is_fiatlife_d_tag(d_tag: &str) -> bool {
     let d_tag = d_tag.trim();
@@ -13,6 +17,11 @@ pub fn is_fiatlife_d_tag(d_tag: &str) -> bool {
         || d_tag.starts_with("fiatlife/settings/")
         || d_tag.starts_with("fiatlife/cypherlog_deleted/")
         || d_tag.starts_with("subscription:")
+}
+
+/// FiatLife d-tags the browser may read and write.
+pub fn is_browser_d_tag(d_tag: &str) -> bool {
+    is_fiatlife_d_tag(d_tag) && d_tag.trim() != SIMPLEFIN_SHARE_D_TAG
 }
 
 /// Coarse category for dashboard grouping (used by future API extensions).
@@ -66,5 +75,14 @@ mod tests {
         assert!(is_fiatlife_d_tag("fiatlife/btc/abc"));
         assert!(is_fiatlife_d_tag("subscription:xyz"));
         assert!(!is_fiatlife_d_tag("io.nomoxcel.utxo.wallets"));
+    }
+
+    #[test]
+    fn keeps_simplefin_share_from_browser() {
+        assert!(is_browser_d_tag("fiatlife/settings/bank/abc"));
+        assert!(is_browser_d_tag("fiatlife/settings/app"));
+        assert!(!is_browser_d_tag(SIMPLEFIN_SHARE_D_TAG));
+        assert!(!is_browser_d_tag(" fiatlife/settings/simplefin "));
+        assert!(!is_browser_d_tag("io.nomoxcel.utxo.wallets"));
     }
 }

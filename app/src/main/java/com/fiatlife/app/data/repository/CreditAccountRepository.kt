@@ -92,6 +92,27 @@ class CreditAccountRepository @Inject constructor(
         return ensured
     }
 
+    /** Save a SimpleFIN balance update as-is, like web `saveSyncedAccount`: no bill or payment changes. */
+    suspend fun saveSyncedCreditAccount(account: CreditAccount) {
+        val updated = account.copy(updatedAt = System.currentTimeMillis())
+        val jsonStr = json.encodeToString(CreditAccount.serializer(), updated)
+        creditAccountDao.upsert(
+            CreditAccountEntity(
+                id = updated.id,
+                jsonData = jsonStr,
+                type = updated.type.name,
+                updatedAt = updated.updatedAt
+            )
+        )
+        if (nostrClient.hasSigner) {
+            try {
+                nostrClient.publishEncryptedAppData("$NOSTR_D_TAG_PREFIX${updated.id}", jsonStr)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to publish synced credit account: ${e.message}")
+            }
+        }
+    }
+
     suspend fun updateStatement(
         account: CreditAccount,
         update: CreditStatementUpdate

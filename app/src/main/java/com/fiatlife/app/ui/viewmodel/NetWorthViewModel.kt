@@ -6,6 +6,8 @@ import com.fiatlife.app.data.repository.BankAccountRepository
 import com.fiatlife.app.data.repository.BitcoinWalletRepository
 import com.fiatlife.app.data.repository.BtcPriceRepository
 import com.fiatlife.app.data.repository.CreditAccountRepository
+import com.fiatlife.app.data.repository.SimpleFinRefresh
+import com.fiatlife.app.data.repository.SimpleFinRepository
 import com.fiatlife.app.data.repository.stateWhileSubscribed
 import com.fiatlife.app.domain.model.BankAccount
 import com.fiatlife.app.domain.model.BitcoinWallet
@@ -14,6 +16,8 @@ import com.fiatlife.app.domain.model.CreditAccount
 import com.fiatlife.app.domain.model.NetWorthSummary
 import com.fiatlife.app.domain.model.computeNetWorth
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,14 +37,19 @@ data class NetWorthState(
 
 @HiltViewModel
 class NetWorthViewModel @Inject constructor(
-    bankAccountRepository: BankAccountRepository,
-    creditAccountRepository: CreditAccountRepository,
+    private val bankAccountRepository: BankAccountRepository,
+    private val creditAccountRepository: CreditAccountRepository,
     private val walletRepository: BitcoinWalletRepository,
-    private val priceRepository: BtcPriceRepository
+    private val priceRepository: BtcPriceRepository,
+    private val simpleFinRepository: SimpleFinRepository
 ) : ViewModel() {
 
     private val _refreshing = MutableStateFlow(false)
     val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+
+    /** Outcome of the last refresh's SimpleFIN step, when there is something to say. */
+    private val _refreshMessage = MutableStateFlow<String?>(null)
+    val refreshMessage: StateFlow<String?> = _refreshMessage.asStateFlow()
 
     val state: StateFlow<NetWorthState> = combine(
         bankAccountRepository.getAllBankAccounts(),
@@ -64,16 +73,50 @@ class NetWorthViewModel @Inject constructor(
         viewModelScope.launch { priceRepository.refresh() }
     }
 
-    fun refreshPrice() {
+    /** BTC price, accounts and wallets from the relay, then bank balances from SimpleFIN. */
+    fun refresh() {
         if (_refreshing.value) return
         viewModelScope.launch {
             _refreshing.value = true
+            _refreshMessage.value = null
             try {
-                priceRepository.refresh(force = true)
+                listOf(
+                    async { priceRepository.refresh(force = true) },
+                    async { bankAccountRepository.syncFromNostr() },
+                    async { creditAccountRepository.syncFromNostr() },
+                    async { walletRepository.syncFromNostr() }
+                ).awaitAll()
+                _refreshMessage.value = describe(simpleFinRepository.refresh())
             } finally {
                 _refreshing.value = false
             }
         }
+    }
+
+    private fun describe(result: SimpleFinRefresh): String? = when (result) {
+        SimpleFinRefresh.NotConnected -> {
+            val linked = state.value.bankAccounts.any { it.simplefinAccountKey != null } ||
+                state.value.creditAccounts.any { it.simplefinAccountKey != null }
+            if (linked) {
+                "Open the web app once so it can share its SimpleFIN connection with this device."
+            } else null
+        }
+        is SimpleFinRefresh.Recent -> {
+            val minutesAgo = ((System.currentTimeMillis() - result.lastFetchedAtMs) / 60_000).coerceAtLeast(0)
+            "SimpleFIN was checked $minutesAgo min ago. It allows one check an hour, " +
+                "so balances are current as of then."
+        }
+        is SimpleFinRefresh.Fetched -> buildString {
+            append(
+                when (result.updatedAccounts) {
+                    0 -> "Bank balances are up to date."
+                    1 -> "Updated 1 balance from SimpleFIN."
+                    else -> "Updated ${result.updatedAccounts} balances from SimpleFIN."
+                }
+            )
+            result.messages.forEach { append("\n").append(it) }
+        }
+        is SimpleFinRefresh.Failed -> result.message
     }
 
     fun saveWallet(wallet: BitcoinWallet) {

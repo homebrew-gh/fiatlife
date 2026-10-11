@@ -21,6 +21,17 @@ export function withSimpleFinBalance(
   };
 }
 
+/**
+ * A balance dated before the stored one is stale (e.g. the server's cached snapshot after
+ * the Android app fetched newer balances); keep the newer one.
+ */
+function isOlder(
+  sourceMs: number | null | undefined,
+  storedMs: number | null | undefined,
+): boolean {
+  return sourceMs != null && storedMs != null && sourceMs < storedMs;
+}
+
 /** Linked accounts whose stored balance differs from the latest sync. */
 export function accountsNeedingBalanceUpdate(
   accounts: BankAccount[],
@@ -34,6 +45,7 @@ export function accountsNeedingBalanceUpdate(
       ? byKey.get(account.simplefinAccountKey)
       : undefined;
     if (!source || source.balance == null) continue;
+    if (isOlder(source.balance_date_ms, account.balanceAsOf)) continue;
     if (
       account.balance === source.balance &&
       (account.availableBalance ?? null) === source.available_balance &&
@@ -92,6 +104,7 @@ export function debtAccountsNeedingBalanceUpdate(
       ? byKey.get(account.simplefinAccountKey)
       : undefined;
     if (!source || source.balance == null) continue;
+    if (isOlder(source.balance_date_ms, account.simplefinBalanceAsOf)) continue;
     if (account.simplefinBalance === owedFromSimpleFin(source.balance)) continue;
     updates.push(withSimpleFinDebtBalance(account, source));
   }

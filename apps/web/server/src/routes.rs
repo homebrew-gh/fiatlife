@@ -30,7 +30,7 @@ use crate::config::{
 };
 use crate::crypto::{open as crypto_open, seal};
 use crate::error::{AppError, AppResult};
-use crate::fiatlife_tags::is_fiatlife_d_tag;
+use crate::fiatlife_tags::{is_browser_d_tag, SIMPLEFIN_SHARE_D_TAG};
 use crate::nostr_support::{
     build_addressable_deletion_event, build_app_data_event, build_cypherlog_subscription_event,
     decrypt_from_self, encrypt_to_self, fetch_cypherlog_subscription_records, parse_nsec,
@@ -496,7 +496,7 @@ async fn list_app_data(
 
     let records: Vec<_> = records
         .into_iter()
-        .filter(|r| r.d_tag.as_deref().map(is_fiatlife_d_tag).unwrap_or(false))
+        .filter(|r| r.d_tag.as_deref().is_some_and(is_browser_d_tag))
         .collect();
 
     tracing::info!(
@@ -610,7 +610,7 @@ async fn publish_app_data(
     jar: SignedCookieJar,
     Json(body): Json<PublishAppDataBody>,
 ) -> AppResult<Json<PublishAppDataResponse>> {
-    if !is_fiatlife_d_tag(&body.d_tag) {
+    if !is_browser_d_tag(&body.d_tag) {
         return Err(AppError::BadRequest(
             "d_tag must be a FiatLife namespace tag".into(),
         ));
@@ -821,6 +821,7 @@ async fn simplefin_connect(
             connected_at_ms: now_ms(),
             last_fetched_at_ms: None,
             last_snapshot_nip44: None,
+            shared_at_ms: None,
         });
         p.save(&s.cfg.state_path()).map_err(AppError::Internal)?;
     }
@@ -834,6 +835,8 @@ async fn simplefin_connect(
     })?;
     let response = balances_response(&fetched, false);
     *cache = Some(fetched);
+    drop(cache);
+    share_simplefin(&s, &keys, &access_url).await;
     Ok(Json(response))
 }
 
@@ -847,7 +850,10 @@ async fn simplefin_sync(
     restore_simplefin_cache(&s, &keys, &mut cache).await;
     if let Some(cached) = cache.as_ref() {
         if now_ms() - cached.fetched_at_ms < SIMPLEFIN_MIN_REFETCH_MS {
-            return Ok(Json(balances_response(cached, true)));
+            let response = balances_response(cached, true);
+            drop(cache);
+            share_simplefin_if_unshared(&s, &keys).await;
+            return Ok(Json(response));
         }
     }
     let record = s
@@ -863,7 +869,66 @@ async fn simplefin_sync(
     let fetched = fetch_simplefin_balances(&s, &keys, &access_url).await?;
     let response = balances_response(&fetched, false);
     *cache = Some(fetched);
+    drop(cache);
+    share_simplefin(&s, &keys, &access_url).await;
     Ok(Json(response))
+}
+
+/// Publish the SimpleFIN access URL (NIP-44 to self) under [`SIMPLEFIN_SHARE_D_TAG`] so the
+/// Android app can fetch balances itself, with the last fetch time so both clients share
+/// SimpleFIN's daily request budget. Best effort: without a relay it only logs.
+async fn share_simplefin(s: &AppState, keys: &nostr::Keys, access_url: &str) {
+    let Some(record) = s.persistent.lock().await.simplefin.clone() else {
+        return;
+    };
+    let Ok(relay_urls) = configured_relay_urls(s).await else {
+        return;
+    };
+    let now = now_ms();
+    let payload = zeroize::Zeroizing::new(
+        serde_json::json!({
+            "accessUrl": access_url,
+            "connectedAtMs": record.connected_at_ms,
+            "lastFetchedAtMs": record.last_fetched_at_ms,
+            "updatedAt": now,
+        })
+        .to_string(),
+    );
+    let event = match build_app_data_event(keys, SIMPLEFIN_SHARE_D_TAG, &payload) {
+        Ok(event) => event,
+        Err(e) => {
+            tracing::warn!("could not build SimpleFIN share event: {e}");
+            return;
+        }
+    };
+    s.outbox
+        .enqueue(
+            s.cfg.clone(),
+            keys.clone(),
+            event,
+            relay_urls,
+            SIMPLEFIN_SHARE_D_TAG.into(),
+        )
+        .await;
+    let mut p = s.persistent.lock().await;
+    if let Some(r) = p.simplefin.as_mut() {
+        r.shared_at_ms = Some(now);
+        if let Err(e) = p.save(&s.cfg.state_path()) {
+            tracing::warn!("could not record SimpleFIN share time: {e}");
+        }
+    }
+}
+
+/// Share connections made before the Android app could fetch SimpleFIN itself.
+async fn share_simplefin_if_unshared(s: &AppState, keys: &nostr::Keys) {
+    let access_url_nip44 = match s.persistent.lock().await.simplefin.as_ref() {
+        Some(r) if r.shared_at_ms.is_none() => r.access_url_nip44.clone(),
+        _ => return,
+    };
+    match decrypt_from_self(keys, &access_url_nip44) {
+        Ok(url) => share_simplefin(s, keys, &zeroize::Zeroizing::new(url)).await,
+        Err(e) => tracing::warn!("could not decrypt SimpleFIN access URL to share it: {e}"),
+    }
 }
 
 /// Last fetched balances without contacting SimpleFIN; null before the first fetch.
@@ -874,7 +939,10 @@ async fn simplefin_balances(
     let (keys, _) = require_keys(&s, &jar).await?;
     let mut cache = s.simplefin_cache.lock().await;
     restore_simplefin_cache(&s, &keys, &mut cache).await;
-    Ok(Json(cache.as_ref().map(|c| balances_response(c, true))))
+    let response = cache.as_ref().map(|c| balances_response(c, true));
+    drop(cache);
+    share_simplefin_if_unshared(&s, &keys).await;
+    Ok(Json(response))
 }
 
 /// Refill the in-memory cache from the encrypted snapshot in state.json.
@@ -978,12 +1046,39 @@ async fn simplefin_disconnect(
     State(s): State<AppState>,
     jar: SignedCookieJar,
 ) -> AppResult<Json<OkBody>> {
-    require_unlocked(&s, &jar).await?;
-    let mut cache = s.simplefin_cache.lock().await;
-    let mut p = s.persistent.lock().await;
-    p.simplefin = None;
-    p.save(&s.cfg.state_path()).map_err(AppError::Internal)?;
-    *cache = None;
+    let (keys, _) = require_keys(&s, &jar).await?;
+    {
+        let mut cache = s.simplefin_cache.lock().await;
+        let mut p = s.persistent.lock().await;
+        p.simplefin = None;
+        p.save(&s.cfg.state_path()).map_err(AppError::Internal)?;
+        *cache = None;
+    }
+    if let Ok(relay_urls) = configured_relay_urls(&s).await {
+        let label = || SIMPLEFIN_SHARE_D_TAG.to_string();
+        match build_app_data_event(&keys, SIMPLEFIN_SHARE_D_TAG, r#"{"deleted":true}"#) {
+            Ok(event) => {
+                s.outbox
+                    .enqueue(
+                        s.cfg.clone(),
+                        keys.clone(),
+                        event,
+                        relay_urls.clone(),
+                        label(),
+                    )
+                    .await
+            }
+            Err(e) => tracing::warn!("could not build SimpleFIN unshare event: {e}"),
+        }
+        match build_addressable_deletion_event(&keys, KIND_APP_DATA, SIMPLEFIN_SHARE_D_TAG) {
+            Ok(event) => {
+                s.outbox
+                    .enqueue(s.cfg.clone(), keys, event, relay_urls, label())
+                    .await
+            }
+            Err(e) => tracing::warn!("could not build SimpleFIN deletion event: {e}"),
+        }
+    }
     Ok(Json(OkBody { ok: true }))
 }
 

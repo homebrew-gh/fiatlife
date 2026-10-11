@@ -46,6 +46,9 @@ pub struct SimpleFinRecord {
     /// list and the refetch window survive locks and restarts.
     #[serde(default)]
     pub last_snapshot_nip44: Option<String>,
+    /// When the access URL was last published to the relay for the Android app.
+    #[serde(default)]
+    pub shared_at_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
