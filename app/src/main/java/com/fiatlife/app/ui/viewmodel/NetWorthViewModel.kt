@@ -109,11 +109,22 @@ class NetWorthViewModel @Inject constructor(
         is SimpleFinRefresh.Fetched -> buildString {
             append(
                 when (result.updatedAccounts) {
-                    0 -> "Bank balances are up to date."
+                    0 -> if (result.staleSinceMs == null) "Bank balances are up to date."
+                    else "SimpleFIN returned no new balances."
                     1 -> "Updated 1 balance from SimpleFIN."
                     else -> "Updated ${result.updatedAccounts} balances from SimpleFIN."
                 }
             )
+            result.staleSinceMs?.let {
+                val days = (System.currentTimeMillis() - it) / 86_400_000
+                append("\nSimpleFIN hasn't had new balances from your bank in $days days. ")
+                append("Check the connection at bridge.simplefin.org; the bank may need you to sign in again.")
+            }
+            if (result.unmatchedAccounts.isNotEmpty()) {
+                append("\n${result.unmatchedAccounts.joinToString()} ")
+                append(if (result.unmatchedAccounts.size == 1) "is" else "are")
+                append(" linked to a SimpleFIN account that wasn't returned. Link again in the web app's Settings.")
+            }
             result.messages.forEach { append("\n").append(it) }
         }
         is SimpleFinRefresh.Failed -> result.message

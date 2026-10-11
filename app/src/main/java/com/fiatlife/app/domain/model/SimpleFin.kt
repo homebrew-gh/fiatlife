@@ -33,6 +33,20 @@ class SimpleFinAccess(val base: String, val username: String, val password: Stri
 object SimpleFin {
     private const val MAX_TEXT_LEN = 300
 
+    /** Bank data older than this means SimpleFIN Bridge isn't getting fresh balances from the bank. */
+    const val STALE_MS = 2 * 24 * 60 * 60 * 1000L
+
+    /** Oldest balance date among linked accounts whose bank data is stale, or null if none are. */
+    fun staleSince(linkedKeys: Set<String>, synced: List<SimpleFinAccount>, now: Long): Long? =
+        synced.filter { it.key in linkedKeys }
+            .mapNotNull { it.balanceDateMs }
+            .filter { now - it > STALE_MS }
+            .minOrNull()
+
+    /** Linked keys the latest fetch didn't return (e.g. after reconnecting a bank in Bridge). */
+    fun unmatchedKeys(linkedKeys: Set<String>, synced: List<SimpleFinAccount>): Set<String> =
+        linkedKeys - synced.map { it.key }.toSet()
+
     /** Null unless [raw] is an https URL carrying a username. */
     fun parseAccessUrl(raw: String): SimpleFinAccess? {
         val uri = runCatching { java.net.URI(raw.trim()) }.getOrNull() ?: return null

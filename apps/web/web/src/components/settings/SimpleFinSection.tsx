@@ -9,7 +9,12 @@ import {
 import type { CreditAccount } from "../../lib/creditAccount";
 import { useDebtData } from "../../lib/debtData";
 import { formatUsd } from "../../lib/format";
-import { formatBalanceAsOf, looksLikeDebt } from "../../lib/simplefin";
+import {
+  formatBalanceAsOf,
+  isStaleBalance,
+  looksLikeDebt,
+  unmatchedLinks,
+} from "../../lib/simplefin";
 import {
   useSimpleFinData,
   type SimpleFinLinkTarget,
@@ -54,6 +59,20 @@ export function SimpleFinSection({ accounts }: { accounts: BankAccount[] }) {
   } = useSimpleFinData();
   const [token, setToken] = useState("");
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+
+  const synced = balances?.accounts ?? [];
+  const staleLinked = synced.filter(
+    (s) =>
+      linkValue(s, accounts, debtAccounts) !== "" &&
+      isStaleBalance(s.balance_date_ms),
+  );
+  const staleSince = Math.min(...staleLinked.map((s) => s.balance_date_ms ?? 0));
+  const staleInstitutions = [
+    ...new Set(staleLinked.map((s) => s.institution || s.name)),
+  ];
+  const unmatched = balances
+    ? unmatchedLinks([...accounts, ...debtAccounts], synced)
+    : [];
 
   const onConnect = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -159,6 +178,33 @@ export function SimpleFinSection({ accounts }: { accounts: BankAccount[] }) {
             </ul>
           ) : null}
 
+          {staleLinked.length ? (
+            <p className="notice-panel p-3 text-sm">
+              SimpleFIN hasn't had new balances from{" "}
+              {staleInstitutions.join(", ")} since{" "}
+              {formatBalanceAsOf(staleSince)}, so syncing can't move them. Open{" "}
+              <a
+                href="https://bridge.simplefin.org/"
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent underline"
+              >
+                SimpleFIN Bridge
+              </a>{" "}
+              to check the connection; the bank may need you to sign in again.
+            </p>
+          ) : null}
+
+          {unmatched.length ? (
+            <p className="notice-panel p-3 text-sm">
+              {unmatched.join(", ")} {unmatched.length === 1 ? "is" : "are"}{" "}
+              linked to a SimpleFIN account the last sync didn't return, so{" "}
+              {unmatched.length === 1 ? "its balance won't" : "their balances won't"}{" "}
+              update. If you reconnected a bank in SimpleFIN Bridge, link{" "}
+              {unmatched.length === 1 ? "it" : "them"} again below.
+            </p>
+          ) : null}
+
           {balances == null ? (
             <p className="text-sm text-muted">
               Sync to see your SimpleFIN accounts and link them.
@@ -182,6 +228,18 @@ export function SimpleFinSection({ accounts }: { accounts: BankAccount[] }) {
                         <p className="font-medium truncate">{source.name}</p>
                         <p className="text-xs text-muted truncate">
                           {source.institution}
+                          {source.balance_date_ms ? (
+                            <span
+                              className={
+                                isStaleBalance(source.balance_date_ms)
+                                  ? "text-error"
+                                  : undefined
+                              }
+                            >
+                              {" · as of "}
+                              {formatBalanceAsOf(source.balance_date_ms)}
+                            </span>
+                          ) : null}
                         </p>
                       </div>
                       <p className="money text-sm shrink-0">

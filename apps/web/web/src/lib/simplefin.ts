@@ -21,6 +21,27 @@ export function withSimpleFinBalance(
   };
 }
 
+/** Bank data older than this means SimpleFIN Bridge isn't getting fresh balances from the bank. */
+export const SIMPLEFIN_STALE_MS = 2 * 24 * 60 * 60 * 1000;
+
+export function isStaleBalance(
+  balanceDateMs: number | null | undefined,
+  now = Date.now(),
+): boolean {
+  return balanceDateMs != null && now - balanceDateMs > SIMPLEFIN_STALE_MS;
+}
+
+/** Names of FiatLife accounts linked to SimpleFIN accounts the latest sync didn't return. */
+export function unmatchedLinks(
+  accounts: { name: string; simplefinAccountKey?: string | null }[],
+  synced: SimpleFinAccount[],
+): string[] {
+  const keys = new Set(synced.map((a) => a.key));
+  return accounts
+    .filter((a) => a.simplefinAccountKey && !keys.has(a.simplefinAccountKey))
+    .map((a) => a.name);
+}
+
 /**
  * A balance dated before the stored one is stale (e.g. the server's cached snapshot after
  * the Android app fetched newer balances); keep the newer one.

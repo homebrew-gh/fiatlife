@@ -86,6 +86,19 @@ class SimpleFinTest {
     }
 
     @Test
+    fun flagsStaleAndUnmatchedLinks() {
+        val now = 10 * 86_400_000L
+        val synced = listOf(
+            SimpleFinAccount("C:fresh", balance = 1.0, availableBalance = null, balanceDateMs = now - 86_400_000L),
+            SimpleFinAccount("C:old", balance = 1.0, availableBalance = null, balanceDateMs = now - 4 * 86_400_000L),
+            SimpleFinAccount("C:unlinked", balance = 1.0, availableBalance = null, balanceDateMs = 0)
+        )
+        assertEquals(now - 4 * 86_400_000L, SimpleFin.staleSince(setOf("C:fresh", "C:old"), synced, now))
+        assertNull(SimpleFin.staleSince(setOf("C:fresh"), synced, now))
+        assertEquals(setOf("C:gone"), SimpleFin.unmatchedKeys(setOf("C:fresh", "C:gone"), synced))
+    }
+
+    @Test
     fun debtUpdatesKeepManualBalanceUntilInstitutionChanges() {
         val synced = listOf(
             SimpleFinAccount("C:card", balance = -1234.567, availableBalance = null, balanceDateMs = 2_000),

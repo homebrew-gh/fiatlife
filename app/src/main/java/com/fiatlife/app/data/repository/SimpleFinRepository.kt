@@ -47,7 +47,14 @@ sealed interface SimpleFinRefresh {
     /** A client fetched less than an hour ago; its balances arrive through relay sync. */
     data class Recent(val lastFetchedAtMs: Long) : SimpleFinRefresh
 
-    data class Fetched(val updatedAccounts: Int, val messages: List<String>) : SimpleFinRefresh
+    data class Fetched(
+        val updatedAccounts: Int,
+        val messages: List<String>,
+        /** Oldest bank balance date among linked accounts, when older than [SimpleFin.STALE_MS]. */
+        val staleSinceMs: Long?,
+        /** Linked accounts the fetch didn't return, so they can't update. */
+        val unmatchedAccounts: List<String>
+    ) : SimpleFinRefresh
 
     data class Failed(val message: String) : SimpleFinRefresh
 }
@@ -96,18 +103,24 @@ class SimpleFinRepository @Inject constructor(
         }
         publishShare(share.copy(lastFetchedAtMs = now, updatedAt = now))
 
-        val bankUpdates = SimpleFin.bankUpdates(
-            bankAccountRepository.getAllBankAccounts().first(),
-            snapshot.accounts
-        )
+        val bank = bankAccountRepository.getAllBankAccounts().first()
+        val credit = creditAccountRepository.getAllCreditAccounts().first()
+        val bankUpdates = SimpleFin.bankUpdates(bank, snapshot.accounts)
         bankUpdates.forEach { bankAccountRepository.saveBankAccount(it) }
-        val debtUpdates = SimpleFin.debtUpdates(
-            creditAccountRepository.getAllCreditAccounts().first(),
-            snapshot.accounts
-        )
+        val debtUpdates = SimpleFin.debtUpdates(credit, snapshot.accounts)
         debtUpdates.forEach { creditAccountRepository.saveSyncedCreditAccount(it) }
         Log.d(TAG, "Applied SimpleFIN balances to ${bankUpdates.size + debtUpdates.size} account(s)")
-        SimpleFinRefresh.Fetched(bankUpdates.size + debtUpdates.size, snapshot.messages)
+
+        val linkedNames = bank.mapNotNull { a -> a.simplefinAccountKey?.let { it to a.name } } +
+            credit.mapNotNull { a -> a.simplefinAccountKey?.let { it to a.name } }
+        val linkedKeys = linkedNames.map { it.first }.toSet()
+        val unmatched = SimpleFin.unmatchedKeys(linkedKeys, snapshot.accounts)
+        SimpleFinRefresh.Fetched(
+            updatedAccounts = bankUpdates.size + debtUpdates.size,
+            messages = snapshot.messages,
+            staleSinceMs = SimpleFin.staleSince(linkedKeys, snapshot.accounts, now),
+            unmatchedAccounts = linkedNames.filter { it.first in unmatched }.map { it.second }
+        )
     }
 
     private suspend fun loadShare(): SimpleFinShare? {
