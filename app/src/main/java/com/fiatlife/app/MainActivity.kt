@@ -39,6 +39,7 @@ import com.fiatlife.app.data.repository.GoalRepository
 import com.fiatlife.app.data.repository.SalaryRepository
 import com.fiatlife.app.data.repository.AppSettingsRepository
 import com.fiatlife.app.data.security.PinPrefs
+import com.fiatlife.app.data.sync.AppVisibility
 import com.fiatlife.app.ui.navigation.FiatLifeNavGraph
 import com.fiatlife.app.ui.screens.login.LoginScreen
 import com.fiatlife.app.ui.screens.login.RelaySetupScreen
@@ -316,6 +317,18 @@ class MainActivity : ComponentActivity() {
         if (isInMainApp && pinPrefs.isPinLockEnabled() && pinPrefs.hasPinSet()) {
             needsPinUnlock.value = true
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        AppVisibility.visible = true
+        // Background sync may have swapped in a prompt-less Amber signer.
+        amberSignerRef.get()?.let { nostrClient.setSigner(it) }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        AppVisibility.visible = false
     }
 
     override fun onResume() {

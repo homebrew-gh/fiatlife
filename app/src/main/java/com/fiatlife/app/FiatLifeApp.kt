@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import com.fiatlife.app.data.notification.BillNotificationManager
+import com.fiatlife.app.data.sync.SimpleFinSyncWorker
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 
@@ -21,5 +22,6 @@ class FiatLifeApp : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         billNotificationManager.createChannel()
+        SimpleFinSyncWorker.schedule(this)
     }
 }

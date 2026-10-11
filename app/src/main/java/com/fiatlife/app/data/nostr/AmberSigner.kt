@@ -1,9 +1,9 @@
 package com.fiatlife.app.data.nostr
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
-import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResult
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
@@ -20,16 +20,18 @@ private const val TAG = "AmberSigner"
  * NIP-55 signer that delegates signing and encryption to the Amber app.
  * Prefers the Content Resolver approach (silent, no UI) and falls back to
  * Intent-based approach (launches Amber activity) when the resolver returns null.
+ * Without launchers (background work) only the resolver is used: requests Amber
+ * hasn't been set to always allow return null instead of prompting.
  */
 class AmberSigner(
-    private val activity: ComponentActivity,
+    private val context: Context,
     override val pubkeyHex: String,
     private val signerPackage: String,
 ) : NostrSigner {
 
-    private val launchDecryptRef = AtomicReference<(Intent) -> Unit>({})
-    private val launchEncryptRef = AtomicReference<(Intent) -> Unit>({})
-    private val launchSignRef = AtomicReference<(Intent) -> Unit>({})
+    private val launchDecryptRef = AtomicReference<((Intent) -> Unit)?>(null)
+    private val launchEncryptRef = AtomicReference<((Intent) -> Unit)?>(null)
+    private val launchSignRef = AtomicReference<((Intent) -> Unit)?>(null)
 
     private val pendingDecrypt = AtomicReference<Continuation<String?>?>(null)
     private val pendingEncrypt = AtomicReference<Continuation<String?>?>(null)
@@ -129,7 +131,7 @@ class AmberSigner(
 
     private fun resolverDecrypt(ciphertext: String, otherPubkeyHex: String): String? = try {
         val uri = Uri.parse("content://$signerPackage.NIP44_DECRYPT")
-        val cursor = activity.contentResolver.query(
+        val cursor = context.contentResolver.query(
             uri, arrayOf(ciphertext, otherPubkeyHex, pubkeyHex), null, null, null
         )
         cursor?.use {
@@ -146,7 +148,7 @@ class AmberSigner(
 
     private fun resolverEncrypt(plaintext: String, otherPubkeyHex: String): String? = try {
         val uri = Uri.parse("content://$signerPackage.NIP44_ENCRYPT")
-        val cursor = activity.contentResolver.query(
+        val cursor = context.contentResolver.query(
             uri, arrayOf(plaintext, otherPubkeyHex, pubkeyHex), null, null, null
         )
         cursor?.use {
@@ -163,7 +165,7 @@ class AmberSigner(
 
     private fun resolverSignEvent(unsignedEventJson: String): String? = try {
         val uri = Uri.parse("content://$signerPackage.SIGN_EVENT")
-        val cursor = activity.contentResolver.query(
+        val cursor = context.contentResolver.query(
             uri, arrayOf(unsignedEventJson, "", pubkeyHex), null, null, null
         )
         cursor?.use {
@@ -183,8 +185,9 @@ class AmberSigner(
 
     // ── Intent-based fallback (launches Amber activity) ──
 
-    private suspend fun decryptViaIntent(ciphertext: String, otherPubkeyHex: String): String? =
-        decryptMutex.withLock {
+    private suspend fun decryptViaIntent(ciphertext: String, otherPubkeyHex: String): String? {
+        val launch = launchDecryptRef.get() ?: return null
+        return decryptMutex.withLock {
             withContext(Dispatchers.Main) {
                 suspendCancellableCoroutine { cont ->
                     pendingDecrypt.set(cont as Continuation<String?>)
@@ -194,13 +197,15 @@ class AmberSigner(
                     intent.putExtra("current_user", pubkeyHex)
                     intent.putExtra("pubkey", otherPubkeyHex)
                     intent.putExtra("id", "decrypt_${System.currentTimeMillis()}")
-                    launchDecryptRef.get().invoke(intent)
+                    launch(intent)
                 }
             }
         }
+    }
 
-    private suspend fun encryptViaIntent(plaintext: String, otherPubkeyHex: String): String? =
-        encryptMutex.withLock {
+    private suspend fun encryptViaIntent(plaintext: String, otherPubkeyHex: String): String? {
+        val launch = launchEncryptRef.get() ?: return null
+        return encryptMutex.withLock {
             withContext(Dispatchers.Main) {
                 suspendCancellableCoroutine { cont ->
                     pendingEncrypt.set(cont as Continuation<String?>)
@@ -210,13 +215,15 @@ class AmberSigner(
                     intent.putExtra("current_user", pubkeyHex)
                     intent.putExtra("pubkey", otherPubkeyHex)
                     intent.putExtra("id", "encrypt_${System.currentTimeMillis()}")
-                    launchEncryptRef.get().invoke(intent)
+                    launch(intent)
                 }
             }
         }
+    }
 
-    private suspend fun signViaIntent(unsignedEventJson: String): String? =
-        signMutex.withLock {
+    private suspend fun signViaIntent(unsignedEventJson: String): String? {
+        if (launchSignRef.get() == null) return null
+        return signMutex.withLock {
             val first = requestSignIntent(
                 Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:")).apply {
                     `package` = signerPackage
@@ -240,12 +247,13 @@ class AmberSigner(
                 }
             )
         }
+    }
 
     private suspend fun requestSignIntent(intent: Intent): String? =
         withContext(Dispatchers.Main) {
             suspendCancellableCoroutine { cont ->
                 pendingSign.set(cont as Continuation<String?>)
-                launchSignRef.get().invoke(intent)
+                launchSignRef.get()?.invoke(intent) ?: cont.resume(null)
             }
         }
 
