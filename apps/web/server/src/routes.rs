@@ -850,6 +850,10 @@ async fn simplefin_sync(
     restore_simplefin_cache(&s, &keys, &mut cache).await;
     if let Some(cached) = cache.as_ref() {
         if now_ms() - cached.fetched_at_ms < SIMPLEFIN_MIN_REFETCH_MS {
+            tracing::info!(
+                "SimpleFIN sync reused the fetch from {} min ago (at most one fetch an hour)",
+                (now_ms() - cached.fetched_at_ms) / 60_000
+            );
             let response = balances_response(cached, true);
             drop(cache);
             share_simplefin_if_unshared(&s, &keys).await;
@@ -979,13 +983,35 @@ async fn restore_simplefin_cache(
     }
 }
 
+/// One line per fetch for the service log: counts, bank data age and error codes only,
+/// never balances or account names.
+fn log_simplefin_fetch(snapshot: &BalancesSnapshot, now: i64) {
+    let ages_h: Vec<i64> = snapshot
+        .accounts
+        .iter()
+        .filter_map(|a| a.balance_date_ms)
+        .map(|ms| (now - ms).max(0) / 3_600_000)
+        .collect();
+    let codes: Vec<&str> = snapshot.messages.iter().map(|m| m.code.as_str()).collect();
+    tracing::info!(
+        "SimpleFIN fetch ok: {} account(s), bank data {}–{} h old, errors: {}",
+        snapshot.accounts.len(),
+        ages_h.iter().min().unwrap_or(&0),
+        ages_h.iter().max().unwrap_or(&0),
+        if codes.is_empty() { "none".to_string() } else { codes.join(", ") },
+    );
+}
+
 async fn fetch_simplefin_balances(
     s: &AppState,
     keys: &nostr::Keys,
     access_url: &str,
 ) -> AppResult<CachedBalances> {
-    let snapshot = simplefin::fetch_balances(access_url).await?;
+    let snapshot = simplefin::fetch_balances(access_url)
+        .await
+        .inspect_err(|e| tracing::warn!("SimpleFIN fetch failed: {e}"))?;
     let fetched_at_ms = now_ms();
+    log_simplefin_fetch(&snapshot, fetched_at_ms);
     let snapshot_json = serde_json::to_string(&snapshot)
         .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
     let snapshot_nip44 = encrypt_to_self(keys, &snapshot_json).map_err(AppError::Internal)?;
